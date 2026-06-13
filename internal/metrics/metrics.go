@@ -1,4 +1,4 @@
-// Package metrics computes the success metrics from docs/v2/metrics.md purely by
+// Package metrics computes the success metrics from docs/design/metrics.md purely by
 // replaying the Event Log — no bespoke instrumentation, in keeping with the
 // design thesis that the log is the single source of truth. Every number here is
 // a function of the event stream (plus, by construction, the fact that the
@@ -6,6 +6,7 @@
 package metrics
 
 import (
+	"sort"
 	"time"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
@@ -139,6 +140,43 @@ func Compute(events []api.Event) Metrics {
 		}
 	}
 	return m
+}
+
+// GraphShape summarizes the emergent task-graph shape for one Goal, derived
+// purely from replayed state. It makes runaway/wide decompositions visible —
+// MaxFanOut here is exactly the quantity the orchestrator's MaxFanOut governor
+// bounds, so the cap's effect can be read straight off `aoa status`.
+type GraphShape struct {
+	GoalID    string `json:"goal_id"`
+	Tickets   int    `json:"tickets"`     // tickets belonging to this Goal
+	MaxDepth  int    `json:"max_depth"`   // deepest decomposition depth reached (max Ticket.Depth)
+	MaxFanOut int    `json:"max_fan_out"` // widest single decomposition (max len(Ticket.Children))
+}
+
+// GraphShapes returns the per-Goal task-graph shape, sorted by GoalID for
+// deterministic output. It is a pure function of the derived state.
+func GraphShapes(s *state.State) []GraphShape {
+	byGoal := map[string]*GraphShape{}
+	for _, t := range s.Tickets {
+		gs := byGoal[t.GoalID]
+		if gs == nil {
+			gs = &GraphShape{GoalID: t.GoalID}
+			byGoal[t.GoalID] = gs
+		}
+		gs.Tickets++
+		if t.Depth > gs.MaxDepth {
+			gs.MaxDepth = t.Depth
+		}
+		if n := len(t.Children); n > gs.MaxFanOut {
+			gs.MaxFanOut = n
+		}
+	}
+	out := make([]GraphShape, 0, len(byGoal))
+	for _, gs := range byGoal {
+		out = append(out, *gs)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].GoalID < out[j].GoalID })
+	return out
 }
 
 // criticalPathDepth returns the length of the longest dependency chain in the

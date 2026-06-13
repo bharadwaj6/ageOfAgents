@@ -21,6 +21,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/internal/mergequeue"
+	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
 	"github.com/bharadwaj6/ageOfAgents/internal/orchestrator"
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/internal/verify"
@@ -415,6 +416,10 @@ func printStatus(led *ledger.Ledger) error {
 
 	for _, gid := range goalIDs {
 		fmt.Printf("goal %s: %s\n", gid, s.Goals[gid].Text)
+	}
+	for _, gs := range metrics.GraphShapes(s) {
+		fmt.Printf("  graph %s: tickets=%d depth=%d fan-out=%d\n",
+			gs.GoalID, gs.Tickets, gs.MaxDepth, gs.MaxFanOut)
 	}
 	fmt.Println()
 

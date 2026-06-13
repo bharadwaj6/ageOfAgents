@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
 )
 
@@ -107,6 +108,52 @@ func TestComputeDiamond(t *testing.T) {
 	}
 	if m.MeanAttemptsToMerge != 1.0 {
 		t.Errorf("MeanAttemptsToMerge = %v, want 1.0", m.MeanAttemptsToMerge)
+	}
+}
+
+func TestGraphShapes(t *testing.T) {
+	// A diamond: root decomposes into 4 children at depth 1.
+	s := newStream(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "root", GoalID: "g1", Title: "root", IdempotencyKey: "g1:impl"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t", GoalID: "g1", Title: "types", CreatedBy: "w", Depth: 1, IdempotencyKey: "g1:t"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "b", GoalID: "g1", Title: "backend", DependsOn: []string{"t"}, CreatedBy: "w", Depth: 1, IdempotencyKey: "g1:b"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "f", GoalID: "g1", Title: "frontend", DependsOn: []string{"t"}, CreatedBy: "w", Depth: 1, IdempotencyKey: "g1:f"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "e", GoalID: "g1", Title: "e2e", DependsOn: []string{"b", "f"}, CreatedBy: "w", Depth: 1, IdempotencyKey: "g1:e"}).
+		add(api.TicketDecomposed, "orchestrator", api.TicketDecomposedPayload{TicketID: "root", Children: []string{"t", "b", "f", "e"}})
+
+	st, err := state.Fold(s.events)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	shapes := GraphShapes(st)
+	if len(shapes) != 1 {
+		t.Fatalf("GraphShapes len = %d, want 1", len(shapes))
+	}
+	got := shapes[0]
+	want := GraphShape{GoalID: "g1", Tickets: 5, MaxDepth: 1, MaxFanOut: 4}
+	if got != want {
+		t.Errorf("GraphShape = %+v, want %+v", got, want)
+	}
+}
+
+func TestGraphShapesSingleTicket(t *testing.T) {
+	// A goal with one undecomposed ticket: zero depth, zero fan-out.
+	s := newStream(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "tiny"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "g1-impl", GoalID: "g1", Title: "impl", IdempotencyKey: "g1:impl"})
+
+	st, err := state.Fold(s.events)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	shapes := GraphShapes(st)
+	if len(shapes) != 1 {
+		t.Fatalf("GraphShapes len = %d, want 1", len(shapes))
+	}
+	want := GraphShape{GoalID: "g1", Tickets: 1, MaxDepth: 0, MaxFanOut: 0}
+	if shapes[0] != want {
+		t.Errorf("GraphShape = %+v, want %+v", shapes[0], want)
 	}
 }
 
