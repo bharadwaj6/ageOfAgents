@@ -54,6 +54,28 @@ If, on a representative workload, the system cannot show:
 
 …then the design has regressed from its own premise. These four are the minimum bar.
 
+## MAST failure-mode observability
+
+Beyond aggregate metrics, every run can be scored directly against the **MAST taxonomy**
+(Cemri et al., *Why Do Multi-Agent LLM Systems Fail?*, arXiv:2503.13657). `internal/diagnose`
+classifies the Event Log into a per-mode histogram — turning "the design is *aligned* with MAST"
+into "this run is *measured* against MAST". Like every other metric, it is a pure function of the
+log (no bespoke instrumentation).
+
+| Mode | Signal in the Event Log | MAST category |
+|---|---|---|
+| **step_repetition** | the same logical ticket merged more than once | System design (FM-1.3, the largest individual mode) |
+| **premature_termination** | a ticket failed without delivering and without a dead dependency | Task verification |
+| **dead_dependency_stall** | a ticket blocked or failed because a dependency can never complete | Inter-agent misalignment |
+| **retry_churn** | proposals rejected by the Gate and re-attempted | Task verification |
+| **worker_stall** | the Stall Detector flagged a worker with no progress | System design |
+| **missing_verification** | a merge without a preceding `VerificationPassed` (must be **0**, enforced by the `MergeImpliesVerified` invariant) | Task verification |
+
+Inspect it with `aoa diagnose [--json]`; the `aoa bench` table reports each strategy's total as a
+`MAST` column, so the hermetic suite demonstrates **0 failure modes** alongside its other guarantees.
+On live-LLM runs (see [`roadmap.md`](roadmap.md)) this histogram is the primary instrument for
+checking whether the design's failure-mode *prevention* survives contact with a real agent.
+
 ## What we explicitly do NOT measure
 
 Pheromone convergence, trust-score discrimination, and stability-horizon round counts — these belonged to
