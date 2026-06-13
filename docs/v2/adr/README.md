@@ -11,4 +11,5 @@ corpus under `docs/` (`claude.md`, `gemini.md`, `grok.md`, `perplexity.md`, `res
 | [004](004-pluggable-agent-backend.md) | Pluggable agent Backend (mock + claudecode) behind one interface |
 | [005](005-no-markets-no-consensus.md) | No markets, no multi-agent consensus/voting for aligned coding agents |
 | [006](006-emergent-task-graph-blackboard.md) | Emergent Task Graph + Shared Log coordination (not messaging) |
+| [007](007-emergent-decomposition-and-graph-governor.md) | Emergent decomposition mechanics + cycle/depth/fan-out governor |
 

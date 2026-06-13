@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
+	"github.com/bharadwaj6/ageOfAgents/internal/bench"
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/internal/mergequeue"
@@ -47,6 +48,8 @@ func main() {
 		err = cmdFeed(args)
 	case "events":
 		err = cmdEvents(args)
+	case "bench":
+		err = cmdBench(args)
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -70,6 +73,7 @@ Usage:
   aoa status [--path DIR]                 Show goals and tickets
   aoa feed   [--path DIR] [--type T]      Print the event stream
   aoa events [--path DIR] tail [--count N] | replay
+  aoa bench  [--json]                     Run the hermetic benchmark suite + report
 `)
 }
 
@@ -282,6 +286,57 @@ func cmdEvents(args []string) error {
 		return fmt.Errorf("unknown events subcommand %q (want tail|replay)", sub)
 	}
 	return nil
+}
+
+func cmdBench(args []string) error {
+	fs := flag.NewFlagSet("bench", flag.ExitOnError)
+	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
+	_ = fs.Parse(args)
+
+	dir, err := os.MkdirTemp("", "aoa-bench-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	results, err := bench.RunSuite(context.Background(), dir, bench.Suite(), bench.AllStrategies)
+	if err != nil {
+		return err
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(results)
+	}
+	printBenchTable(results)
+	return nil
+}
+
+// printBenchTable renders the benchmark results as a markdown table. The key
+// columns make the design thesis legible: coordination LLM sessions stay at 0,
+// merge correctness stays at 100%, and the Emergent strategy unlocks worker
+// parallelism the Single/PlanFirst baselines cannot.
+func printBenchTable(results []bench.Result) {
+	fmt.Println("| task | strategy | merged | workers(max∥) | crit-path | coord-LLM | merge-correct | violations |")
+	fmt.Println("|------|----------|-------:|--------------:|----------:|----------:|--------------:|-----------:|")
+	clean := true
+	for _, r := range results {
+		m := r.Metrics
+		v := len(r.Violations)
+		if v > 0 {
+			clean = false
+		}
+		fmt.Printf("| %s | %s | %d | %d | %d | %d | %.0f%% | %d |\n",
+			r.Task, r.Strategy, m.Merged, m.MaxConcurrentWorkers, m.CriticalPathDepth,
+			m.CoordinationSessions, m.MergeCorrectness*100, v)
+	}
+	fmt.Println()
+	if clean {
+		fmt.Println("All runs: 0 coordination LLM sessions, 100% merge correctness, 0 invariant violations.")
+	} else {
+		fmt.Println("INVARIANT VIOLATIONS DETECTED — see the violations column and re-run with --json for detail.")
+	}
 }
 
 // --- wiring ---------------------------------------------------------------

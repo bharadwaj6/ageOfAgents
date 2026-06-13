@@ -1,7 +1,10 @@
 # Age of Agents — v2 Implementation Roadmap
 
-**Status:** in progress. This is the living plan + progress tracker for the next phase of work. It is the
-**resume anchor**: a fresh agent (e.g. if the current session runs out of credits) should start here.
+**Status:** Tracks A, B, C complete (emergent graph + cycle/runaway guards; hermetic invariant +
+fault-injection harness; replay-based metrics + benchmark + design comparison). This is the living plan +
+progress tracker and the **resume anchor**: a fresh agent (e.g. if the session runs out of credits) should
+start here. Next candidates (not yet started): live head-to-head competitor runs (deferred — see
+`comparison.md`), an optional TLA+ spec, and `claudecode` real-LLM bench runs.
 
 ## Resuming agent: start here
 
@@ -112,20 +115,24 @@ multi-writer option).
 
 ## Track C — Replay-based metrics + controlled benchmark + design comparison
 
-- [ ] `internal/metrics/metrics.go` — compute `metrics.md` metrics purely by replaying the Event Log
-      (coordination tokens **assert 0**; merge correctness **assert 100%**; rejected-proposal rate;
-      step-repetition **assert 0**; recovery time; mean attempts-to-merge; throughput/worker).
-- [ ] `bench/tasks/` — Go-native curated suite (self-contained tasks, `go build`/`go test` gates) +
-      multi-component "diamond" tasks (shared types → backend + frontend → integration).
-- [ ] `cmd/aoa` `bench` subcommand — run the suite, emit JSON + markdown report from `internal/metrics`,
-      with built-in honest baselines `single` (one ticket, no decomposition) and `planfirst`
-      (plan-then-implement single agent). Fold the two `scripts/benchmark_*.sh` into thin wrappers.
-- [ ] `docs/v2/comparison.md` — design-level comparison table vs gastown / speckit+plan / opencode
-      ultraworker: which `metrics.md` invariants each architecture can/can't guarantee, grounded in
-      `docs/history/gastown_arch.md` + the research corpus.
-- [ ] New ADR if Track A/B introduces a structural decision (e.g. graph governor / `TicketDecomposed`).
+- [x] `internal/metrics/metrics.go` — computes the `metrics.md` numbers purely by replaying the Event Log:
+      coordination sessions (0 by design), merge correctness, rejected-proposal rate, step-repetitions,
+      mean attempts-to-merge, **max concurrent workers** (parallelism achieved), **critical-path depth**,
+      duration + throughput, emergent-ticket count. Unit-tested on a diamond + a retry history.
+- [x] `internal/bench` — Go-native curated suite (chat-app / lru-cache / cli-tool) run under three
+      strategies on the deterministic mock: `single`, `planfirst`, `emergent` (the diamond). Reuses the
+      orchestrator + invariant + metrics packages; asserts 0 violations and that emergent beats the
+      baselines on parallelism. (Replaces `bench/tasks/`; tasks are defined in `bench.Suite()`.)
+- [x] `cmd/aoa bench` subcommand — runs the suite in a temp workspace, emits a markdown table (or
+      `--json`) of the metrics + violations per task × strategy. `scripts/benchmark_coordination.sh` is now
+      a thin wrapper over it (`benchmark_live.sh` stays as the real-`claudecode` E2E).
+- [x] `docs/v2/comparison.md` — design-level property matrix vs gastown / speckit+plan / opencode
+      ultraworker, grounded in `docs/history/gastown_arch.md` + the research corpus, paired with the
+      properties `aoa` proves about itself (invariant harness + bench). Clear about what is/ isn't claimed.
+- [x] `docs/v2/adr/007-emergent-decomposition-and-graph-governor.md` — the structural decision from
+      Track A (TicketDecomposed + graph governor + completion/liveness), indexed in the ADR README.
 
-**Last status:** blocked on Track B.
+**Last status:** done. Full suite green (incl. metrics + bench tests), gofmt clean, committed.
 
 ---
 
