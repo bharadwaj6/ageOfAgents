@@ -6,8 +6,8 @@ reads `CLAUDE.md`, which points here.)
 ## What this is
 
 Age of Agents (`aoa`) is a **minimal, Gate-verified orchestrator** for fleets of AI coding agents. Read
-[`README.md`](README.md) for the overview and [`docs/v2/architecture.md`](docs/v2/architecture.md) for the
-design. The decisions that shape the codebase are recorded as ADRs in [`docs/v2/adr/`](docs/v2/adr/) —
+[`README.md`](README.md) for the overview and [`docs/design/architecture.md`](docs/design/architecture.md) for the
+design. The decisions that shape the codebase are recorded as ADRs in [`docs/design/adr/`](docs/design/adr/) —
 **read them before making structural changes**, and add a new ADR when you make one.
 
 ## Glossary: docs vs. code

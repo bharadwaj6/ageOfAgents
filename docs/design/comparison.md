@@ -10,7 +10,7 @@ This is a **design-level** comparison grounded in each system's architecture, pa
 against the same tasks with a real LLM requires installing each, real API spend, and produces noisy,
 hard-to-reproduce numbers (see `roadmap.md` for the rationale behind deferring that). Instead we compare
 on the dimension the research says actually decides multi-agent success — **coordination, verification,
-and idempotency**, not raw model capability or agent count (`docs/v2/architecture.md` §1; Cemri et al.,
+and idempotency**, not raw model capability or agent count (`docs/design/architecture.md` §1; Cemri et al.,
 MAST, arXiv:2503.13657).
 
 Two evidence sources back the `aoa` column:
@@ -32,7 +32,7 @@ Two evidence sources back the `aoa` column:
 
 ## Property matrix
 
-Rows are the `docs/v2/metrics.md` litmus properties. "✓ proven" = asserted by the `aoa` test suite;
+Rows are the `docs/design/metrics.md` litmus properties. "✓ proven" = asserted by the `aoa` test suite;
 others are assessed from each system's documented architecture and may change as those systems evolve
 (see Caveats).
 

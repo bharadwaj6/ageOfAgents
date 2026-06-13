@@ -57,5 +57,5 @@ If, on a representative workload, the system cannot show:
 ## What we explicitly do NOT measure
 
 Pheromone convergence, trust-score discrimination, and stability-horizon round counts — these belonged to
-the market/consensus design that was rejected (see `docs/v2/adr/005-no-markets-no-consensus.md`).
+the market/consensus design that was rejected (see `docs/design/adr/005-no-markets-no-consensus.md`).
 Correctness comes from an objective Gate, not from agent voting or reputation.

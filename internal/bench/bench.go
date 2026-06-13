@@ -1,5 +1,5 @@
 // Package bench runs a fixed task suite through the orchestrator under different
-// decomposition strategies and reports the docs/v2/metrics.md numbers, computed
+// decomposition strategies and reports the docs/design/metrics.md numbers, computed
 // purely by replaying the resulting Event Log. It is the controlled, hermetic
 // benchmark: every strategy uses the deterministic mock Backend, so the run is
 // offline and reproducible, and the comparison isolates the one variable that

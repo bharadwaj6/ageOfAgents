@@ -1,5 +1,5 @@
 // Package agent defines the single seam between the Scheduler and the AI
-// coding agent (docs/v2/adr/004-pluggable-agent-backend.md). Business logic
+// coding agent (docs/design/adr/004-pluggable-agent-backend.md). Business logic
 // never calls a provider SDK directly; it goes through [Backend].
 //
 // A Backend's job is narrow: given a [Task], make the necessary file changes in

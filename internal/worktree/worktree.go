@@ -1,6 +1,6 @@
 // Package worktree manages the git substrate: an integration repository whose
 // `main` branch is kept linearizable, and isolated per-ticket worktrees where
-// agents do their work (docs/v2/adr/002, /003). Workers edit their own worktree;
+// agents do their work (docs/design/adr/002, /003). Workers edit their own worktree;
 // the merge queue serializes merges into `main`.
 package worktree
 

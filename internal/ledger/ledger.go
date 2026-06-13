@@ -1,5 +1,5 @@
 // Package ledger implements the append-only JSONL event log that is the single
-// source of truth for the orchestrator (docs/v2/adr/001-event-sourced-truth.md).
+// source of truth for the orchestrator (docs/design/adr/001-event-sourced-truth.md).
 //
 // The log is newline-delimited JSON: one [api.Event] per line, in append order.
 // Sequence numbers are assigned on append and are monotonic starting at 1.

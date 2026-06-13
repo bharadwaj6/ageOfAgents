@@ -1,5 +1,5 @@
 // Package verify runs the objective verification gate that decides whether a
-// proposal may merge (docs/v2/adr/002-verifier-gated-merge-queue.md). It runs a
+// proposal may merge (docs/design/adr/002-verifier-gated-merge-queue.md). It runs a
 // configured, ordered list of commands (build / tests / lint) in a directory;
 // the gate passes only if every command exits zero.
 package verify

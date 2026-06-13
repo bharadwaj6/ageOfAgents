@@ -1,5 +1,5 @@
 // Package mergequeue serializes writes to the integration branch behind the
-// objective verifier (docs/v2/adr/002-verifier-gated-merge-queue.md).
+// objective verifier (docs/design/adr/002-verifier-gated-merge-queue.md).
 //
 // For each proposal it merges the branch into main, runs the verifier against
 // the *post-merge* state, and keeps the merge only if it passes; otherwise it

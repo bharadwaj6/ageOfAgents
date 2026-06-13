@@ -10,7 +10,7 @@ voting). Prior `aoa` implemented all of these. The newer empirical research argu
 tools for *aligned, cooperative* coding agents.
 
 ## Decision
-For v1 we **do not build** markets/auctions/strategic bidding, ACO pheromone simulation, multi-agent
+We **do not build** markets/auctions/strategic bidding, ACO pheromone simulation, multi-agent
 debate/voting consensus, or a multi-dimensional trust registry. Task allocation is plain capability/
 load-based dispatch (ADR 003); correctness comes from an objective verifier (ADR 002), not agent votes.
 

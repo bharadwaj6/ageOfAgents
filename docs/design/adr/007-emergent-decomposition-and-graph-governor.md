@@ -29,9 +29,12 @@ A `Backend` `Result` may carry `Subtasks` instead of a code change. When it does
 
 This is a **worker** extending the Shared Log — ADR 003/006 compliant; the Scheduler stays deterministic.
 
-**Graph governor.** Two knobs bound emergent growth, analogous to the concurrency governor:
-`MaxGraphDepth` (default 5) and `MaxTicketsPerGoal` (default 64). A decomposition past either fails the
-parent terminally.
+**Graph governor.** Three knobs bound emergent growth, analogous to the concurrency governor:
+`MaxGraphDepth` (default 5), `MaxTicketsPerGoal` (default 64), and `MaxFanOut` (default 8 — the most
+*new* children one decomposition may emit). `MaxFanOut` bounds a single runaway batch independent of the
+cumulative per-goal budget: a worker that decides one function needs 19 child tickets is capped at the
+batch, not merely once the goal total is exhausted. A decomposition past any knob fails the parent
+terminally.
 
 **Liveness.** `DepsSatisfied` is completion-aware — a `StatusDecomposed` parent is complete once all its
 descendants merge. `DeadDependency`/`Blocked` terminally fail any ticket whose dependency can never
@@ -41,7 +44,7 @@ complete (a failed dep, or a decomposed subtree containing a dead descendant), s
 - Emergent decomposition is real and **provably bounded and acyclic**; the task graph is always a DAG.
 - Liveness holds: every goal reaches a terminal state (merged / failed / decomposed).
 - Crash-safe and idempotent: re-decomposition after a crash adopts existing children.
-- Cost: one new event type, one new terminal status, two governor knobs, and a `Children` field on the
+- Cost: one new event type, one new terminal status, three governor knobs, and a `Children` field on the
   derived ticket. All derived purely by replay (ADR 001); no side store.
 - Verified by the hermetic chaos harness (`internal/invariant`, `internal/agent/faulty.go`,
   `internal/orchestrator/chaos_test.go`), which both asserts the invariants across randomized fault
