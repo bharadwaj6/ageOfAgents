@@ -9,5 +9,9 @@
 /demo/
 /.aoa/
 
+# TLC model-checker working output
+docs/design/formal/states/
+*.toolbox
+
 # OS
 .DS_Store

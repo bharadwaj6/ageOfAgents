@@ -170,7 +170,11 @@ there is no separate mutable store to keep consistent.
 | Separate CQRS database | Extra moving parts; the JSONL Event Log already gives queryable, replayable truth. |
 | Multi-tier escalation, federation, gossip, leader election | Single-node MVP; one Stall Detector + crash-only restart covers recovery. Defer until genuinely multi-node. |
 
-These are revisitable, but each must earn its place against a measured failure mode.
+These are revisitable, but each must earn its place against a measured failure mode. Note the scope: we
+reject markets/voting/debate **as a live control plane or runtime selector** for aligned coding agents —
+not as techniques with no use anywhere. Off the critical path (offline training-signal generation,
+research evaluation) debate/ensembling can be useful; that would enter, if ever, as an offline tool
+emitting ordinary `agent.Backend` work, never as a second coordinator (ADR 011).
 
 ## 8. How the four goals are met
 

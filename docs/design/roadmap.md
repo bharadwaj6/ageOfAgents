@@ -1,10 +1,12 @@
 # Age of Agents — Implementation Roadmap
 
 **Status:** Tracks A, B, C complete (emergent graph + cycle/runaway guards; hermetic invariant +
-fault-injection harness; replay-based metrics + benchmark + design comparison). This is the living plan +
-progress tracker and the **resume anchor**: a fresh agent (e.g. if the session runs out of credits) should
-start here. Next candidates (not yet started): live head-to-head competitor runs (deferred — see
-`comparison.md`), an optional TLA+ spec, and `claudecode` real-LLM bench runs.
+fault-injection harness; replay-based metrics + benchmark + design comparison). **Track D complete**
+(external-critique response: MAST self-measurement, human-in-the-loop approval gate, live-eval harness,
+TLA+ spec + ADRs 008–011). This is the living plan + progress tracker and the **resume anchor**: a fresh
+agent (e.g. if the session runs out of credits) should start here. Next candidates (not yet started):
+*running* the live head-to-head competitor runs at scale (harness now exists; needs API budget) and
+speculative/batched merges for throughput.
 
 ## Resuming agent: start here
 
@@ -133,6 +135,30 @@ multi-writer option).
       Track A (TicketDecomposed + graph governor + completion/liveness), indexed in the ADR README.
 
 **Last status:** done. Full suite green (incl. metrics + bench tests), gofmt clean, committed.
+
+## Track D — External-critique response
+
+Three independent reviews converged: the architecture is well-aimed, but the strength was "hermetic + mock"
+with no live evidence, no MAST *measurement*, no human checkpoint, and an under-stated formal/idempotency
+story. This track addresses the real, actionable items (and skips what reviewers agreed to keep deferred:
+multi-node, log compaction, markets/voting).
+
+- [x] **MAST self-measurement** — `internal/diagnose` classifies a run's Event Log into a MAST failure-mode
+      histogram (step repetition, premature termination, dead-dependency stall, retry churn, worker stall,
+      missing verification) as a pure replay function; `aoa diagnose [--json]`; a `MAST` column on
+      `aoa bench`; metrics.md documents the mode→signal mapping.
+- [x] **Human-in-the-loop approval gate (ADR 008)** — opt-in `require_approval`; merge queue `DryRun`
+      (merge→verify→always roll back) presents a Gate-verified candidate without writing to main;
+      `ApprovalRequested/Granted/Denied` events + `awaiting` state; `aoa approve`/`aoa reject`; new
+      `ApprovalGate` invariant; `Run` pauses cleanly when only approvals remain.
+- [x] **Live-eval harness (ADR 009)** — `internal/liveeval` runs the orchestrator end-to-end on a real repo
+      against a success oracle, backend-agnostic (hermetic with mock, opt-in `claudecode`); `aoa eval`;
+      token usage threaded `agent.Result`→events→`metrics.TokensTotal`; comparison.md live-eval protocol.
+- [x] **Formal & docs hardening** — `docs/design/formal/Orchestrator.tla` (+ `.cfg`) model-checks I1/I2/I4
+      + the approval gate (TLC: 518 states, no error); ADR 010 (semantic idempotency) and ADR 011 (debate/
+      markets rejected *as a live control plane*, not universally); architecture §7 reworded.
+
+**Last status:** done. Full suite + chaos green, gofmt clean, TLC clean. Committed.
 
 ---
 
