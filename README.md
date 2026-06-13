@@ -1,6 +1,6 @@
 # Age of Agents
 
-**Age of Agents** (`aoa`) coordinates a fleet of AI coding agents working on your codebase — safely, deterministically, and with zero wasted work.
+**Age of Agents** (`aoa`) coordinates a fleet of AI coding agents working on your codebase — safely and deterministically, with near-zero coordination overhead and nothing merged unless your build and tests pass.
 
 You give it a **Goal** (what you want built). It breaks that Goal into **Tasks**, dispatches each Task to a **Worker** (an AI agent in an isolated git checkout), and merges the results into `main` — but only if your build and tests pass. One binary, one config file, git only.
 
@@ -128,8 +128,8 @@ The `mock` Backend makes the full loop hermetic and offline in tests. Real agent
 
 ## Documentation
 
-- [`docs/v2/architecture.md`](docs/v2/architecture.md) — design and research basis
-- [`docs/v2/getting_started.md`](docs/v2/getting_started.md) — step-by-step tutorial
-- [`docs/v2/adr/`](docs/v2/adr/) — architecture decision records
-- [`docs/v2/metrics.md`](docs/v2/metrics.md) — success metrics
+- [`docs/design/architecture.md`](docs/design/architecture.md) — design and research basis
+- [`docs/design/getting_started.md`](docs/design/getting_started.md) — step-by-step tutorial
+- [`docs/design/adr/`](docs/design/adr/) — architecture decision records
+- [`docs/design/metrics.md`](docs/design/metrics.md) — success metrics
 - `docs/*.md` — the research corpus
