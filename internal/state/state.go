@@ -19,6 +19,7 @@ const (
 	StatusClaimed    TicketStatus = "claimed"    // a worker took ownership
 	StatusRunning    TicketStatus = "running"    // worker is executing
 	StatusProposed   TicketStatus = "proposed"   // proposal submitted; awaiting merge queue
+	StatusAwaiting   TicketStatus = "awaiting"   // verified; parked for human approval (ADR 008)
 	StatusMerged     TicketStatus = "merged"     // verified and merged (terminal, success)
 	StatusFailed     TicketStatus = "failed"     // gave up (terminal, failure)
 	StatusDecomposed TicketStatus = "decomposed" // split into children (terminal; work moved to children)
@@ -49,7 +50,8 @@ type Ticket struct {
 	Branch         string
 	Commit         string
 	Trace          string
-	Depth          int // decomposition depth; tickets seeded from a goal are 0
+	Depth          int  // decomposition depth; tickets seeded from a goal are 0
+	Approved       bool // a human approved the parked proposal (ADR 008)
 	LastActivity   time.Time
 }
 
@@ -219,6 +221,40 @@ func (s *State) Apply(e api.Event) error {
 			return err
 		}
 		if t := s.Tickets[p.TicketID]; t != nil {
+			t.Status = StatusFailed
+			t.LastActivity = e.Timestamp
+		}
+
+	case api.ApprovalRequested:
+		var p api.ApprovalRequestedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		// A verified proposal parks for a human decision.
+		if t := s.Tickets[p.TicketID]; t != nil && t.Status == StatusProposed {
+			t.Status = StatusAwaiting
+			t.LastActivity = e.Timestamp
+		}
+
+	case api.ApprovalGranted:
+		var p api.ApprovalGrantedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		// Approval returns the ticket to the merge queue, now flagged approved so
+		// the queue performs the real verify+merge instead of another dry run.
+		if t := s.Tickets[p.TicketID]; t != nil && t.Status == StatusAwaiting {
+			t.Status = StatusProposed
+			t.Approved = true
+			t.LastActivity = e.Timestamp
+		}
+
+	case api.ApprovalDenied:
+		var p api.ApprovalDeniedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if t := s.Tickets[p.TicketID]; t != nil && t.Status == StatusAwaiting {
 			t.Status = StatusFailed
 			t.LastActivity = e.Timestamp
 		}
@@ -433,6 +469,19 @@ func (s *State) Proposed() []*Ticket {
 	var out []*Ticket
 	for _, t := range s.orderedTickets() {
 		if t.Status == StatusProposed {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// AwaitingApproval returns tickets parked for a human decision, in creation
+// order. The Scheduler uses this to pause cleanly rather than spin when the
+// only remaining work needs human approval (ADR 008).
+func (s *State) AwaitingApproval() []*Ticket {
+	var out []*Ticket
+	for _, t := range s.orderedTickets() {
+		if t.Status == StatusAwaiting {
 			out = append(out, t)
 		}
 	}

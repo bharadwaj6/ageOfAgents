@@ -29,6 +29,9 @@ type Config struct {
 	ConventionsFile string `toml:"conventions_file"`
 	// Verify is the ordered Gate: each entry is an argv.
 	Verify [][]string `toml:"verify"`
+	// RequireApproval parks every Gate-verified proposal for a human decision
+	// (aoa approve / aoa reject) before it merges to main (ADR 008). Default off.
+	RequireApproval bool `toml:"require_approval"`
 }
 
 // Default returns a config with sensible defaults: an offline mock Backend and

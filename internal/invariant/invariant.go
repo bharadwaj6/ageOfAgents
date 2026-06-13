@@ -44,6 +44,7 @@ func Check(events []api.Event) []Violation {
 	vs = append(vs, NoDuplicateMergedKey(events)...)
 	vs = append(vs, AcyclicGraph(events)...)
 	vs = append(vs, ReplayDeterministicAndTotal(events)...)
+	vs = append(vs, ApprovalGate(events)...)
 	return vs
 }
 
@@ -137,6 +138,31 @@ func NoDuplicateMergedKey(events []api.Event) []Violation {
 				fmt.Sprintf("idempotency key %q merged for both %q and %q", key, prev, id)})
 		} else if !ok {
 			mergedKey[key] = id
+		}
+	}
+	return vs
+}
+
+// ApprovalGate asserts the human-in-the-loop gate is honored: any ticket for
+// which approval was requested must have been granted before it merges (ADR
+// 008). This holds regardless of config — if a proposal was ever parked for
+// approval, it cannot reach main without an explicit ApprovalGranted.
+func ApprovalGate(events []api.Event) []Violation {
+	var vs []Violation
+	requested := map[string]bool{}
+	granted := map[string]bool{}
+	for _, e := range events {
+		id := ticketID(e)
+		switch e.Type {
+		case api.ApprovalRequested:
+			requested[id] = true
+		case api.ApprovalGranted:
+			granted[id] = true
+		case api.Merged:
+			if requested[id] && !granted[id] {
+				vs = append(vs, Violation{"ApprovalGate",
+					fmt.Sprintf("ticket %q merged (seq %d) after approval was requested but never granted", id, e.Seq)})
+			}
 		}
 	}
 	return vs

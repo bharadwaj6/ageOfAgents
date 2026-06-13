@@ -89,6 +89,34 @@ func TestAcyclicGraphFlagsCycle(t *testing.T) {
 	}
 }
 
+func TestApprovalGateFlagsMergeWithoutGrant(t *testing.T) {
+	// A proposal was parked for approval but merged without ApprovalGranted.
+	bad := newSeq(t).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k"}).
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t1", Commit: "c"}).
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "t1"}).
+		add(api.ApprovalRequested, "orchestrator", api.ApprovalRequestedPayload{TicketID: "t1"}).
+		add(api.Merged, "orchestrator", api.MergedPayload{TicketID: "t1", Commit: "c"}).
+		events
+	if vs := ApprovalGate(bad); len(vs) == 0 {
+		t.Error("expected an ApprovalGate violation for a merge without approval")
+	}
+
+	// With ApprovalGranted before the merge, the gate is satisfied.
+	good := newSeq(t).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k"}).
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t1", Commit: "c"}).
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "t1"}).
+		add(api.ApprovalRequested, "orchestrator", api.ApprovalRequestedPayload{TicketID: "t1"}).
+		add(api.ApprovalGranted, "human", api.ApprovalGrantedPayload{TicketID: "t1"}).
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "t1"}).
+		add(api.Merged, "orchestrator", api.MergedPayload{TicketID: "t1", Commit: "c"}).
+		events
+	if vs := ApprovalGate(good); len(vs) != 0 {
+		t.Errorf("approved merge should pass the gate, got: %v", vs)
+	}
+}
+
 func TestMonotonicGaplessSeqFlagsGap(t *testing.T) {
 	e1, _ := api.NewEvent(api.Heartbeat, "x", api.HeartbeatPayload{})
 	e1.Seq = 1

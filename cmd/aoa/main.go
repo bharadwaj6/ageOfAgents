@@ -54,6 +54,10 @@ func main() {
 		err = cmdBench(args)
 	case "diagnose":
 		err = cmdDiagnose(args)
+	case "approve":
+		err = cmdApprove(args, true)
+	case "reject":
+		err = cmdApprove(args, false)
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -79,6 +83,8 @@ Usage:
   aoa events [--path DIR] tail [--count N] | replay
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
+  aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
+  aoa reject  [--path DIR] <ticket-id>    Reject a parked proposal (require_approval)
 `)
 }
 
@@ -318,6 +324,67 @@ func cmdBench(args []string) error {
 	return nil
 }
 
+// cmdApprove records a human decision on a proposal parked by the approval gate
+// (ADR 008): approve=true emits ApprovalGranted (the ticket returns to the merge
+// queue), approve=false emits ApprovalDenied (the ticket fails). Run `aoa run`
+// afterwards to let the Scheduler act on the decision.
+func cmdApprove(args []string, approve bool) error {
+	name := "approve"
+	if !approve {
+		name = "reject"
+	}
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	path := fs.String("path", ".", "workspace root")
+	_ = fs.Parse(args)
+
+	ticketID := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if ticketID == "" {
+		return fmt.Errorf("ticket id is required: aoa %s <ticket-id>", name)
+	}
+	ws, err := workspaceAt(*path)
+	if err != nil {
+		return err
+	}
+	led, err := ledger.Open(ws.ledgerPath)
+	if err != nil {
+		return err
+	}
+	events, err := led.Read()
+	if err != nil {
+		return err
+	}
+	s, err := state.Fold(events)
+	if err != nil {
+		return err
+	}
+	t := s.Tickets[ticketID]
+	if t == nil {
+		return fmt.Errorf("unknown ticket %q", ticketID)
+	}
+	if t.Status != state.StatusAwaiting {
+		return fmt.Errorf("ticket %q is %s, not awaiting approval", ticketID, t.Status)
+	}
+
+	var ev api.Event
+	if approve {
+		ev, err = api.NewEvent(api.ApprovalGranted, "human", api.ApprovalGrantedPayload{TicketID: ticketID})
+	} else {
+		ev, err = api.NewEvent(api.ApprovalDenied, "human", api.ApprovalDeniedPayload{TicketID: ticketID, Reason: "rejected by operator"})
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := led.Append(ev); err != nil {
+		return err
+	}
+	if approve {
+		fmt.Printf("approved %s — run `aoa run --path %s` to merge it\n", ticketID, *path)
+	} else {
+		fmt.Printf("rejected %s\n", ticketID)
+	}
+	return nil
+}
+
 // cmdDiagnose prints the MAST-style failure-mode histogram for a workspace's
 // Event Log, turning the design's "aligned with MAST" claim into a measured
 // property of the actual run (see internal/diagnose).
@@ -414,10 +481,11 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	}
 	gate := verify.Verifier{Commands: toCommands(cfg.Verify)}
 	opt := orchestrator.Options{
-		Concurrency:  cfg.Concurrency,
-		MaxAttempts:  cfg.MaxAttempts,
-		Conventions:  conventions,
-		WorktreeBase: ws.worktreeBase,
+		Concurrency:     cfg.Concurrency,
+		MaxAttempts:     cfg.MaxAttempts,
+		Conventions:     conventions,
+		WorktreeBase:    ws.worktreeBase,
+		RequireApproval: cfg.RequireApproval,
 	}
 	o := orchestrator.New(led, repo, backend, mergequeue.New(repo, gate), opt)
 	return o, led, nil
