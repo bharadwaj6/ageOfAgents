@@ -1,0 +1,13 @@
+# Built binary
+/aoa
+
+# Go test/build artifacts
+*.test
+*.out
+
+# Local scratch / demo towns
+/demo/
+/.aoa/
+
+# OS
+.DS_Store
