@@ -14,4 +14,6 @@ corpus under `docs/` (`claude.md`, `gemini.md`, `grok.md`, `perplexity.md`, `res
 | [007](007-emergent-decomposition-and-graph-governor.md) | Emergent decomposition mechanics + cycle/depth/fan-out governor |
 | [008](008-human-in-the-loop-approval-gate.md) | Optional human-in-the-loop approval gate (dry-run + approve/reject) |
 | [009](009-live-evaluation-out-of-hermetic-suite.md) | Backend-agnostic live evaluation harness, opt-in and outside the hermetic suite |
+| [010](010-semantic-idempotency.md) | Semantic idempotency via worker-supplied keys (identity, not output) |
+| [011](011-debate-markets-as-offline-tools.md) | Debate/voting/markets rejected as a live control plane, not universally |
 
