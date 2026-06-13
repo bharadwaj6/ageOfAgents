@@ -27,6 +27,9 @@ func proposeFile(t *testing.T, repo *worktree.Repo, base, ticket, path, content 
 	if err != nil {
 		t.Fatalf("AddWorktree: %v", err)
 	}
+	// Tear down the worktree before t.TempDir's RemoveAll so the cross-linked
+	// .git/worktrees admin files don't race cleanup under parallel test load.
+	t.Cleanup(func() { _ = repo.Remove(context.Background(), wt) })
 	if err := os.WriteFile(filepath.Join(wt.Path, path), []byte(content), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
