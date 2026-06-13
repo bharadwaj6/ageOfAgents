@@ -127,6 +127,13 @@ func (r *Repo) Merge(ctx context.Context, branch, msg string) (sha string, err e
 	return strings.TrimSpace(out), nil
 }
 
+// ResetHard moves the integration branch back to sha, discarding any changes.
+// Used by the merge queue to roll back a merge that failed verification.
+func (r *Repo) ResetHard(ctx context.Context, sha string) error {
+	_, err := git(ctx, r.Dir, "reset", "--hard", sha)
+	return err
+}
+
 // Remove tears down a worktree and deletes its branch.
 func (r *Repo) Remove(ctx context.Context, w *Worktree) error {
 	if _, err := git(ctx, r.Dir, "worktree", "remove", "--force", w.Path); err != nil {
