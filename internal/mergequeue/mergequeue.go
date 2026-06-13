@@ -29,7 +29,8 @@ type Outcome struct {
 	TicketID    string
 	Worker      string
 	Merged      bool
-	MergeCommit string // set when Merged
+	Verified    bool   // the candidate passed the Gate (always set when verification ran)
+	MergeCommit string // set when Merged, or the candidate commit for a passing DryRun
 	Reason      string // set when !Merged
 	Output      string // verifier output (when verification ran)
 }
@@ -71,7 +72,45 @@ func (q *Queue) Process(ctx context.Context, p Proposal) (Outcome, error) {
 		return out, nil
 	}
 
+	out.Verified = true
 	out.Merged = true
 	out.MergeCommit = mergeSHA
+	return out, nil
+}
+
+// DryRun merges the proposal, runs the Gate against the post-merge state, then
+// *always* rolls main back — reporting whether the proposal would merge cleanly
+// without ever writing to main. The human-in-the-loop approval gate (ADR 008)
+// uses it to present a Gate-verified candidate before a person decides, so a
+// pending approval never leaves main in a half-merged state.
+func (q *Queue) DryRun(ctx context.Context, p Proposal) (Outcome, error) {
+	out := Outcome{TicketID: p.TicketID, Worker: p.Worker}
+
+	pre, err := q.Repo.Head(ctx)
+	if err != nil {
+		return out, fmt.Errorf("read head: %w", err)
+	}
+
+	mergeSHA, err := q.Repo.Merge(ctx, p.Branch, fmt.Sprintf("merge: %s", p.TicketID))
+	if err != nil {
+		// Conflict: main was already aborted back to pre. Reject the candidate.
+		out.Reason = fmt.Sprintf("merge failed: %v", err)
+		return out, nil
+	}
+
+	res := q.Verifier.Run(ctx, q.Repo.Dir)
+	out.Output = res.Output
+	// A dry run never keeps the merge, pass or fail.
+	if rbErr := q.Repo.ResetHard(ctx, pre); rbErr != nil {
+		return out, fmt.Errorf("rollback after dry run: %w", rbErr)
+	}
+	if !res.Passed {
+		out.Reason = "verification failed: " + res.Failed
+		return out, nil
+	}
+
+	out.Verified = true
+	out.MergeCommit = mergeSHA // candidate commit, informational only
+	out.Reason = "dry-run verified"
 	return out, nil
 }

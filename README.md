@@ -86,6 +86,7 @@ backend          = "mock"            # "mock" (offline) | "claudecode" (real age
 concurrency      = 4                 # max Workers running at once
 max_attempts     = 2                 # retries before a Task fails
 conventions_file = "CONVENTIONS.md"  # coding rules injected into every agent prompt
+require_approval = false             # if true, park each verified proposal for `aoa approve`
 verify = [                           # the Gate — nothing merges unless this passes
   ["go", "build", "./..."],
   ["go", "test", "./..."],

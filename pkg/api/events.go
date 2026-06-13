@@ -45,6 +45,13 @@ const (
 	WorkerStalled EventType = "WorkerStalled"
 	// WorkerRestarted: a stalled worker's ticket was reset for a fresh attempt.
 	WorkerRestarted EventType = "WorkerRestarted"
+	// ApprovalRequested: a proposal passed the Gate (dry-run) and is parked for a
+	// human decision before it may merge (optional human-in-the-loop gate, ADR 008).
+	ApprovalRequested EventType = "ApprovalRequested"
+	// ApprovalGranted: a human approved a parked proposal; it may now merge.
+	ApprovalGranted EventType = "ApprovalGranted"
+	// ApprovalDenied: a human rejected a parked proposal; the ticket fails.
+	ApprovalDenied EventType = "ApprovalDenied"
 )
 
 // Event is the append-only log envelope. Seq is assigned by the ledger on
@@ -183,4 +190,25 @@ type WorkerStalledPayload struct {
 type WorkerRestartedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker"`
+}
+
+// ApprovalRequestedPayload accompanies [ApprovalRequested]. Commit is the
+// dry-run merge commit the human is being asked to approve (informational).
+type ApprovalRequestedPayload struct {
+	TicketID string `json:"ticket_id"`
+	Worker   string `json:"worker,omitempty"`
+	Commit   string `json:"commit,omitempty"`
+}
+
+// ApprovalGrantedPayload accompanies [ApprovalGranted].
+type ApprovalGrantedPayload struct {
+	TicketID string `json:"ticket_id"`
+	By       string `json:"by,omitempty"` // who approved (e.g. a username)
+}
+
+// ApprovalDeniedPayload accompanies [ApprovalDenied].
+type ApprovalDeniedPayload struct {
+	TicketID string `json:"ticket_id"`
+	By       string `json:"by,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }

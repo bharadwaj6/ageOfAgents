@@ -90,6 +90,56 @@ func TestProcessRollsBackWhenVerifierFails(t *testing.T) {
 	}
 }
 
+func TestDryRunVerifiesWithoutWritingToMain(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	preHead, _ := repo.Head(ctx)
+	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
+
+	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
+	out, err := q.DryRun(ctx, p)
+	if err != nil {
+		t.Fatalf("DryRun: %v", err)
+	}
+	if !out.Verified {
+		t.Fatalf("expected the candidate to verify, got %+v", out)
+	}
+	if out.Merged {
+		t.Error("a dry run must never report Merged")
+	}
+	postHead, _ := repo.Head(ctx)
+	if postHead != preHead {
+		t.Errorf("main must be unchanged after a dry run: pre=%s post=%s", preHead, postHead)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "feature.txt")); !os.IsNotExist(err) {
+		t.Error("dry-run candidate must not remain on main")
+	}
+}
+
+func TestDryRunReportsUnverifiedWhenGateFails(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	preHead, _ := repo.Head(ctx)
+	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
+
+	q := New(repo, verify.Verifier{Commands: []verify.Command{{"false"}}})
+	out, err := q.DryRun(ctx, p)
+	if err != nil {
+		t.Fatalf("DryRun: %v", err)
+	}
+	if out.Verified || out.Merged {
+		t.Fatalf("failing gate should not verify or merge, got %+v", out)
+	}
+	postHead, _ := repo.Head(ctx)
+	if postHead != preHead {
+		t.Errorf("main must be unchanged after a failed dry run: pre=%s post=%s", preHead, postHead)
+	}
+}
+
 func TestProcessRejectsOnMergeConflict(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()

@@ -153,7 +153,8 @@ deliberately small:
 
 `GoalSubmitted` · `TicketCreated` · `TicketReady` · `TicketClaimed` · `WorkStarted` · `Heartbeat` ·
 `ProposalSubmitted` · `VerificationPassed` · `VerificationFailed` · `Merged` · `TicketFailed` ·
-`WorkerStalled` · `WorkerRestarted`.
+`WorkerStalled` · `WorkerRestarted`. The optional human-in-the-loop approval gate (ADR 008) adds
+`ApprovalRequested` · `ApprovalGranted` · `ApprovalDenied`.
 
 State (Tasks, dependency readiness, Worker status, the Merge Queue) is derived by replaying this stream;
 there is no separate mutable store to keep consistent.

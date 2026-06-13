@@ -39,6 +39,7 @@ type Options struct {
 	MaxGraphDepth     int           // max emergent decomposition depth (graph governor); default 5
 	MaxTicketsPerGoal int           // max tickets a single Goal may spawn (graph governor); default 64
 	MaxFanOut         int           // max NEW children one decomposition may emit (graph governor); default 8
+	RequireApproval   bool          // park each verified proposal for human approval before merge (ADR 008)
 	Now               func() time.Time
 }
 
@@ -110,6 +111,11 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 			return nil
 		}
 		if s.LastSeq == before {
+			// No progress. If the only unsettled work is parked for human
+			// approval, pause cleanly — a later `aoa approve` + `aoa run` resumes.
+			if pausedForApproval(s) {
+				return nil
+			}
 			return fmt.Errorf("orchestrator made no progress but work is unsettled (seq %d)", s.LastSeq)
 		}
 	}
@@ -437,8 +443,30 @@ func (o *Orchestrator) failDecompose(j dispatchJob, worker, reason string) {
 // childID builds a stable, hierarchical ticket ID for an emergent child.
 func childID(parentID, local string) string { return parentID + "/" + local }
 
-// processProposal verifies and merges a proposed ticket, or rejects it.
+// processProposal verifies and merges a proposed ticket, or rejects it. When
+// RequireApproval is set and the ticket is not yet approved, it instead dry-runs
+// the Gate and parks the verified candidate for a human decision (ADR 008); the
+// real verify+merge happens on a later pass once ApprovalGranted has returned
+// the ticket to the queue.
 func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) error {
+	if o.opt.RequireApproval && !t.Approved {
+		out, err := o.mq.DryRun(ctx, mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch})
+		if err != nil {
+			o.cleanupWorktree(ctx, t.ID)
+			return o.rejectOrFail(t, t.Worker, fmt.Sprintf("merge queue: %v", err))
+		}
+		if !out.Verified {
+			o.cleanupWorktree(ctx, t.ID)
+			return o.rejectOrFail(t, t.Worker, out.Reason)
+		}
+		// Candidate passed the Gate. Record the pass and park for approval; keep
+		// the worktree alive so the real merge can reuse the branch.
+		if err := o.emit(api.VerificationPassed, api.VerificationPassedPayload{TicketID: t.ID, Worker: t.Worker}); err != nil {
+			return err
+		}
+		return o.emit(api.ApprovalRequested, api.ApprovalRequestedPayload{TicketID: t.ID, Worker: t.Worker, Commit: out.MergeCommit})
+	}
+
 	out, err := o.mq.Process(ctx, mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch})
 	if err != nil {
 		// Infrastructure failure: treat as a failed attempt.
@@ -459,6 +487,23 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 
 	o.cleanupWorktree(ctx, t.ID)
 	return o.rejectOrFail(t, t.Worker, out.Reason)
+}
+
+// pausedForApproval reports whether the run has no actionable work left and is
+// only waiting on human approval — the signal for Run to return cleanly.
+func pausedForApproval(s *state.State) bool {
+	awaiting := 0
+	for _, t := range s.Tickets {
+		if t.Status.IsTerminal() {
+			continue
+		}
+		if t.Status == state.StatusAwaiting {
+			awaiting++
+			continue
+		}
+		return false // some other non-terminal work is still actionable
+	}
+	return awaiting > 0
 }
 
 // rejectOrFail re-readies a ticket for another attempt, or fails it terminally
