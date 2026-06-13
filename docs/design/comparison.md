@@ -67,6 +67,26 @@ others are assessed from each system's documented architecture and may change as
   crash recovery, rather than coordination/merging policy that is session-scoped and configuration-
   dependent. Where ultraworker is strong, `aoa` is strong *and* checkable.
 
+## Live evaluation protocol (closing the mock→live gap)
+
+The matrix above is hermetic and architectural. The honest next step — repeatedly flagged in review — is
+a **live, real-LLM** comparison. `aoa` now ships the harness for it (`internal/liveeval`, `aoa eval`,
+ADR 009); running it at scale is a matter of API budget, not missing machinery. The protocol:
+
+- **Benchmarks:** SWE-bench Lite (300 curated real GitHub issues) and/or a curated internal set. Each task
+  supplies a repo + a **success oracle** (the issue's reproduce test) — exactly the `liveeval.Task` shape.
+- **Conditions held equal:** same model, token budget, and tool set across every system.
+- **Systems:** a single-agent baseline; `aoa` single / plan-first / emergent (the existing bench
+  strategies, now runnable on the `claudecode` backend); and, budget permitting, gastown / opencode.
+- **Metrics (all replay-derived):** task-success rate (success oracle), tokens (`metrics.TokensTotal`),
+  wall-clock, rejected-proposal/rollback rate, and the **MAST failure-mode histogram** (`aoa diagnose`) —
+  so we can show whether the design's failure-mode *prevention* survives a real agent, not just assert it.
+- **Damage-rate on `main`:** how often a failing build/test reaches `main` per system — `aoa`'s should
+  stay 0 by construction (invariants I1/I2), the differentiator versus LLM-coordinator stacks.
+
+This is deliberately separated from the hermetic suite (ADR 009): the mock numbers prove correctness by
+construction; the live numbers measure efficacy. We do not fold one into the other.
+
 ## What `aoa` does **not** claim here
 
 - It does **not** claim higher task-success on a public coding benchmark — that needs live runs we have

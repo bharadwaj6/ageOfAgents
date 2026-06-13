@@ -117,6 +117,7 @@ type TicketDecomposedPayload struct {
 	TicketID string   `json:"ticket_id"`
 	Worker   string   `json:"worker,omitempty"`
 	Children []string `json:"children"`
+	Tokens   int      `json:"tokens,omitempty"` // LLM tokens the decomposition consumed (0 when unknown)
 }
 
 // TicketReadyPayload accompanies [TicketReady].
@@ -150,6 +151,7 @@ type ProposalSubmittedPayload struct {
 	Branch   string `json:"branch"`
 	Commit   string `json:"commit"`
 	Trace    string `json:"trace,omitempty"`
+	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the work consumed (0 when unknown)
 }
 
 // VerificationPassedPayload accompanies [VerificationPassed].

@@ -23,6 +23,7 @@ type Metrics struct {
 	EmergentTickets      int     `json:"emergent_tickets"`       // created at runtime by a worker
 	WorkerSessions       int     `json:"worker_sessions"`        // LLM work invocations (WorkStarted)
 	CoordinationSessions int     `json:"coordination_sessions"`  // LLM calls for coordination — 0 by design
+	TokensTotal          int     `json:"tokens_total"`           // LLM tokens across all work (0 for the mock backend)
 	MergeCorrectness     float64 `json:"merge_correctness"`      // fraction of merges that passed the Gate first
 	RejectedProposalRate float64 `json:"rejected_proposal_rate"` // rejected / (rejected + merged)
 	StepRepetitions      int     `json:"step_repetitions"`       // merged tickets sharing an idempotency key
@@ -93,6 +94,16 @@ func Compute(events []api.Event) Metrics {
 			delete(active, id)
 			if e.Type == api.ProposalSubmitted {
 				propSeq[id] = e.Seq
+				var p api.ProposalSubmittedPayload
+				if e.DecodePayload(&p) == nil {
+					m.TokensTotal += p.Tokens
+				}
+			}
+			if e.Type == api.TicketDecomposed {
+				var p api.TicketDecomposedPayload
+				if e.DecodePayload(&p) == nil {
+					m.TokensTotal += p.Tokens
+				}
 			}
 		case api.VerificationPassed:
 			passSeq[id] = e.Seq
