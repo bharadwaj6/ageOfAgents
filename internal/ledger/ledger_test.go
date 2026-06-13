@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -145,5 +146,110 @@ func TestConcurrentAppendsUniqueSeq(t *testing.T) {
 			t.Errorf("duplicate seq %d", e.Seq)
 		}
 		seen[e.Seq] = true
+	}
+}
+
+// TestConcurrentAppendsGaplessAndParseable stresses Append under heavy
+// concurrency and asserts the AGENTS.md invariant: every line stays a complete,
+// parseable JSON event and sequence numbers are gapless 1..N with no corruption
+// from interleaved writes.
+func TestConcurrentAppendsGaplessAndParseable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	l, _ := Open(path)
+	const n = 300
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			_, _ = l.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "w", TicketID: "t"}))
+		}(i)
+	}
+	wg.Wait()
+
+	// Every persisted line must be a complete, parseable event (no torn or
+	// interleaved bytes), and the seq set must be exactly {1..n}.
+	events, _, err := scan(path)
+	if err != nil {
+		t.Fatalf("scan after concurrent appends: %v", err)
+	}
+	if len(events) != n {
+		t.Fatalf("got %d events, want %d", len(events), n)
+	}
+	seqs := make([]bool, n+1)
+	for _, e := range events {
+		if e.Seq < 1 || e.Seq > n || seqs[e.Seq] {
+			t.Fatalf("bad or duplicate seq %d", e.Seq)
+		}
+		seqs[e.Seq] = true
+	}
+	for s := 1; s <= n; s++ {
+		if !seqs[s] {
+			t.Errorf("missing seq %d (gap)", s)
+		}
+	}
+}
+
+// TestReadToleratesTornTrailingLine simulates a crash mid-Append: the last line
+// is partially written (no newline, truncated JSON). Read must skip it, and
+// reopening must repair the file so the next Append produces a clean log.
+func TestReadToleratesTornTrailingLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	l, _ := Open(path)
+	_, _ = l.Append(mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "x"}))
+	_, _ = l.Append(mustEvent(t, api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "k"}))
+
+	// Append a torn line, as a crash would leave it.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open for torn write: %v", err)
+	}
+	if _, err := f.WriteString(`{"seq":3,"type":"Merged","payl`); err != nil {
+		t.Fatalf("torn write: %v", err)
+	}
+	_ = f.Close()
+
+	// Read tolerates the torn tail.
+	events, err := l.Read()
+	if err != nil {
+		t.Fatalf("Read with torn tail: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (torn line skipped)", len(events))
+	}
+
+	// Reopen repairs the tail; the next append is seq 3 and the log is clean.
+	l2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen after torn tail: %v", err)
+	}
+	stored, err := l2.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "w"}))
+	if err != nil {
+		t.Fatalf("append after repair: %v", err)
+	}
+	if stored.Seq != 3 {
+		t.Errorf("seq after repair = %d, want 3", stored.Seq)
+	}
+	events, err = l2.Read()
+	if err != nil {
+		t.Fatalf("Read after repair: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("got %d events after repair, want 3", len(events))
+	}
+}
+
+// TestScanErrorsOnMidLogCorruption ensures non-tail corruption is surfaced (not
+// silently truncated): a garbage line followed by further lines is an error.
+func TestScanErrorsOnMidLogCorruption(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	contents := `{"seq":1,"type":"Heartbeat"}` + "\n" +
+		"this is not json" + "\n" +
+		`{"seq":3,"type":"Heartbeat"}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, err := scan(path); err == nil {
+		t.Error("expected error for mid-log corruption, got nil")
 	}
 }

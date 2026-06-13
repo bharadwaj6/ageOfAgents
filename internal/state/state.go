@@ -341,6 +341,15 @@ func (s *State) Blocked() []*Ticket {
 	return out
 }
 
+// TicketForKey returns the ticket ID an idempotency key currently maps to, if
+// any. The Scheduler uses it so an emergent child whose key already names a
+// ticket is adopted rather than re-created (which state.Apply would dedupe to a
+// no-op, leaving the parent waiting on a ticket that never appears).
+func (s *State) TicketForKey(key string) (string, bool) {
+	id, ok := s.keyToTicket[key]
+	return id, ok
+}
+
 // dependencyEdges returns the depends_on adjacency (ticket id -> dependency ids)
 // of every ticket currently in the graph.
 func (s *State) dependencyEdges() map[string][]string {

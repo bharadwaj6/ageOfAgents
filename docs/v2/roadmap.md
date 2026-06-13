@@ -86,27 +86,29 @@ many randomized histories. Offline/deterministic; no new third-party dependency 
 to a single serial merge log → a lightweight in-tree checker suffices; Porcupine noted only as a future
 multi-writer option).
 
-- [ ] `internal/invariant/invariant.go` — pure checkers over `[]api.Event` (+ repo where needed), reusing
-      `state.Fold`, `verify.Verifier`, `worktree.Repo`:
-  - I1 **Main-always-green**: gate passes on main HEAD after every `Merged`.
-  - I2 **Single-writer / serial merges**: merges totally ordered by `seq`; only the queue wrote main.
-  - I3 **Replay determinism & prefix-closure**: `Fold` total + deterministic; any prefix folds valid.
-  - I4 **Idempotency / no step-repetition**: no two merged tickets share an idempotency key; re-running
-       the reconciler on a settled log emits nothing.
-  - I5 **DAG acyclic** at all times.
-  - I6 **Liveness**: every goal reaches terminal (merged/failed/decomposed) or honest no-progress; no
-       cyclic/dead-dep stall.
-- [ ] `internal/agent/faulty.go` — `Faulty` Backend wrapping another (seedable PRNG): fail, hang (trigger
-      Stall Detector), no changes, write a conflicting file (force merge-queue rollback), emit duplicate
-      subtasks, emit cyclic subtasks.
-- [ ] `internal/orchestrator/chaos_test.go` — for many seeds, run under a randomized fault schedule **plus
-      crash-restart** (drop in-memory state, re-`New()`+`Run()` from the durable ledger), assert all of
-      I1–I6. Reuse the existing `setup`/`harness` helpers.
-- [ ] `internal/ledger/ledger_test.go` — torn-write tolerance (truncated trailing JSONL line on `Read`
-      skipped/recovered; harden `ledger.Read` if needed) + concurrent-append stress (gapless monotonic
-      `seq`, no corrupt lines, final `Fold` succeeds).
+- [x] `internal/invariant/invariant.go` — pure checkers over `[]api.Event` (+ repo), reusing `state.Fold`,
+      `verify.Verifier`: `MergeImpliesVerified` (I1 log-level), `MainGreen` (I1 git-level),
+      `MergedAtMostOnceByQueue` (I2), `ReplayDeterministicAndTotal` (I3), `NoDuplicateMergedKey` (I4),
+      `AcyclicGraph` (I5), `MonotonicGaplessSeq` (log integrity), `Settled` (I6 liveness). `Check()`
+      aggregates the pure ones. Unit-tested against healthy + crafted-bad histories.
+- [x] `internal/agent/faulty.go` — `Faulty` Backend (seeded PRNG) injecting: error, no-change, conflict
+      (shared file → merge-queue rollback), bad-verify (sentinel → post-merge verify fail → rollback),
+      cyclic subtasks (→ cycle guard), duplicate-key subtasks (→ dedup). (Stall is exercised via the
+      crash-recovery test, not a hanging backend — dispatch is synchronous.)
+- [x] `internal/orchestrator/chaos_test.go` — `TestChaosFaultInjection`: 40 seeds (8 under `-short`), each
+      runs a diamond goal through the faulty backend to completion and asserts **all** invariants + main
+      green + settled. `TestCrashRecoveryFromLedger`: an abandoned in-flight ticket (claimed+started in the
+      past) is recovered by a fresh orchestrator via stall detection → merge, invariants intact.
+- [x] `internal/ledger/ledger.go` + `_test.go` — **hardened**: `Read`/`Open` tolerate a torn trailing line
+      and `Open` truncates it (crash-safety; previously a torn write bricked the log). Tests: torn-tail
+      tolerance + repair, gapless concurrent-append stress (300 goroutines), mid-log corruption errors.
 
-**Last status:** blocked on Track A.
+> **Bug found & fixed by the chaos harness:** duplicate-idempotency-key subtasks made `decompose()` list a
+> phantom child that `state.Apply` deduped away, so the parent waited forever (liveness violation). Fixed
+> by collapsing duplicate keys onto one canonical child and adopting children whose key already exists in
+> state (also makes re-decomposition after a crash idempotent). Added `state.TicketForKey`.
+
+**Last status:** done. Full suite + 40-seed chaos green, gofmt clean, committed.
 
 ## Track C — Replay-based metrics + controlled benchmark + design comparison
 

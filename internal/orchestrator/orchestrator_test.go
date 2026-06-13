@@ -57,6 +57,20 @@ func (h *harness) submitGoal(t *testing.T, id, text string) {
 	}
 }
 
+// appendAt appends an event with an explicit timestamp (used to simulate
+// activity in the past, e.g. a crashed worker the Stall Detector should flag).
+func (h *harness) appendAt(t *testing.T, ts time.Time, typ api.EventType, payload any) {
+	t.Helper()
+	ev, err := api.NewEvent(typ, "test", payload)
+	if err != nil {
+		t.Fatalf("NewEvent: %v", err)
+	}
+	ev.Timestamp = ts
+	if _, err := h.led.Append(ev); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+}
+
 func (h *harness) state(t *testing.T) *state.State {
 	t.Helper()
 	events, _ := h.led.Read()

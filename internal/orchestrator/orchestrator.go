@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -293,7 +294,13 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 	}
 
 	// Resolve batch-local handles to stable, globally-unique child ticket IDs.
+	// Subtasks sharing an idempotency key collapse to one canonical child (the
+	// same dedup state.Apply performs), so the emitted Children list never names
+	// a ticket that was never created — otherwise the parent would wait forever
+	// on a phantom child.
 	localToID := make(map[string]string, len(subs))
+	keyToID := make(map[string]string, len(subs))
+	adopted := make(map[string]bool) // canonical IDs that already exist in state
 	for _, st := range subs {
 		if st.LocalID == "" {
 			o.failDecompose(j, worker, "subtask missing local id")
@@ -303,12 +310,31 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 			o.failDecompose(j, worker, "duplicate subtask local id "+st.LocalID)
 			return
 		}
-		localToID[st.LocalID] = childID(j.ticketID, st.LocalID)
+		if st.IdempotencyKey != "" {
+			if id, seen := keyToID[st.IdempotencyKey]; seen {
+				localToID[st.LocalID] = id // duplicate logical child within this batch
+				continue
+			}
+			if id, exists := s.TicketForKey(st.IdempotencyKey); exists {
+				// The key already names a ticket (e.g. a re-decomposition after a
+				// crash, or shared work): adopt it instead of creating a phantom.
+				localToID[st.LocalID] = id
+				keyToID[st.IdempotencyKey] = id
+				adopted[id] = true
+				continue
+			}
+		}
+		id := childID(j.ticketID, st.LocalID)
+		localToID[st.LocalID] = id
+		if st.IdempotencyKey != "" {
+			keyToID[st.IdempotencyKey] = id
+		}
 	}
 
 	type child struct {
 		id, title, key string
 		deps           []string
+		adopt          bool // already exists in state; reference it, do not re-create
 	}
 	children := make([]child, 0, len(subs))
 	childIDs := make([]string, 0, len(subs))
@@ -319,6 +345,9 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 	}
 	for _, st := range subs {
 		id := localToID[st.LocalID]
+		if slices.Contains(childIDs, id) {
+			continue // a collapsed duplicate; the canonical child is already queued
+		}
 		deps := make([]string, 0, len(st.DependsOn))
 		for _, d := range st.DependsOn {
 			if rid, ok := localToID[d]; ok {
@@ -327,9 +356,11 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 				deps = append(deps, d) // existing ticket reference
 			}
 		}
-		children = append(children, child{id: id, title: st.Title, key: st.IdempotencyKey, deps: deps})
+		children = append(children, child{id: id, title: st.Title, key: st.IdempotencyKey, deps: deps, adopt: adopted[id]})
 		childIDs = append(childIDs, id)
-		newEdges[id] = deps
+		if !adopted[id] {
+			newEdges[id] = deps // adopted tickets keep their existing edges
+		}
 	}
 
 	// Governor: bound emergent decomposition depth and per-Goal ticket count.
@@ -371,6 +402,9 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 	}
 
 	for _, c := range children {
+		if c.adopt {
+			continue // already exists; it is referenced in Children, not re-created
+		}
 		_ = o.emit(api.TicketCreated, api.TicketCreatedPayload{
 			TicketID:       c.id,
 			GoalID:         j.goalID,
