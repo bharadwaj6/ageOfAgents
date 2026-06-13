@@ -13,4 +13,5 @@ corpus under `docs/` (`claude.md`, `gemini.md`, `grok.md`, `perplexity.md`, `res
 | [006](006-emergent-task-graph-blackboard.md) | Emergent Task Graph + Shared Log coordination (not messaging) |
 | [007](007-emergent-decomposition-and-graph-governor.md) | Emergent decomposition mechanics + cycle/depth/fan-out governor |
 | [008](008-human-in-the-loop-approval-gate.md) | Optional human-in-the-loop approval gate (dry-run + approve/reject) |
+| [009](009-live-evaluation-out-of-hermetic-suite.md) | Backend-agnostic live evaluation harness, opt-in and outside the hermetic suite |
 

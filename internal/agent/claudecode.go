@@ -12,6 +12,11 @@ import (
 // instead of editing code. The block body is a JSON array of subtasks.
 const subtaskFence = "aoa:subtasks"
 
+// usageFence is an optional fenced block the agent may emit to report token
+// usage, e.g. ```aoa:usage {"tokens": 1234} ```. Best-effort: absent or
+// unparseable usage simply yields 0, keeping cost accounting opt-in.
+const usageFence = "aoa:usage"
+
 // ClaudeCode drives a real coding agent as a subprocess inside the task's
 // worktree. The exact CLI is configurable; by default it invokes `claude -p
 // <prompt>` with the worktree as the working directory.
@@ -54,7 +59,24 @@ func (c *ClaudeCode) Run(ctx context.Context, task Task) (Result, error) {
 		Trace:    strings.TrimSpace(out),
 		Summary:  task.Title,
 		Subtasks: parseSubtasks(out),
+		Tokens:   parseUsage(out),
 	}, nil
+}
+
+// parseUsage extracts token usage from an optional "aoa:usage" fenced block
+// whose body is JSON like {"tokens": 1234}. Returns 0 when absent or unparseable.
+func parseUsage(out string) int {
+	body, ok := fencedBlock(out, usageFence)
+	if !ok {
+		return 0
+	}
+	var u struct {
+		Tokens int `json:"tokens"`
+	}
+	if err := json.Unmarshal([]byte(body), &u); err != nil {
+		return 0
+	}
+	return u.Tokens
 }
 
 // parseSubtasks extracts an emergent decomposition from agent output: a fenced

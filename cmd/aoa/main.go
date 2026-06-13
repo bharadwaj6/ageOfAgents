@@ -21,6 +21,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/diagnose"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
+	"github.com/bharadwaj6/ageOfAgents/internal/liveeval"
 	"github.com/bharadwaj6/ageOfAgents/internal/mergequeue"
 	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
 	"github.com/bharadwaj6/ageOfAgents/internal/orchestrator"
@@ -52,6 +53,8 @@ func main() {
 		err = cmdEvents(args)
 	case "bench":
 		err = cmdBench(args)
+	case "eval":
+		err = cmdEval(args)
 	case "diagnose":
 		err = cmdDiagnose(args)
 	case "approve":
@@ -82,6 +85,7 @@ Usage:
   aoa feed   [--path DIR] [--type T]      Print the event stream
   aoa events [--path DIR] tail [--count N] | replay
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
+  aoa eval   --tasks F [--backend B]      Run end-to-end tasks on real repos (mock|claudecode)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
   aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
   aoa reject  [--path DIR] <ticket-id>    Reject a parked proposal (require_approval)
@@ -322,6 +326,67 @@ func cmdBench(args []string) error {
 	}
 	printBenchTable(results)
 	return nil
+}
+
+// cmdEval runs end-to-end evaluation tasks (real git repos) through the
+// orchestrator and reports task success, tokens, and the MAST histogram per
+// task. With --backend mock it stays hermetic; --backend claudecode performs a
+// live run that needs the agent binary, API keys, and network (ADR 009).
+func cmdEval(args []string) error {
+	fs := flag.NewFlagSet("eval", flag.ExitOnError)
+	tasksPath := fs.String("tasks", "", "path to a TOML task file")
+	backendName := fs.String("backend", "mock", "agent backend: mock|claudecode")
+	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
+	_ = fs.Parse(args)
+
+	if *tasksPath == "" {
+		return fmt.Errorf("--tasks is required: aoa eval --tasks tasks.toml [--backend claudecode]")
+	}
+	tasks, err := liveeval.LoadTasks(*tasksPath)
+	if err != nil {
+		return err
+	}
+	backend, err := buildBackend(*backendName)
+	if err != nil {
+		return err
+	}
+	base, err := os.MkdirTemp("", "aoa-eval-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(base)
+
+	reports := make([]liveeval.Report, 0, len(tasks))
+	for i, t := range tasks {
+		dir := filepath.Join(base, fmt.Sprintf("%02d-%s", i, t.Name))
+		rep, err := liveeval.Run(context.Background(), backend, dir, t)
+		if err != nil {
+			return fmt.Errorf("%s: %w", t.Name, err)
+		}
+		reports = append(reports, rep)
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(reports)
+	}
+	printEvalTable(reports)
+	return nil
+}
+
+// printEvalTable renders evaluation reports as a markdown table.
+func printEvalTable(reports []liveeval.Report) {
+	fmt.Println("| task | backend | success | merged | tokens | MAST | violations |")
+	fmt.Println("|------|---------|:-------:|-------:|-------:|-----:|-----------:|")
+	for _, r := range reports {
+		ok := "no"
+		if r.Success {
+			ok = "yes"
+		}
+		fmt.Printf("| %s | %s | %s | %d | %d | %d | %d |\n",
+			r.Task, r.Backend, ok, r.Metrics.Merged, r.Metrics.TokensTotal, r.MAST.Total(), len(r.Violations))
+	}
 }
 
 // cmdApprove records a human decision on a proposal parked by the approval gate

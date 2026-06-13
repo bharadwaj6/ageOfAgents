@@ -33,6 +33,25 @@ func (s *stream) add(typ api.EventType, actor string, payload any) *stream {
 	return s
 }
 
+func TestComputeSumsTokens(t *testing.T) {
+	s := newStream(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "root", GoalID: "g1", Title: "root", IdempotencyKey: "g1:impl"}).
+		add(api.TicketDecomposed, "orchestrator", api.TicketDecomposedPayload{TicketID: "root", Children: []string{"c"}, Tokens: 300}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "c", GoalID: "g1", Title: "child", CreatedBy: "w", Depth: 1, IdempotencyKey: "g1:c"}).
+		add(api.TicketReady, "orchestrator", api.TicketReadyPayload{TicketID: "c"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "c", Worker: "w"}).
+		add(api.WorkStarted, "orchestrator", api.WorkStartedPayload{TicketID: "c", Worker: "w"}).
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "c", Commit: "x", Tokens: 1200}).
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "c"}).
+		add(api.Merged, "orchestrator", api.MergedPayload{TicketID: "c", Commit: "x"})
+
+	m := Compute(s.events)
+	if m.TokensTotal != 1500 {
+		t.Fatalf("TokensTotal = %d, want 1500 (1200 proposal + 300 decompose)", m.TokensTotal)
+	}
+}
+
 func TestComputeDiamond(t *testing.T) {
 	s := newStream(t).
 		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).

@@ -44,6 +44,7 @@ type Result struct {
 	Trace    string    // short reasoning trace for the audit log
 	Summary  string    // one-line summary of the change
 	Subtasks []Subtask // non-empty => decompose this Task into children
+	Tokens   int       // LLM tokens this work consumed; 0 when unknown (e.g. mock)
 }
 
 // Backend executes coding work for a single task. Implementations must be safe
