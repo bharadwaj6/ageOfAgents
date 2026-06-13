@@ -56,21 +56,47 @@ two scalability caveats we address in §5.
 
 ## 3. The model
 
-```
-            goal
-             │
-             ▼
-        ┌─────────┐   append    ┌──────────────────┐
-        │  Ledger │◀────────────│   Reconciler      │  (deterministic, ms)
-        │ (JSONL) │────────────▶│  observe→fold→act │
-        └─────────┘   replay    └──────────────────┘
-             ▲                      │ dispatch          │ drive
-             │                      ▼                   ▼
-             │               ┌────────────┐      ┌───────────────┐
-             │   proposals   │  Workers    │      │  Merge queue   │
-             └───────────────│  (agents in │      │  verify→merge  │──▶ main
-                             │  worktrees) │      │  (serialized)  │
-                             └────────────┘      └───────────────┘
+```mermaid
+flowchart TD
+    subgraph Human["Human Inputs"]
+        Goal(["Human Goal / Objective"])
+    end
+
+    subgraph Deterministic["Deterministic Orchestration (The Brain)"]
+        Ledger[("Event Ledger\n(JSONL Append-Only)")]
+        Reconciler{"Reconciler Loop\n(observe → fold → act)"}
+    end
+
+    subgraph Stochastic["Stochastic Execution (The Muscle)"]
+        Workers[["Workers\n(AI Agents in Isolated Git Worktrees)"]]
+    end
+
+    subgraph Verification["Verification Gate"]
+        MergeQueue[/"Merge Queue\n(verify → merge)"\]
+    end
+
+    MainBranch(["Main Branch"])
+
+    Goal -->|"Submitted"| Ledger
+    Ledger -.->|"Replay / Observe"| Reconciler
+    Reconciler -->|"Append new events"| Ledger
+
+    Reconciler == "1. Dispatch ready tickets" ==> Workers
+    Workers -->|"Propose branch + Reasoning"| Ledger
+
+    Reconciler == "2. Drive merge queue" ==> MergeQueue
+    MergeQueue -->|"Verify (Test/Lint)"| MainBranch
+
+    %% Styling
+    classDef pure fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
+    classDef agent fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000;
+    classDef human fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000;
+    classDef gate fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+
+    class Reconciler,Ledger pure;
+    class Workers agent;
+    class Goal,MainBranch human;
+    class MergeQueue gate;
 ```
 
 **Domain objects**
