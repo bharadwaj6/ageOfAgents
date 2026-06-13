@@ -102,6 +102,7 @@ verify = [                           # the Gate — nothing merges unless this p
 | `aoa status` | Show Goals and Task states |
 | `aoa feed [--type T]` | Print the event stream |
 | `aoa events tail [--count N] \| replay` | Inspect the Event Log |
+| `aoa diagnose [--json]` | MAST-style failure-mode histogram for a run |
 
 ## Project Layout
 

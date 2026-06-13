@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
+	"github.com/bharadwaj6/ageOfAgents/internal/diagnose"
 	"github.com/bharadwaj6/ageOfAgents/internal/invariant"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/internal/mergequeue"
@@ -61,6 +62,7 @@ type Result struct {
 	Task       string          `json:"task"`
 	Strategy   Strategy        `json:"strategy"`
 	Metrics    metrics.Metrics `json:"metrics"`
+	MAST       diagnose.Report `json:"mast"` // MAST-style failure-mode histogram for the run
 	Violations []string        `json:"violations,omitempty"`
 }
 
@@ -113,7 +115,7 @@ func RunTask(ctx context.Context, dir string, t Task, strat Strategy) (Result, e
 	if err != nil {
 		return Result{}, err
 	}
-	r := Result{Task: t.Name, Strategy: strat, Metrics: metrics.Compute(events)}
+	r := Result{Task: t.Name, Strategy: strat, Metrics: metrics.Compute(events), MAST: diagnose.Classify(events)}
 	for _, v := range invariant.Check(events) {
 		r.Violations = append(r.Violations, v.String())
 	}

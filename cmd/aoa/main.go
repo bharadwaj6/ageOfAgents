@@ -19,6 +19,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
 	"github.com/bharadwaj6/ageOfAgents/internal/bench"
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
+	"github.com/bharadwaj6/ageOfAgents/internal/diagnose"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/internal/mergequeue"
 	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
@@ -51,6 +52,8 @@ func main() {
 		err = cmdEvents(args)
 	case "bench":
 		err = cmdBench(args)
+	case "diagnose":
+		err = cmdDiagnose(args)
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -75,6 +78,7 @@ Usage:
   aoa feed   [--path DIR] [--type T]      Print the event stream
   aoa events [--path DIR] tail [--count N] | replay
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
+  aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
 `)
 }
 
@@ -314,13 +318,59 @@ func cmdBench(args []string) error {
 	return nil
 }
 
+// cmdDiagnose prints the MAST-style failure-mode histogram for a workspace's
+// Event Log, turning the design's "aligned with MAST" claim into a measured
+// property of the actual run (see internal/diagnose).
+func cmdDiagnose(args []string) error {
+	fs := flag.NewFlagSet("diagnose", flag.ExitOnError)
+	path := fs.String("path", ".", "workspace root")
+	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
+	_ = fs.Parse(args)
+
+	ws, err := workspaceAt(*path)
+	if err != nil {
+		return err
+	}
+	led, err := ledger.Open(ws.ledgerPath)
+	if err != nil {
+		return err
+	}
+	events, err := led.Read()
+	if err != nil {
+		return err
+	}
+	rep := diagnose.Classify(events)
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rep)
+	}
+	printDiagnose(rep)
+	return nil
+}
+
+// printDiagnose renders the failure-mode histogram as a markdown table.
+func printDiagnose(rep diagnose.Report) {
+	fmt.Println("| MAST failure mode | count | tickets |")
+	fmt.Println("|-------------------|------:|---------|")
+	for _, f := range rep.Findings {
+		fmt.Printf("| %s | %d | %s |\n", f.Mode, f.Count, strings.Join(f.Tickets, " "))
+	}
+	fmt.Println()
+	if rep.Total() == 0 {
+		fmt.Println("No MAST failure modes detected (clean run).")
+	} else {
+		fmt.Printf("%d failure-mode occurrence(s) detected — see the table above.\n", rep.Total())
+	}
+}
+
 // printBenchTable renders the benchmark results as a markdown table. The key
 // columns make the design thesis legible: coordination LLM sessions stay at 0,
 // merge correctness stays at 100%, and the Emergent strategy unlocks worker
 // parallelism the Single/PlanFirst baselines cannot.
 func printBenchTable(results []bench.Result) {
-	fmt.Println("| task | strategy | merged | workers(max∥) | crit-path | coord-LLM | merge-correct | violations |")
-	fmt.Println("|------|----------|-------:|--------------:|----------:|----------:|--------------:|-----------:|")
+	fmt.Println("| task | strategy | merged | workers(max∥) | crit-path | coord-LLM | merge-correct | MAST | violations |")
+	fmt.Println("|------|----------|-------:|--------------:|----------:|----------:|--------------:|-----:|-----------:|")
 	clean := true
 	for _, r := range results {
 		m := r.Metrics
@@ -328,13 +378,13 @@ func printBenchTable(results []bench.Result) {
 		if v > 0 {
 			clean = false
 		}
-		fmt.Printf("| %s | %s | %d | %d | %d | %d | %.0f%% | %d |\n",
+		fmt.Printf("| %s | %s | %d | %d | %d | %d | %.0f%% | %d | %d |\n",
 			r.Task, r.Strategy, m.Merged, m.MaxConcurrentWorkers, m.CriticalPathDepth,
-			m.CoordinationSessions, m.MergeCorrectness*100, v)
+			m.CoordinationSessions, m.MergeCorrectness*100, r.MAST.Total(), v)
 	}
 	fmt.Println()
 	if clean {
-		fmt.Println("All runs: 0 coordination LLM sessions, 100% merge correctness, 0 invariant violations.")
+		fmt.Println("All runs: 0 coordination LLM sessions, 100% merge correctness, 0 MAST failure modes, 0 invariant violations.")
 	} else {
 		fmt.Println("INVARIANT VIOLATIONS DETECTED — see the violations column and re-run with --json for detail.")
 	}
