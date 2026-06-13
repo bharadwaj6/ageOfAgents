@@ -1,0 +1,28 @@
+# ADR 004: Pluggable Agent Backend Behind One Interface
+
+## Status
+Accepted
+
+## Context
+The orchestrator must drive *real* coding agents end-to-end, but must also be testable and runnable
+offline with no API calls or cost. Business logic should never call a provider SDK directly.
+
+## Decision
+All agent execution goes through a single **`agent.Backend`** interface, roughly
+`Run(ctx, Task) (Proposal, error)`. Two implementations ship in the MVP:
+
+- **`mock`** — deterministic, offline. Produces predictable proposals so the *entire* orchestration loop
+  runs inside `go test` with no network and no external services.
+- **`claudecode`** — drives a real agent as a subprocess inside the ticket's isolated git worktree.
+
+The active backend is chosen in `aoa.toml`. New backends (other CLIs/APIs) implement the same interface.
+
+## Consequences
+- Deterministic, hermetic tests of the full loop (eval-first); CI needs no secrets.
+- The LLM is a single, swappable seam — no provider lock-in in business logic.
+- Tradeoff: the interface must stay narrow and provider-agnostic; richer per-provider features live
+  behind the implementation, not in the core.
+
+## Research basis
+Provider-abstraction discipline (user coding standards); Anthropic agent-as-subprocess pattern; MCP for
+tool access if/when needed (`docs/claude.md`).
