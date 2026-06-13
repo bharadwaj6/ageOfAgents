@@ -1,5 +1,5 @@
 // Command aoa is the CLI for the Age of Agents orchestrator. It is intentionally
-// tiny (standard-library flags, no framework): init a town, submit a goal, run
+// tiny (standard-library flags, no framework): init a workspace, submit a goal, run
 // the reconciler, and inspect state via status/feed/events.
 package main
 
@@ -64,7 +64,7 @@ func usage() {
 	fmt.Print(`aoa - Age of Agents orchestrator
 
 Usage:
-  aoa init   [--path DIR] [--repo PATH]   Scaffold a town + integration repo
+  aoa init   [--path DIR] [--repo PATH]   Scaffold a workspace + integration repo
   aoa goal   [--path DIR] "objective"     Submit a goal
   aoa run    [--path DIR] [--once]        Run the reconciler (loop by default)
   aoa status [--path DIR]                 Show goals and tickets
@@ -73,17 +73,17 @@ Usage:
 `)
 }
 
-// town resolves the standard paths for a town root.
-type town struct {
+// workspace resolves the standard paths for a workspace root.
+type workspace struct {
 	root, configPath, ledgerPath, worktreeBase string
 }
 
-func townAt(path string) (town, error) {
+func workspaceAt(path string) (workspace, error) {
 	root, err := filepath.Abs(path)
 	if err != nil {
-		return town{}, err
+		return workspace{}, err
 	}
-	return town{
+	return workspace{
 		root:         root,
 		configPath:   filepath.Join(root, config.FileName),
 		ledgerPath:   filepath.Join(root, ".aoa", "events.jsonl"),
@@ -100,20 +100,20 @@ func resolve(root, p string) string {
 
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	path := fs.String("path", ".", "town root")
-	repo := fs.String("repo", "./repo", "integration repo path (relative to town root)")
+	path := fs.String("path", ".", "workspace root")
+	repo := fs.String("repo", "./repo", "integration repo path (relative to workspace root)")
 	_ = fs.Parse(args)
 
 	ctx := context.Background()
-	tn, err := townAt(*path)
+	ws, err := workspaceAt(*path)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(tn.root, ".aoa"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(ws.root, ".aoa"), 0o755); err != nil {
 		return err
 	}
 
-	repoPath := resolve(tn.root, *repo)
+	repoPath := resolve(ws.root, *repo)
 	r, err := worktree.InitRepo(ctx, repoPath)
 	if err != nil {
 		return err
@@ -135,33 +135,33 @@ func cmdInit(args []string) error {
 	cfg := config.Default()
 	cfg.Repo = *repo
 	cfg.ConventionsFile = "CONVENTIONS.md"
-	if err := cfg.Save(tn.configPath); err != nil {
+	if err := cfg.Save(ws.configPath); err != nil {
 		return err
 	}
 	conv := "# Conventions\n\n- Keep changes minimal and focused.\n- Every change must keep `go build ./...` and `go test ./...` green.\n"
-	if err := os.WriteFile(filepath.Join(tn.root, "CONVENTIONS.md"), []byte(conv), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ws.root, "CONVENTIONS.md"), []byte(conv), 0o644); err != nil {
 		return err
 	}
 
-	fmt.Printf("Initialized town at %s\n  repo:   %s\n  config: %s\n\nNext:\n  aoa goal --path %s \"your objective\"\n  aoa run  --path %s\n",
-		tn.root, repoPath, tn.configPath, *path, *path)
+	fmt.Printf("Initialized workspace at %s\n  repo:   %s\n  config: %s\n\nNext:\n  aoa goal --path %s \"your objective\"\n  aoa run  --path %s\n",
+		ws.root, repoPath, ws.configPath, *path, *path)
 	return nil
 }
 
 func cmdGoal(args []string) error {
 	fs := flag.NewFlagSet("goal", flag.ExitOnError)
-	path := fs.String("path", ".", "town root")
+	path := fs.String("path", ".", "workspace root")
 	_ = fs.Parse(args)
 
 	text := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if text == "" {
 		return fmt.Errorf("goal text is required: aoa goal \"do the thing\"")
 	}
-	tn, err := townAt(*path)
+	ws, err := workspaceAt(*path)
 	if err != nil {
 		return err
 	}
-	led, err := ledger.Open(tn.ledgerPath)
+	led, err := ledger.Open(ws.ledgerPath)
 	if err != nil {
 		return err
 	}
@@ -179,15 +179,15 @@ func cmdGoal(args []string) error {
 
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	path := fs.String("path", ".", "town root")
+	path := fs.String("path", ".", "workspace root")
 	once := fs.Bool("once", false, "run a single reconcile pass instead of looping")
 	_ = fs.Parse(args)
 
-	tn, err := townAt(*path)
+	ws, err := workspaceAt(*path)
 	if err != nil {
 		return err
 	}
-	o, led, err := buildOrchestrator(tn)
+	o, led, err := buildOrchestrator(ws)
 	if err != nil {
 		return err
 	}
@@ -204,13 +204,13 @@ func cmdRun(args []string) error {
 
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	path := fs.String("path", ".", "town root")
+	path := fs.String("path", ".", "workspace root")
 	_ = fs.Parse(args)
-	tn, err := townAt(*path)
+	ws, err := workspaceAt(*path)
 	if err != nil {
 		return err
 	}
-	led, err := ledger.Open(tn.ledgerPath)
+	led, err := ledger.Open(ws.ledgerPath)
 	if err != nil {
 		return err
 	}
@@ -219,14 +219,14 @@ func cmdStatus(args []string) error {
 
 func cmdFeed(args []string) error {
 	fs := flag.NewFlagSet("feed", flag.ExitOnError)
-	path := fs.String("path", ".", "town root")
+	path := fs.String("path", ".", "workspace root")
 	typ := fs.String("type", "", "filter by event type")
 	_ = fs.Parse(args)
-	tn, err := townAt(*path)
+	ws, err := workspaceAt(*path)
 	if err != nil {
 		return err
 	}
-	led, err := ledger.Open(tn.ledgerPath)
+	led, err := ledger.Open(ws.ledgerPath)
 	if err != nil {
 		return err
 	}
@@ -245,7 +245,7 @@ func cmdFeed(args []string) error {
 
 func cmdEvents(args []string) error {
 	fs := flag.NewFlagSet("events", flag.ExitOnError)
-	path := fs.String("path", ".", "town root")
+	path := fs.String("path", ".", "workspace root")
 	count := fs.Int("count", 20, "number of events for tail")
 	_ = fs.Parse(args)
 
@@ -253,11 +253,11 @@ func cmdEvents(args []string) error {
 	if fs.NArg() > 0 {
 		sub = fs.Arg(0)
 	}
-	tn, err := townAt(*path)
+	ws, err := workspaceAt(*path)
 	if err != nil {
 		return err
 	}
-	led, err := ledger.Open(tn.ledgerPath)
+	led, err := ledger.Open(ws.ledgerPath)
 	if err != nil {
 		return err
 	}
@@ -286,13 +286,13 @@ func cmdEvents(args []string) error {
 
 // --- wiring ---------------------------------------------------------------
 
-func buildOrchestrator(tn town) (*orchestrator.Orchestrator, *ledger.Ledger, error) {
-	cfg, err := config.Load(tn.configPath)
+func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger, error) {
+	cfg, err := config.Load(ws.configPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	repo := worktree.OpenRepo(resolve(tn.root, cfg.Repo))
-	led, err := ledger.Open(tn.ledgerPath)
+	repo := worktree.OpenRepo(resolve(ws.root, cfg.Repo))
+	led, err := ledger.Open(ws.ledgerPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -302,7 +302,7 @@ func buildOrchestrator(tn town) (*orchestrator.Orchestrator, *ledger.Ledger, err
 	}
 	conventions := ""
 	if cfg.ConventionsFile != "" {
-		if b, err := os.ReadFile(resolve(tn.root, cfg.ConventionsFile)); err == nil {
+		if b, err := os.ReadFile(resolve(ws.root, cfg.ConventionsFile)); err == nil {
 			conventions = string(b)
 		}
 	}
@@ -311,7 +311,7 @@ func buildOrchestrator(tn town) (*orchestrator.Orchestrator, *ledger.Ledger, err
 		Concurrency:  cfg.Concurrency,
 		MaxAttempts:  cfg.MaxAttempts,
 		Conventions:  conventions,
-		WorktreeBase: tn.worktreeBase,
+		WorktreeBase: ws.worktreeBase,
 	}
 	o := orchestrator.New(led, repo, backend, mergequeue.New(repo, gate), opt)
 	return o, led, nil

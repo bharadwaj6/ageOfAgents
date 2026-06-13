@@ -1,5 +1,5 @@
 // Package config loads and saves the single aoa.toml file that configures a
-// town: the integration repo, the agent backend, the concurrency governor, the
+// workspace: the integration repo, the agent backend, the concurrency governor, the
 // verification gate, and the conventions injected into agent prompts.
 package config
 
@@ -11,12 +11,12 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// FileName is the per-town config file.
+// FileName is the per-workspace config file.
 const FileName = "aoa.toml"
 
-// Config is the on-disk town configuration.
+// Config is the on-disk workspace configuration.
 type Config struct {
-	// Repo is the path to the integration git repository, relative to the town
+	// Repo is the path to the integration git repository, relative to the workspace
 	// root (the directory containing aoa.toml) or absolute.
 	Repo string `toml:"repo"`
 	// Backend selects the agent backend: "mock" or "claudecode".

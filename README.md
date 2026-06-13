@@ -29,16 +29,16 @@ log (a blackboard), never by messaging each other.
 ```bash
 go build -o aoa ./cmd/aoa
 
-# Scaffold a town with an integration repo (a minimal Go module)
-./aoa init --path ./town --repo ./demo
+# Scaffold a workspace with an integration repo (a minimal Go module)
+./aoa init --path ./workspace --repo ./demo
 
 # Submit a goal and run the loop (offline mock backend by default)
-./aoa goal --path ./town "Add a greeting function"
-./aoa run  --path ./town
+./aoa goal --path ./workspace "Add a greeting function"
+./aoa run  --path ./workspace
 
 # Inspect
-./aoa status --path ./town       # goals + ticket states
-./aoa events --path ./town tail  # the audit trail
+./aoa status --path ./workspace       # goals + ticket states
+./aoa events --path ./workspace tail  # the audit trail
 ```
 
 With the default **mock** backend the entire loop runs offline (no API calls), which is exactly how the
@@ -62,7 +62,7 @@ verify = [                           # the objective gate; nothing merges unless
 
 | Command | Purpose |
 |---------|---------|
-| `aoa init` | Scaffold a town + integration repo and `aoa.toml` |
+| `aoa init` | Scaffold a workspace + integration repo and `aoa.toml` |
 | `aoa goal "…"` | Submit a goal |
 | `aoa run [--once]` | Run the reconciler (loops to completion; `--once` for a single pass) |
 | `aoa status` | Show goals and ticket states |

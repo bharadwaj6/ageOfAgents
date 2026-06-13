@@ -35,10 +35,10 @@ gofmt -l cmd internal pkg                          # must print nothing
 
 # Manual end-to-end (offline mock backend):
 go build -o aoa ./cmd/aoa
-./aoa init --path /tmp/town --repo ./demo
-./aoa goal --path /tmp/town "Add a greeting function"
-./aoa run  --path /tmp/town
-./aoa status --path /tmp/town
+./aoa init --path /tmp/workspace --repo ./demo
+./aoa goal --path /tmp/workspace "Add a greeting function"
+./aoa run  --path /tmp/workspace
+./aoa status --path /tmp/workspace
 ```
 
 The `mock` backend (`internal/agent/mock.go`) makes the **entire loop hermetic and offline** — the test
@@ -67,7 +67,7 @@ suite never makes network calls. Always keep it that way: tests must pass with n
 - **Errors:** wrap with context (`fmt.Errorf("...: %w", err)`); surface errors, don't swallow them.
 - **Commits:** Conventional Commits, subject ≤72 chars. Do **not** put AI model names in commit
   subjects/bodies (the `Co-Authored-By` trailer is the only AI attribution).
-- **Worktree/branch:** this branch (`fresh-start`) lives in a git worktree; the town root stays on `main`.
+- **Worktree/branch:** this branch (`fresh-start`) lives in a git worktree; the workspace root stays on `main`.
 
 ## Common tasks
 

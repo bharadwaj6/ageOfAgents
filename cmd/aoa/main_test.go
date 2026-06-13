@@ -12,7 +12,7 @@ import (
 )
 
 // TestEndToEnd exercises the real CLI entry points (init → goal → run) against a
-// temp town using the default offline mock backend, asserting a verified merge.
+// temp workspace using the default offline mock backend, asserting a verified merge.
 func TestEndToEnd(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
