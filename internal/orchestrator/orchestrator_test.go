@@ -215,6 +215,36 @@ func TestRunRejectsCyclicDecomposition(t *testing.T) {
 	}
 }
 
+func TestRunRejectsOverFanOutDecomposition(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{
+		Decompose: map[string][]agent.Subtask{
+			"Implement: wide goal": {
+				{LocalID: "a", Title: "a", IdempotencyKey: "g1:a"},
+				{LocalID: "b", Title: "b", IdempotencyKey: "g1:b"},
+				{LocalID: "c", Title: "c", IdempotencyKey: "g1:c"},
+				{LocalID: "d", Title: "d", IdempotencyKey: "g1:d"},
+			},
+		},
+	}
+	// MaxFanOut 3 < the 4 children proposed: the whole batch is rejected.
+	o, h := setup(t, mock, pass, Options{Concurrency: 2, MaxAttempts: 1, MaxFanOut: 3})
+	h.submitGoal(t, "g1", "wide goal")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	s := h.state(t)
+
+	root := s.Tickets["g1-impl"]
+	if root == nil || root.Status != state.StatusFailed {
+		t.Fatalf("root = %+v, want failed (over-fan-out decomposition rejected)", root)
+	}
+	if len(s.Tickets) != 1 {
+		t.Errorf("no child tickets should have been created, got %d tickets", len(s.Tickets))
+	}
+}
+
 func TestDetectStalled(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-10 * time.Minute)
