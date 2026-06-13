@@ -2,10 +2,15 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
 )
+
+// subtaskFence is the fenced-block tag the agent uses to return a decomposition
+// instead of editing code. The block body is a JSON array of subtasks.
+const subtaskFence = "aoa:subtasks"
 
 // ClaudeCode drives a real coding agent as a subprocess inside the task's
 // worktree. The exact CLI is configurable; by default it invokes `claude -p
@@ -45,7 +50,59 @@ func (c *ClaudeCode) Run(ctx context.Context, task Task) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("claudecode: %w", err)
 	}
-	return Result{Trace: strings.TrimSpace(out), Summary: task.Title}, nil
+	return Result{
+		Trace:    strings.TrimSpace(out),
+		Summary:  task.Title,
+		Subtasks: parseSubtasks(out),
+	}, nil
+}
+
+// parseSubtasks extracts an emergent decomposition from agent output: a fenced
+// block tagged "aoa:subtasks" whose body is a JSON array. Returns nil when the
+// agent edited code instead (no block, or an unparseable/empty one).
+func parseSubtasks(out string) []Subtask {
+	body, ok := fencedBlock(out, subtaskFence)
+	if !ok {
+		return nil
+	}
+	var raw []struct {
+		LocalID        string   `json:"local_id"`
+		Title          string   `json:"title"`
+		DependsOn      []string `json:"depends_on"`
+		IdempotencyKey string   `json:"idempotency_key"`
+	}
+	if err := json.Unmarshal([]byte(body), &raw); err != nil || len(raw) == 0 {
+		return nil
+	}
+	subs := make([]Subtask, 0, len(raw))
+	for _, r := range raw {
+		subs = append(subs, Subtask{
+			LocalID:        r.LocalID,
+			Title:          r.Title,
+			DependsOn:      r.DependsOn,
+			IdempotencyKey: r.IdempotencyKey,
+		})
+	}
+	return subs
+}
+
+// fencedBlock returns the body of the first ```<tag> ... ``` fenced block in s.
+func fencedBlock(s, tag string) (string, bool) {
+	open := "```" + tag
+	i := strings.Index(s, open)
+	if i < 0 {
+		return "", false
+	}
+	rest := s[i+len(open):]
+	// Skip to the end of the opening fence line.
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[nl+1:]
+	}
+	j := strings.Index(rest, "```")
+	if j < 0 {
+		return "", false
+	}
+	return rest[:j], true
 }
 
 // BuildPrompt assembles the instruction handed to the agent. Conventions are
@@ -63,7 +120,15 @@ func BuildPrompt(task Task) string {
 	}
 	fmt.Fprintf(&b, "Task: %s\n\n", task.Title)
 	b.WriteString("Make the necessary code changes in this working directory. " +
-		"Keep changes minimal and ensure the project still builds and its tests pass.")
+		"Keep changes minimal and ensure the project still builds and its tests pass.\n\n")
+	b.WriteString("If this task is too large to implement in one focused change, do NOT edit any " +
+		"files. Instead, decompose it: output a single fenced block exactly like\n\n")
+	b.WriteString("```" + subtaskFence + "\n" +
+		`[{"local_id":"types","title":"define shared types","depends_on":[],"idempotency_key":"<goal>:types"},` +
+		`{"local_id":"api","title":"implement the API","depends_on":["types"],"idempotency_key":"<goal>:api"}]` +
+		"\n```\n\n")
+	b.WriteString("Use local_id to reference sibling subtasks in depends_on. Decompose OR implement, " +
+		"never both.")
 	return b.String()
 }
 

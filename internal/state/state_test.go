@@ -164,6 +164,101 @@ func TestUnknownEventErrors(t *testing.T) {
 	}
 }
 
+func TestHasCycle(t *testing.T) {
+	tests := []struct {
+		name string
+		adj  map[string][]string
+		want bool
+	}{
+		{"empty", map[string][]string{}, false},
+		{"linear", map[string][]string{"a": {"b"}, "b": {"c"}, "c": nil}, false},
+		{"diamond", map[string][]string{"d": {"b", "c"}, "b": {"a"}, "c": {"a"}, "a": nil}, false},
+		{"self-loop", map[string][]string{"a": {"a"}}, true},
+		{"two-cycle", map[string][]string{"a": {"b"}, "b": {"a"}}, true},
+		{"deep-cycle", map[string][]string{"a": {"b"}, "b": {"c"}, "c": {"a"}}, true},
+		{"target-only-node", map[string][]string{"a": {"b"}}, false}, // b has no out-edges
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasCycle(tt.adj); got != tt.want {
+				t.Errorf("HasCycle(%v) = %v, want %v", tt.adj, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWouldCycle(t *testing.T) {
+	s := newBuild(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "a", Title: "a", IdempotencyKey: "ka"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "b", Title: "b", DependsOn: []string{"a"}, IdempotencyKey: "kb"}).
+		fold()
+
+	if s.WouldCycle(map[string][]string{"c": {"a"}}) {
+		t.Error("adding c->a should not create a cycle")
+	}
+	if !s.WouldCycle(map[string][]string{"a": {"b"}}) {
+		t.Error("adding a->b should create a cycle (b already depends on a)")
+	}
+}
+
+func TestDecomposedParentIsTerminalAndCompletesWithChildren(t *testing.T) {
+	b := newBuild(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "root", Title: "root", IdempotencyKey: "kr"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "dep", Title: "dep", DependsOn: []string{"root"}, IdempotencyKey: "kd"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "root/c1", Title: "c1", IdempotencyKey: "kc1", Depth: 1}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "root/c2", Title: "c2", IdempotencyKey: "kc2", Depth: 1}).
+		add(api.TicketDecomposed, api.TicketDecomposedPayload{TicketID: "root", Children: []string{"root/c1", "root/c2"}})
+	s := b.fold()
+
+	if s.Tickets["root"].Status != StatusDecomposed {
+		t.Fatalf("root status = %s, want decomposed", s.Tickets["root"].Status)
+	}
+	if !StatusDecomposed.IsTerminal() {
+		t.Error("decomposed should be terminal")
+	}
+	if s.DepsSatisfied(s.Tickets["dep"]) {
+		t.Error("dep must not be satisfied before the decomposed parent's children merge")
+	}
+
+	s = b.
+		add(api.Merged, api.MergedPayload{TicketID: "root/c1", Commit: "x"}).
+		add(api.Merged, api.MergedPayload{TicketID: "root/c2", Commit: "y"}).
+		fold()
+	if !s.DepsSatisfied(s.Tickets["dep"]) {
+		t.Error("dep should be satisfied once all children of the decomposed parent merge")
+	}
+}
+
+func TestBlockedByFailedDependency(t *testing.T) {
+	s := newBuild(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "a", Title: "a", IdempotencyKey: "ka"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "b", Title: "b", DependsOn: []string{"a"}, IdempotencyKey: "kb"}).
+		add(api.TicketFailed, api.TicketFailedPayload{TicketID: "a", Reason: "boom"}).
+		fold()
+
+	blocked := s.Blocked()
+	if len(blocked) != 1 || blocked[0].ID != "b" {
+		t.Fatalf("Blocked = %v, want [b]", ids(blocked))
+	}
+	if got := s.DeadDependency(s.Tickets["b"]); got != "a" {
+		t.Errorf("DeadDependency(b) = %q, want a", got)
+	}
+}
+
+func TestDeadDependencyThroughDecomposition(t *testing.T) {
+	s := newBuild(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "p", Title: "p", IdempotencyKey: "kp"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "p/c", Title: "c", IdempotencyKey: "kc", Depth: 1}).
+		add(api.TicketDecomposed, api.TicketDecomposedPayload{TicketID: "p", Children: []string{"p/c"}}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "d", Title: "d", DependsOn: []string{"p"}, IdempotencyKey: "kd"}).
+		add(api.TicketFailed, api.TicketFailedPayload{TicketID: "p/c", Reason: "boom"}).
+		fold()
+
+	if got := s.DeadDependency(s.Tickets["d"]); got != "p" {
+		t.Errorf("d should be dead via p's failed child; DeadDependency = %q, want p", got)
+	}
+}
+
 func ids(ts []*Ticket) []string {
 	out := make([]string, len(ts))
 	for i, t := range ts {

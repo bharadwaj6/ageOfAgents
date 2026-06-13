@@ -54,27 +54,30 @@ join clean.) This is a *worker* extending the graph through the Shared Log — c
 ADR 003 (no separate LLM coordinator). Reuse existing idempotency dedup in `state.Apply` and the
 `DepsSatisfied`/`NewlyReady` readiness logic.
 
-- [ ] `pkg/api/events.go`: add `TicketDecomposed` event + `TicketDecomposedPayload{TicketID, Children []string}`.
-- [ ] `internal/agent/agent.go`: extend `Result` with `Subtasks []Subtask`
+- [x] `pkg/api/events.go`: `TicketDecomposed` event + `TicketDecomposedPayload{TicketID, Worker, Children}`;
+      `Depth` field on `TicketCreatedPayload`.
+- [x] `internal/agent/agent.go`: `Result.Subtasks []Subtask`
       (`Subtask{LocalID, Title, DependsOn []string, IdempotencyKey}`; `DependsOn` references sibling
       `LocalID`s or existing ticket IDs; orchestrator resolves to real ticket IDs).
-- [ ] `internal/agent/mock.go`: add a deterministic `Decompose map[string][]Subtask` plan so the diamond
+- [x] `internal/agent/mock.go`: deterministic `Decompose map[string][]Subtask` plan so the diamond
       graph is produced *by the system* in `go test`, not injected.
-- [ ] `internal/agent/claudecode.go`: `BuildPrompt` lets the agent optionally return a fenced-JSON subtask
-      block; `Run` parses it into `Result.Subtasks` (no diff + subtasks = decompose).
-- [ ] `internal/state/state.go`: add `StatusDecomposed` (+ in `IsTerminal`); handle `TicketDecomposed` in
-      `Apply`; add `WouldCreateCycle(newID, dependsOn)` / `ValidateDAG()` pure guards; fix dead-dependency
-      liveness (a ticket depending on a `Failed`/nonexistent ticket must not wait forever).
-- [ ] `internal/orchestrator/orchestrator.go`: after `backend.Run`, if `res.Subtasks` non-empty resolve
-      LocalID→ticketID, reject cycle-creating/over-budget edges, emit `TicketCreated`
-      (`CreatedBy: worker`, deduped) per child, then `TicketDecomposed` for the parent; no-diff *without*
-      subtasks stays a failed attempt. Add `Options.MaxGraphDepth` + `Options.MaxTicketsPerGoal` (graph
-      governor). Update `Run` termination (`Settled()` + `allGoalsDecomposed`) for `Decomposed` parents.
-- [ ] Tests: `state_test.go` (cycle guard, decomposed status, dead-dep liveness); `orchestrator_test.go`
-      (a goal that decomposes into a diamond, runs in parallel under the concurrency limit, joins, and
-      merges — in-process on the `mock` backend, replacing the shell-script fake).
+- [x] `internal/agent/claudecode.go`: `BuildPrompt` documents the fenced `aoa:subtasks` JSON block; `Run`
+      parses it into `Result.Subtasks` (no diff + subtasks = decompose). Parser + tests added.
+- [x] `internal/state/state.go`: `StatusDecomposed` (+ in `IsTerminal`); `TicketDecomposed` in `Apply`;
+      `Ticket.Children`/`Depth`; completion-aware `DepsSatisfied`/`ticketComplete` (a decomposed parent
+      completes when all descendants merge); `HasCycle`/`WouldCycle` guards; `DeadDependency`/`Blocked`
+      for dead-dependency liveness (incl. death through a decomposed subtree).
+- [x] `internal/orchestrator/orchestrator.go`: `decompose()` resolves LocalID->ticketID, rejects
+      missing/duplicate LocalID, dangling deps, cycles, and over-budget; emits `TicketCreated`
+      (`CreatedBy`, `Depth+1`, deduped) per child then `TicketDecomposed`; no-diff *without* subtasks still
+      fails. `Options.MaxGraphDepth` (5) + `Options.MaxTicketsPerGoal` (64) governors; new ReconcileOnce
+      step fails `Blocked()` tickets. Termination covers `Decomposed` via `IsTerminal`.
+- [x] Tests: `state_test.go` (HasCycle table, WouldCycle, decomposed completion, dead-dep liveness +
+      through-decomposition); `orchestrator_test.go` (`TestRunEmergentDiamondDecomposition`,
+      `TestRunRejectsCyclicDecomposition`); `agent_test.go` (subtask parse / no-subtask cases).
 
-**Last status:** not started.
+**Last status:** done. Build/vet/test green, gofmt clean. Diamond decomposition runs end-to-end on the
+mock backend in-process. Committed (see git log).
 
 ## Track B — Hermetic Jepsen-style invariant + fault-injection harness
 

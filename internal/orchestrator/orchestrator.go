@@ -29,13 +29,15 @@ import (
 
 // Options configures an Orchestrator. Zero values fall back to sane defaults.
 type Options struct {
-	Concurrency  int           // max Workers in flight (Concurrency Limit); default 4
-	MaxAttempts  int           // attempts per Task before failing; default 2
-	Conventions  string        // injected into every agent prompt (Conventions)
-	WorktreeBase string        // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
-	StallTimeout time.Duration // no-progress timeout for the Stall Detector; default 2m
-	MaxPasses    int           // safety bound on Scheduler passes in Run; default 1000
-	Now          func() time.Time
+	Concurrency       int           // max Workers in flight (Concurrency Limit); default 4
+	MaxAttempts       int           // attempts per Task before failing; default 2
+	Conventions       string        // injected into every agent prompt (Conventions)
+	WorktreeBase      string        // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
+	StallTimeout      time.Duration // no-progress timeout for the Stall Detector; default 2m
+	MaxPasses         int           // safety bound on Scheduler passes in Run; default 1000
+	MaxGraphDepth     int           // max emergent decomposition depth (graph governor); default 5
+	MaxTicketsPerGoal int           // max tickets a single Goal may spawn (graph governor); default 64
+	Now               func() time.Time
 }
 
 // Orchestrator owns one run of the control loop.
@@ -63,6 +65,12 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 	}
 	if opt.MaxPasses <= 0 {
 		opt.MaxPasses = 1000
+	}
+	if opt.MaxGraphDepth <= 0 {
+		opt.MaxGraphDepth = 5
+	}
+	if opt.MaxTicketsPerGoal <= 0 {
+		opt.MaxTicketsPerGoal = 64
 	}
 	if opt.WorktreeBase == "" {
 		opt.WorktreeBase = filepath.Join(repo.Dir, ".git", "aoa-worktrees")
@@ -145,8 +153,10 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		for _, t := range ready[:n] {
 			job := dispatchJob{
 				ticketID: t.ID,
+				goalID:   t.GoalID,
 				title:    t.Title,
 				goalText: goalText(s, t),
+				depth:    t.Depth,
 				attempt:  t.Attempts + 1, // this dispatch is the next attempt
 			}
 			wg.Add(1)
@@ -168,7 +178,21 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		}
 	}
 
-	// 5. Failure detector: restart workers with no recent progress.
+	// 5. Liveness: fail tickets that can never become ready because a
+	// dependency has terminally failed (no ticket waits forever on dead work).
+	if s, err = o.loadState(); err != nil {
+		return err
+	}
+	for _, t := range s.Blocked() {
+		dead := s.DeadDependency(t)
+		if err := o.emit(api.TicketFailed, api.TicketFailedPayload{
+			TicketID: t.ID, Worker: t.Worker, Reason: "dependency " + dead + " failed",
+		}); err != nil {
+			return err
+		}
+	}
+
+	// 6. Failure detector: restart workers with no recent progress.
 	if s, err = o.loadState(); err != nil {
 		return err
 	}
@@ -187,8 +211,10 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 
 type dispatchJob struct {
 	ticketID string
+	goalID   string
 	title    string
 	goalText string
+	depth    int
 	attempt  int
 }
 
@@ -229,6 +255,14 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		return
 	}
 
+	// Emergent decomposition: the worker split this ticket into children rather
+	// than editing code. Extend the graph via the Shared Log; nothing to commit.
+	if len(res.Subtasks) > 0 {
+		o.cleanupWorktree(ctx, j.ticketID)
+		o.decompose(j, worker, res.Subtasks)
+		return
+	}
+
 	sha, changed, err := wt.Commit(ctx, fmt.Sprintf("feat: %s (%s)", j.title, j.ticketID))
 	if err != nil {
 		o.cleanupWorktree(ctx, j.ticketID)
@@ -245,6 +279,121 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		TicketID: j.ticketID, Worker: worker, Branch: branch, Commit: sha, Trace: res.Trace,
 	})
 }
+
+// decompose turns a worker's proposed subtasks into child tickets on the Shared
+// Log (emergent decomposition, ADR 006). It enforces the graph governors (depth
+// and per-Goal ticket budgets) and rejects dependencies that are unknown or
+// would create a cycle. A rejected decomposition fails the parent terminally —
+// re-running the same worker would propose the same invalid graph. On success
+// the parent becomes terminal (StatusDecomposed) and the children carry the work.
+func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subtask) {
+	s, err := o.loadState()
+	if err != nil {
+		return
+	}
+
+	// Resolve batch-local handles to stable, globally-unique child ticket IDs.
+	localToID := make(map[string]string, len(subs))
+	for _, st := range subs {
+		if st.LocalID == "" {
+			o.failDecompose(j, worker, "subtask missing local id")
+			return
+		}
+		if _, dup := localToID[st.LocalID]; dup {
+			o.failDecompose(j, worker, "duplicate subtask local id "+st.LocalID)
+			return
+		}
+		localToID[st.LocalID] = childID(j.ticketID, st.LocalID)
+	}
+
+	type child struct {
+		id, title, key string
+		deps           []string
+	}
+	children := make([]child, 0, len(subs))
+	childIDs := make([]string, 0, len(subs))
+	newEdges := make(map[string][]string, len(subs))
+	childSet := make(map[string]bool, len(subs))
+	for _, id := range localToID {
+		childSet[id] = true
+	}
+	for _, st := range subs {
+		id := localToID[st.LocalID]
+		deps := make([]string, 0, len(st.DependsOn))
+		for _, d := range st.DependsOn {
+			if rid, ok := localToID[d]; ok {
+				deps = append(deps, rid) // sibling reference
+			} else {
+				deps = append(deps, d) // existing ticket reference
+			}
+		}
+		children = append(children, child{id: id, title: st.Title, key: st.IdempotencyKey, deps: deps})
+		childIDs = append(childIDs, id)
+		newEdges[id] = deps
+	}
+
+	// Governor: bound emergent decomposition depth and per-Goal ticket count.
+	if j.depth >= o.opt.MaxGraphDepth {
+		o.failDecompose(j, worker, "decomposition depth budget exceeded")
+		return
+	}
+	existing := 0
+	for _, t := range s.Tickets {
+		if t.GoalID == j.goalID {
+			existing++
+		}
+	}
+	added := 0
+	for _, c := range children {
+		if s.Tickets[c.id] == nil {
+			added++
+		}
+	}
+	if existing+added > o.opt.MaxTicketsPerGoal {
+		o.failDecompose(j, worker, "per-goal ticket budget exceeded")
+		return
+	}
+
+	// Reject dangling dependencies (neither a sibling nor an existing ticket).
+	for _, c := range children {
+		for _, d := range c.deps {
+			if !childSet[d] && s.Tickets[d] == nil {
+				o.failDecompose(j, worker, "unknown dependency "+d)
+				return
+			}
+		}
+	}
+
+	// Reject decompositions that would deadlock the graph.
+	if s.WouldCycle(newEdges) {
+		o.failDecompose(j, worker, "decomposition would create a cycle")
+		return
+	}
+
+	for _, c := range children {
+		_ = o.emit(api.TicketCreated, api.TicketCreatedPayload{
+			TicketID:       c.id,
+			GoalID:         j.goalID,
+			Title:          c.title,
+			DependsOn:      c.deps,
+			IdempotencyKey: c.key,
+			CreatedBy:      worker,
+			Depth:          j.depth + 1,
+		})
+	}
+	_ = o.emit(api.TicketDecomposed, api.TicketDecomposedPayload{
+		TicketID: j.ticketID, Worker: worker, Children: childIDs,
+	})
+}
+
+// failDecompose terminally fails a parent whose proposed decomposition was
+// rejected by a governor or graph check.
+func (o *Orchestrator) failDecompose(j dispatchJob, worker, reason string) {
+	_ = o.emit(api.TicketFailed, api.TicketFailedPayload{TicketID: j.ticketID, Worker: worker, Reason: reason})
+}
+
+// childID builds a stable, hierarchical ticket ID for an emergent child.
+func childID(parentID, local string) string { return parentID + "/" + local }
 
 // processProposal verifies and merges a proposed ticket, or rejects it.
 func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) error {

@@ -19,10 +19,31 @@ type Task struct {
 	Conventions string // project Conventions, injected as shared coding rules
 }
 
-// Result is what a Backend returns after editing the worktree.
+// Subtask is a child unit of work a Backend proposes when it decides a Task is
+// too large to implement directly (emergent decomposition, ADR 006). The
+// Scheduler turns each Subtask into a TicketCreated event on the Shared Log;
+// agents never message each other. A Result carrying Subtasks is a
+// *decomposition*: the Backend should not also edit the worktree.
+type Subtask struct {
+	// LocalID is a batch-local handle other Subtasks reference in DependsOn.
+	// The Scheduler resolves it to a stable, globally-unique ticket ID.
+	LocalID string
+	// Title is what the child ticket should accomplish.
+	Title string
+	// DependsOn lists sibling LocalIDs and/or existing ticket IDs that must
+	// merge before this child becomes ready.
+	DependsOn []string
+	// IdempotencyKey makes re-proposing the same logical child a no-op.
+	IdempotencyKey string
+}
+
+// Result is what a Backend returns after handling a Task. A Backend either
+// edits the worktree (an implementation) or returns Subtasks (a decomposition),
+// not both.
 type Result struct {
-	Trace   string // short reasoning trace for the audit log
-	Summary string // one-line summary of the change
+	Trace    string    // short reasoning trace for the audit log
+	Summary  string    // one-line summary of the change
+	Subtasks []Subtask // non-empty => decompose this Task into children
 }
 
 // Backend executes coding work for a single task. Implementations must be safe

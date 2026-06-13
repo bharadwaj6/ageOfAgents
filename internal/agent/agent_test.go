@@ -103,9 +103,43 @@ func TestClaudeCodeInvokesInWorktree(t *testing.T) {
 
 func TestBuildPromptIncludesContext(t *testing.T) {
 	p := BuildPrompt(Task{Title: "T", Goal: "G", Conventions: "C"})
-	for _, want := range []string{"T", "G", "C", "conventions"} {
+	for _, want := range []string{"T", "G", "C", "conventions", subtaskFence} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt missing %q:\n%s", want, p)
 		}
+	}
+}
+
+func TestClaudeCodeParsesSubtaskDecomposition(t *testing.T) {
+	out := "I'll decompose this.\n\n```" + subtaskFence + "\n" +
+		`[{"local_id":"types","title":"shared types","depends_on":[],"idempotency_key":"g:types"},` +
+		`{"local_id":"api","title":"the API","depends_on":["types"],"idempotency_key":"g:api"}]` +
+		"\n```\nDone.\n"
+	c := &ClaudeCode{run: func(context.Context, string, string, ...string) (string, error) {
+		return out, nil
+	}}
+
+	res, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "big task", Worktree: "/wt"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Subtasks) != 2 {
+		t.Fatalf("got %d subtasks, want 2", len(res.Subtasks))
+	}
+	if res.Subtasks[1].LocalID != "api" || len(res.Subtasks[1].DependsOn) != 1 || res.Subtasks[1].DependsOn[0] != "types" {
+		t.Errorf("second subtask malformed: %+v", res.Subtasks[1])
+	}
+}
+
+func TestClaudeCodeNoSubtasksWhenImplementing(t *testing.T) {
+	c := &ClaudeCode{run: func(context.Context, string, string, ...string) (string, error) {
+		return "edited main.go and added tests", nil
+	}}
+	res, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "small task", Worktree: "/wt"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Subtasks != nil {
+		t.Errorf("expected no subtasks for an implementation, got %+v", res.Subtasks)
 	}
 }

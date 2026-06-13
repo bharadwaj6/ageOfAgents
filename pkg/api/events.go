@@ -19,6 +19,10 @@ const (
 	// TicketCreated: a unit of work was added to the graph. May be emitted by
 	// the initial decomposition or by a worker at runtime (emergent graph).
 	TicketCreated EventType = "TicketCreated"
+	// TicketDecomposed: a worker split a ticket into child tickets (emergent
+	// decomposition) instead of proposing a change. The parent is terminal; the
+	// children carry the work. Coordination is via the Shared Log (ADR 006).
+	TicketDecomposed EventType = "TicketDecomposed"
 	// TicketReady: a ticket's dependencies are all satisfied; it is dispatchable.
 	TicketReady EventType = "TicketReady"
 	// TicketClaimed: a worker took ownership of a ready ticket.
@@ -96,6 +100,16 @@ type TicketCreatedPayload struct {
 	DependsOn      []string `json:"depends_on,omitempty"`
 	IdempotencyKey string   `json:"idempotency_key"`
 	CreatedBy      string   `json:"created_by,omitempty"` // worker id for emergent tickets
+	Depth          int      `json:"depth,omitempty"`      // decomposition depth; root tickets are 0
+}
+
+// TicketDecomposedPayload accompanies [TicketDecomposed]. Children are the
+// ticket IDs the worker created (also emitted as [TicketCreated] events); the
+// parent ticket becomes terminal.
+type TicketDecomposedPayload struct {
+	TicketID string   `json:"ticket_id"`
+	Worker   string   `json:"worker,omitempty"`
+	Children []string `json:"children"`
 }
 
 // TicketReadyPayload accompanies [TicketReady].

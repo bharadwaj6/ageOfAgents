@@ -127,6 +127,80 @@ func TestRunFailsWhenAgentErrors(t *testing.T) {
 	}
 }
 
+func TestRunEmergentDiamondDecomposition(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{
+		// The root ticket's title is "Implement: <goal text>"; the worker
+		// decomposes it into a diamond instead of editing code. Each child has
+		// no Decompose/Plan entry, so the mock writes a marker file (a real diff).
+		Decompose: map[string][]agent.Subtask{
+			"Implement: build chat app": {
+				{LocalID: "types", Title: "shared types", IdempotencyKey: "g1:types"},
+				{LocalID: "backend", Title: "backend", DependsOn: []string{"types"}, IdempotencyKey: "g1:backend"},
+				{LocalID: "frontend", Title: "frontend", DependsOn: []string{"types"}, IdempotencyKey: "g1:frontend"},
+				{LocalID: "e2e", Title: "integration", DependsOn: []string{"backend", "frontend"}, IdempotencyKey: "g1:e2e"},
+			},
+		},
+	}
+	o, h := setup(t, mock, pass, Options{Concurrency: 4})
+	h.submitGoal(t, "g1", "build chat app")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	s := h.state(t)
+
+	root := s.Tickets["g1-impl"]
+	if root == nil || root.Status != state.StatusDecomposed {
+		t.Fatalf("root = %+v, want decomposed", root)
+	}
+	children := []string{"g1-impl/types", "g1-impl/backend", "g1-impl/frontend", "g1-impl/e2e"}
+	for _, id := range children {
+		tk := s.Tickets[id]
+		if tk == nil || tk.Status != state.StatusMerged {
+			t.Fatalf("child %s = %+v, want merged", id, tk)
+		}
+		if tk.Depth != 1 {
+			t.Errorf("child %s depth = %d, want 1", id, tk.Depth)
+		}
+	}
+	if !s.Settled() {
+		t.Error("expected settled")
+	}
+	for _, f := range []string{"g1-impl/types.txt", "g1-impl/backend.txt", "g1-impl/frontend.txt", "g1-impl/e2e.txt"} {
+		if _, err := os.Stat(filepath.Join(h.repo.Dir, f)); err != nil {
+			t.Errorf("merged file %s should be on main: %v", f, err)
+		}
+	}
+}
+
+func TestRunRejectsCyclicDecomposition(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{
+		Decompose: map[string][]agent.Subtask{
+			"Implement: cyclic goal": {
+				{LocalID: "a", Title: "a", DependsOn: []string{"b"}, IdempotencyKey: "g1:a"},
+				{LocalID: "b", Title: "b", DependsOn: []string{"a"}, IdempotencyKey: "g1:b"},
+			},
+		},
+	}
+	o, h := setup(t, mock, pass, Options{Concurrency: 2, MaxAttempts: 1})
+	h.submitGoal(t, "g1", "cyclic goal")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	s := h.state(t)
+
+	root := s.Tickets["g1-impl"]
+	if root == nil || root.Status != state.StatusFailed {
+		t.Fatalf("root = %+v, want failed (cyclic decomposition rejected)", root)
+	}
+	if len(s.Tickets) != 1 {
+		t.Errorf("no child tickets should have been created, got %d tickets", len(s.Tickets))
+	}
+}
+
 func TestDetectStalled(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-10 * time.Minute)

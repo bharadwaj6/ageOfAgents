@@ -24,6 +24,10 @@ type Mock struct {
 	// FailTitles, when true for a title, makes Run return an error (used to
 	// exercise the verification-failure / retry path).
 	FailTitles map[string]bool
+	// Decompose maps a ticket Title to child subtasks. A matching entry makes
+	// Run return those Subtasks (a decomposition) instead of writing files, so
+	// the emergent task graph can be exercised deterministically and offline.
+	Decompose map[string][]Subtask
 }
 
 // NewMock returns an empty Mock with default marker-file behavior.
@@ -39,6 +43,16 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 	}
 	if m.FailTitles[task.Title] {
 		return Result{}, fmt.Errorf("mock: forced failure for %q", task.Title)
+	}
+
+	// A configured decomposition takes precedence over writing files: the mock
+	// returns child subtasks and edits nothing.
+	if subs, ok := m.Decompose[task.Title]; ok {
+		return Result{
+			Trace:    fmt.Sprintf("mock decomposed %q into %d subtask(s)", task.Title, len(subs)),
+			Summary:  task.Title,
+			Subtasks: subs,
+		}, nil
 	}
 
 	files, ok := m.Plan[task.Title]

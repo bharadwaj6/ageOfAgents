@@ -14,17 +14,20 @@ import (
 type TicketStatus string
 
 const (
-	StatusPending  TicketStatus = "pending"  // created; dependencies not yet satisfied
-	StatusReady    TicketStatus = "ready"    // dependencies satisfied; dispatchable
-	StatusClaimed  TicketStatus = "claimed"  // a worker took ownership
-	StatusRunning  TicketStatus = "running"  // worker is executing
-	StatusProposed TicketStatus = "proposed" // proposal submitted; awaiting merge queue
-	StatusMerged   TicketStatus = "merged"   // verified and merged (terminal, success)
-	StatusFailed   TicketStatus = "failed"   // gave up (terminal, failure)
+	StatusPending    TicketStatus = "pending"    // created; dependencies not yet satisfied
+	StatusReady      TicketStatus = "ready"      // dependencies satisfied; dispatchable
+	StatusClaimed    TicketStatus = "claimed"    // a worker took ownership
+	StatusRunning    TicketStatus = "running"    // worker is executing
+	StatusProposed   TicketStatus = "proposed"   // proposal submitted; awaiting merge queue
+	StatusMerged     TicketStatus = "merged"     // verified and merged (terminal, success)
+	StatusFailed     TicketStatus = "failed"     // gave up (terminal, failure)
+	StatusDecomposed TicketStatus = "decomposed" // split into children (terminal; work moved to children)
 )
 
 // IsTerminal reports whether the status is an end state.
-func (s TicketStatus) IsTerminal() bool { return s == StatusMerged || s == StatusFailed }
+func (s TicketStatus) IsTerminal() bool {
+	return s == StatusMerged || s == StatusFailed || s == StatusDecomposed
+}
 
 // Goal is a submitted objective.
 type Goal struct {
@@ -38,6 +41,7 @@ type Ticket struct {
 	GoalID         string
 	Title          string
 	DependsOn      []string
+	Children       []string // set when the ticket is decomposed into child tickets
 	IdempotencyKey string
 	Status         TicketStatus
 	Worker         string
@@ -45,6 +49,7 @@ type Ticket struct {
 	Branch         string
 	Commit         string
 	Trace          string
+	Depth          int // decomposition depth; tickets seeded from a goal are 0
 	LastActivity   time.Time
 }
 
@@ -108,10 +113,23 @@ func (s *State) Apply(e api.Event) error {
 			Title:          p.Title,
 			DependsOn:      p.DependsOn,
 			IdempotencyKey: p.IdempotencyKey,
+			Depth:          p.Depth,
 			Status:         StatusPending,
 			LastActivity:   e.Timestamp,
 		}
 		s.ticketOrder = append(s.ticketOrder, p.TicketID)
+
+	case api.TicketDecomposed:
+		var p api.TicketDecomposedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		// The parent's work has moved to its children; mark it terminal.
+		if t := s.Tickets[p.TicketID]; t != nil {
+			t.Status = StatusDecomposed
+			t.Children = p.Children
+			t.LastActivity = e.Timestamp
+		}
 
 	case api.TicketReady:
 		var p api.TicketReadyPayload
@@ -241,15 +259,141 @@ func (s *State) orderedTickets() []*Ticket {
 	return out
 }
 
-// DepsSatisfied reports whether every dependency of the ticket is merged.
+// DepsSatisfied reports whether every dependency of the ticket is complete.
 func (s *State) DepsSatisfied(t *Ticket) bool {
 	for _, dep := range t.DependsOn {
-		d := s.Tickets[dep]
-		if d == nil || d.Status != StatusMerged {
+		if !s.ticketComplete(dep) {
 			return false
 		}
 	}
 	return true
+}
+
+// ticketComplete reports whether a dependency is fully done: merged directly,
+// or decomposed with every descendant complete. The graph is a DAG (enforced
+// at creation), so the recursion terminates.
+func (s *State) ticketComplete(id string) bool {
+	d := s.Tickets[id]
+	if d == nil {
+		return false
+	}
+	switch d.Status {
+	case StatusMerged:
+		return true
+	case StatusDecomposed:
+		for _, c := range d.Children {
+			if !s.ticketComplete(c) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// ticketDead reports whether a dependency can never complete: it has terminally
+// failed, or it decomposed into a subtree containing a dead descendant. An
+// unknown id is not provably dead (it may still be created by emergent work).
+func (s *State) ticketDead(id string) bool {
+	d := s.Tickets[id]
+	if d == nil {
+		return false
+	}
+	switch d.Status {
+	case StatusFailed:
+		return true
+	case StatusDecomposed:
+		for _, c := range d.Children {
+			if s.ticketDead(c) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// DeadDependency returns the id of a dependency that can never complete, if any.
+func (s *State) DeadDependency(t *Ticket) string {
+	for _, dep := range t.DependsOn {
+		if s.ticketDead(dep) {
+			return dep
+		}
+	}
+	return ""
+}
+
+// Blocked returns non-terminal tickets that can never become ready because a
+// dependency has terminally failed. The reconciler fails these to preserve
+// liveness — no ticket waits forever on dead work. Order is deterministic.
+func (s *State) Blocked() []*Ticket {
+	var out []*Ticket
+	for _, t := range s.orderedTickets() {
+		if t.Status.IsTerminal() {
+			continue
+		}
+		if s.DeadDependency(t) != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// dependencyEdges returns the depends_on adjacency (ticket id -> dependency ids)
+// of every ticket currently in the graph.
+func (s *State) dependencyEdges() map[string][]string {
+	adj := make(map[string][]string, len(s.Tickets))
+	for id, t := range s.Tickets {
+		adj[id] = t.DependsOn
+	}
+	return adj
+}
+
+// WouldCycle reports whether adding the given edges (ticket id -> dependency
+// ids) to the current dependency graph would introduce a cycle. The Scheduler
+// uses this to reject emergent decompositions that would deadlock the graph.
+func (s *State) WouldCycle(extra map[string][]string) bool {
+	adj := s.dependencyEdges()
+	for n, deps := range extra {
+		adj[n] = append(append([]string(nil), adj[n]...), deps...)
+	}
+	return HasCycle(adj)
+}
+
+// HasCycle reports whether the directed graph adj (node -> out-neighbors) has a
+// cycle, via a three-color depth-first search. Nodes referenced only as
+// neighbors are treated as having no out-edges.
+func HasCycle(adj map[string][]string) bool {
+	const (
+		white = 0 // unvisited
+		gray  = 1 // on the current DFS stack
+		black = 2 // fully explored
+	)
+	color := make(map[string]int, len(adj))
+	var visit func(n string) bool
+	visit = func(n string) bool {
+		color[n] = gray
+		for _, m := range adj[n] {
+			switch color[m] {
+			case gray:
+				return true
+			case white:
+				if visit(m) {
+					return true
+				}
+			}
+		}
+		color[n] = black
+		return false
+	}
+	for n := range adj {
+		if color[n] == white && visit(n) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewlyReady returns pending tickets whose dependencies are now satisfied. The
