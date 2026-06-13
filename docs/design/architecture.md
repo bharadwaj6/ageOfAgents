@@ -183,8 +183,8 @@ These are revisitable, but each must earn its place against a measured failure m
 
 ## 9. Advanced: research references
 
-How we measure whether this design delivers: [`docs/v2/metrics.md`](metrics.md); how it compares to other
-approaches (Gastown, Spec Kit + plan, opencode ultraworker): [`docs/v2/comparison.md`](comparison.md). See
+How we measure whether this design delivers: [`docs/design/metrics.md`](metrics.md); how it compares to other
+approaches (Gastown, Spec Kit + plan, opencode ultraworker): [`docs/design/comparison.md`](comparison.md). See
 `docs/research_links.md` for the full source list. Load-bearing citations: Cemri et al.
 (arXiv:2503.13657, MAST); Vallecillos-Ruiz et al. (arXiv:2510.21513, ensemble popularity trap); Huang
 et al. (arXiv:2310.01798, debate ≈ self-consistency); Anthropic multi-agent research engineering post;

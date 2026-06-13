@@ -1,6 +1,6 @@
 // Package api defines the public event vocabulary for the Age of Agents
 // orchestrator. The append-only Event Log of these events is the single source
-// of truth (see docs/v2/adr/001-event-sourced-truth.md); all runtime state is
+// of truth (see docs/design/adr/001-event-sourced-truth.md); all runtime state is
 // derived by replaying the event stream.
 package api
 

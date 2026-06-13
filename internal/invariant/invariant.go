@@ -5,7 +5,7 @@
 // tests). The checks are pure functions of the Event Log (the single source of
 // truth, ADR 001) plus, for main-is-green, the integration repo.
 //
-// The invariants map to docs/v2/metrics.md's litmus test:
+// The invariants map to docs/design/metrics.md's litmus test:
 //   - I1 merge correctness   -> MergeImpliesVerified + MainGreen
 //   - I2 serial single-writer -> MergedAtMostOnceByQueue
 //   - I3 replay fidelity      -> ReplayDeterministicAndTotal

@@ -4,8 +4,8 @@ Project guidance for Claude Code. The full guide is in [`AGENTS.md`](AGENTS.md) 
 
 ## Essentials
 
-- **Design first:** read [`docs/v2/architecture.md`](docs/v2/architecture.md) and the ADRs in
-  [`docs/v2/adr/`](docs/v2/adr/) before structural changes; add an ADR when you make a decision.
+- **Design first:** read [`docs/design/architecture.md`](docs/design/architecture.md) and the ADRs in
+  [`docs/design/adr/`](docs/design/adr/) before structural changes; add an ADR when you make a decision.
 - **Non-negotiables:** the Event Log is the single source of truth (all state is derived by replay);
   nothing merges unless the Gate passes; one deterministic Scheduler (no role hierarchy, no LLM
   coordinator); all LLM access goes through `agent.Backend`; no markets/voting/consensus; coordinate via

@@ -1,4 +1,4 @@
-# Age of Agents — v2 Implementation Roadmap
+# Age of Agents — Implementation Roadmap
 
 **Status:** Tracks A, B, C complete (emergent graph + cycle/runaway guards; hermetic invariant +
 fault-injection harness; replay-based metrics + benchmark + design comparison). This is the living plan +
@@ -8,7 +8,7 @@ start here. Next candidates (not yet started): live head-to-head competitor runs
 
 ## Resuming agent: start here
 
-1. Read this file, then `AGENTS.md`, `docs/v2/architecture.md`, and the ADRs in `docs/v2/adr/`.
+1. Read this file, then `AGENTS.md`, `docs/design/architecture.md`, and the ADRs in `docs/design/adr/`.
 2. Confirm a green baseline: `go build ./... && go vet ./... && go test ./...` and `gofmt -l cmd internal pkg`.
 3. Continue at the **first unchecked `[ ]` item** below. Update its checkbox + "last status" line as you go.
 4. Commit working states frequently (Conventional Commits, ≤72-char subject, no AI model names in
@@ -16,8 +16,8 @@ start here. Next candidates (not yet started): live head-to-head competitor runs
 
 ## Why this phase
 
-v2 is a clean, green, event-sourced Gate-verified orchestrator (~3k LOC). But three things the design
-*claims* are not yet real:
+The system is a clean, green, event-sourced Gate-verified orchestrator (~3k LOC). But three things the
+design *claims* are not yet real:
 
 1. **Emergent task graph (ADR 006) is documented, not built.** `orchestrator.ReconcileOnce` creates
    exactly one ticket per goal (`g.ID+"-impl"`) — no decomposition. `agent.Result` has no field for a
@@ -126,10 +126,10 @@ multi-writer option).
 - [x] `cmd/aoa bench` subcommand — runs the suite in a temp workspace, emits a markdown table (or
       `--json`) of the metrics + violations per task × strategy. `scripts/benchmark_coordination.sh` is now
       a thin wrapper over it (`benchmark_live.sh` stays as the real-`claudecode` E2E).
-- [x] `docs/v2/comparison.md` — design-level property matrix vs gastown / speckit+plan / opencode
+- [x] `docs/design/comparison.md` — design-level property matrix vs gastown / speckit+plan / opencode
       ultraworker, grounded in `docs/history/gastown_arch.md` + the research corpus, paired with the
       properties `aoa` proves about itself (invariant harness + bench). Clear about what is/ isn't claimed.
-- [x] `docs/v2/adr/007-emergent-decomposition-and-graph-governor.md` — the structural decision from
+- [x] `docs/design/adr/007-emergent-decomposition-and-graph-governor.md` — the structural decision from
       Track A (TicketDecomposed + graph governor + completion/liveness), indexed in the ADR README.
 
 **Last status:** done. Full suite green (incl. metrics + bench tests), gofmt clean, committed.

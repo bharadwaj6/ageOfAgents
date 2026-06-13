@@ -1,5 +1,5 @@
 // Package state derives the Scheduler's state by replaying the Event Log. The
-// replay is a pure function of the event stream (docs/v2/adr/001-event-sourced-truth.md):
+// replay is a pure function of the event stream (docs/design/adr/001-event-sourced-truth.md):
 // there is no separate authoritative store to keep consistent.
 package state
 

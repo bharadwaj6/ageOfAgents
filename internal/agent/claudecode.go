@@ -107,7 +107,7 @@ func fencedBlock(s, tag string) (string, bool) {
 
 // BuildPrompt assembles the instruction handed to the agent. Conventions are
 // included up front as shared coding rules to cut inter-agent
-// misalignment (docs/v2/adr/006-emergent-task-graph-blackboard.md).
+// misalignment (docs/design/adr/006-emergent-task-graph-blackboard.md).
 func BuildPrompt(task Task) string {
 	var b strings.Builder
 	if task.Conventions != "" {
