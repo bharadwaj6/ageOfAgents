@@ -1,5 +1,5 @@
 // Package orchestrator is the Scheduler — the single deterministic control loop
-// that drives the whole system (docs/v2/adr/003-flat-orchestrator-worker.md):
+// that drives the whole system (docs/design/adr/003-flat-orchestrator-worker.md):
 //
 //	read(Event Log) -> replay -> diff desired vs actual -> act -> append events
 //
@@ -38,6 +38,7 @@ type Options struct {
 	MaxPasses         int           // safety bound on Scheduler passes in Run; default 1000
 	MaxGraphDepth     int           // max emergent decomposition depth (graph governor); default 5
 	MaxTicketsPerGoal int           // max tickets a single Goal may spawn (graph governor); default 64
+	MaxFanOut         int           // max NEW children one decomposition may emit (graph governor); default 8
 	Now               func() time.Time
 }
 
@@ -72,6 +73,9 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 	}
 	if opt.MaxTicketsPerGoal <= 0 {
 		opt.MaxTicketsPerGoal = 64
+	}
+	if opt.MaxFanOut <= 0 {
+		opt.MaxFanOut = 8
 	}
 	if opt.WorktreeBase == "" {
 		opt.WorktreeBase = filepath.Join(repo.Dir, ".git", "aoa-worktrees")
@@ -379,6 +383,10 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 		if s.Tickets[c.id] == nil {
 			added++
 		}
+	}
+	if added > o.opt.MaxFanOut {
+		o.failDecompose(j, worker, "decomposition fan-out budget exceeded")
+		return
 	}
 	if existing+added > o.opt.MaxTicketsPerGoal {
 		o.failDecompose(j, worker, "per-goal ticket budget exceeded")
