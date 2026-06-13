@@ -155,7 +155,8 @@ These are revisitable, but each must earn its place against a measured failure m
 
 ## 9. References
 
-See `docs/research_links.md` for the full source list. Load-bearing citations: Cemri et al.
+How we measure whether this design delivers: [`docs/v2/metrics.md`](metrics.md) (eval-first metrics +
+litmus test). See `docs/research_links.md` for the full source list. Load-bearing citations: Cemri et al.
 (arXiv:2503.13657, MAST); Vallecillos-Ruiz et al. (arXiv:2510.21513, ensemble popularity trap); Huang
 et al. (arXiv:2310.01798, debate ≈ self-consistency); Anthropic multi-agent research engineering post;
 LATTE (emergent task graphs); stigmergy/blackboard synthesis (`docs/grok.md`).

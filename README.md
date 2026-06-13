@@ -97,4 +97,5 @@ isolated behind the [`agent.Backend`](internal/agent/agent.go) interface.
 
 - [`docs/v2/architecture.md`](docs/v2/architecture.md) — the design, with the research it rests on
 - [`docs/v2/adr/`](docs/v2/adr/) — the load-bearing decisions
+- [`docs/v2/metrics.md`](docs/v2/metrics.md) — success metrics and the eval-first litmus test
 - `docs/*.md` — the research corpus (`claude.md`, `gemini.md`, `grok.md`, `perplexity.md`, `research_links.md`)
