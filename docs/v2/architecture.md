@@ -101,7 +101,7 @@ queue) → append resulting events → repeat`. One controller, not eleven.
 | `internal/verify` | Run configured verification commands; capture pass/fail + output. |
 | `internal/mergequeue` | Serialize proposals → verify → merge to `main` or reject; emit events. |
 | `internal/config` | One TOML config: repo path, verify commands, concurrency, backend, conventions. |
-| `cmd/aoa` | Tiny Cobra CLI: `init`, `goal`, `run`, `status`, `feed`, `events`. |
+| `cmd/aoa` | Tiny standard-library CLI (no framework): `init`, `goal`, `run`, `status`, `feed`, `events`. |
 
 The **`agent.Backend`** interface is the only seam to the LLM. Business logic never calls a provider SDK
 directly. A deterministic **`mock`** backend lets the entire loop run offline in `go test`; the
