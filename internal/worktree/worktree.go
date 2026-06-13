@@ -92,20 +92,32 @@ func (r *Repo) AddWorktree(ctx context.Context, dest, branch string) (*Worktree,
 // Commit stages all changes in the worktree and commits them. It reports
 // changed=false (and no error) when there is nothing to commit.
 func (w *Worktree) Commit(ctx context.Context, msg string) (sha string, changed bool, err error) {
-	if _, err := git(ctx, w.Path, "add", "-A"); err != nil {
+	return commitDir(ctx, w.Path, msg)
+}
+
+// CommitAll stages and commits all changes in the integration repo's main
+// worktree (used to seed scaffolding). Reports changed=false when clean.
+func (r *Repo) CommitAll(ctx context.Context, msg string) (sha string, changed bool, err error) {
+	return commitDir(ctx, r.Dir, msg)
+}
+
+// commitDir stages everything in dir and commits, reporting whether anything
+// changed.
+func commitDir(ctx context.Context, dir, msg string) (sha string, changed bool, err error) {
+	if _, err := git(ctx, dir, "add", "-A"); err != nil {
 		return "", false, err
 	}
-	status, err := git(ctx, w.Path, "status", "--porcelain")
+	status, err := git(ctx, dir, "status", "--porcelain")
 	if err != nil {
 		return "", false, err
 	}
 	if strings.TrimSpace(status) == "" {
 		return "", false, nil
 	}
-	if _, err := git(ctx, w.Path, "commit", "-m", msg); err != nil {
+	if _, err := git(ctx, dir, "commit", "-m", msg); err != nil {
 		return "", false, err
 	}
-	out, err := git(ctx, w.Path, "rev-parse", "HEAD")
+	out, err := git(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
 		return "", false, err
 	}
