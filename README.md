@@ -1,58 +1,92 @@
 # Age of Agents
 
-A minimal, **verifier-gated** orchestrator for fleets of AI coding agents.
+**Age of Agents** (`aoa`) coordinates a fleet of AI coding agents working on your codebase — safely, deterministically, and with zero wasted work.
 
-It rejects the org-chart metaphor (no "Mayor", no role hierarchy) and keeps only the small set of
-distributed-systems primitives that map to *measured* multi-agent failure modes: an event-sourced
-ledger, idempotent work tickets, a flat orchestrator–worker loop, and a serializing merge queue gated
-by an **objective verifier** (your build/tests/lint). One static binary, one config file, git only —
-no databases, brokers, or required external services.
+You give it a **Goal** (what you want built). It breaks that Goal into **Tasks**, dispatches each Task to a **Worker** (an AI agent in an isolated git checkout), and merges the results into `main` — but only if your build and tests pass. One binary, one config file, git only.
 
-> The bottleneck in multi-agent coding is **verification + specification + idempotency**, not hierarchy,
-> markets, or multi-agent debate. So we invest there and nowhere else. See
-> [`docs/v2/architecture.md`](docs/v2/architecture.md) and the [ADRs](docs/v2/adr/).
+## Core Concepts
 
-## How it works
+| Concept | What it is |
+|---|---|
+| **Goal** | What you want done, in plain English |
+| **Task** | A single piece of work derived from a Goal |
+| **Worker** | An AI agent working on one Task in an isolated git worktree |
+| **Event Log** | An append-only file that records everything that happens — the single source of truth |
+| **Scheduler** | The deterministic loop that reads the Event Log, finds ready work, and dispatches Workers |
+| **Gate** | Your build + test commands (e.g. `go build`, `go test`) that every change must pass |
+| **Merge Queue** | Runs the Gate on each Worker's output; only passing code reaches `main` |
+| **Backend** | The AI engine Workers use — `mock` for offline testing, `claudecode` for real work |
+
+## How It Works
 
 ```
-goal ─▶ reconciler (deterministic) ─▶ workers in isolated git worktrees ─▶ merge queue (verify ▶ merge)
-        observe(ledger)→fold→act         run the agent backend                 only green code lands on main
+1. You submit a Goal        →  "Add a greeting function"
+2. The Scheduler creates    →  Tasks (with dependency ordering)
+3. Workers execute          →  Each in its own isolated git worktree
+4. The Gate verifies        →  Your build + tests must pass
+5. The Merge Queue lands    →  Only verified code reaches main
 ```
 
-The orchestrator decomposes a goal into tickets, dispatches dependency-ready ones to agents under a
-concurrency governor, and serializes merges into `main` behind the verifier. Everything is an append-only
-event; all state is a pure fold of the log (replayable, auditable). Agents coordinate through the shared
-log (a blackboard), never by messaging each other.
+Everything is recorded in the Event Log. State is rebuilt by replaying it — crash recovery, audit trails, and debugging come for free.
 
-## Quick start
+## Quick Start
+
+### 1. Build the CLI
 
 ```bash
+git clone https://github.com/bharadwaj6/ageOfAgents.git
+cd ageOfAgents
 go build -o aoa ./cmd/aoa
-
-# Scaffold a workspace with an integration repo (a minimal Go module)
-./aoa init --path ./workspace --repo ./demo
-
-# Submit a goal and run the loop (offline mock backend by default)
-./aoa goal --path ./workspace "Add a greeting function"
-./aoa run  --path ./workspace
-
-# Inspect
-./aoa status --path ./workspace       # goals + ticket states
-./aoa events --path ./workspace tail  # the audit trail
 ```
 
-With the default **mock** backend the entire loop runs offline (no API calls), which is exactly how the
-test suite exercises it. Switch `backend = "claudecode"` in `aoa.toml` to drive a real coding agent.
+### 2. Create a workspace
+
+```bash
+./aoa init --path ./workspace --repo ./demo
+```
+
+This creates a workspace with an `aoa.toml` config, an Event Log, and a `demo/` git repo for your agents to work on.
+
+### 3. Submit a Goal
+
+```bash
+./aoa goal --path ./workspace "Add a greeting function"
+```
+
+### 4. Run the Scheduler
+
+```bash
+./aoa run --path ./workspace
+```
+
+By default, the `mock` Backend runs everything offline — no API keys, no cost. Great for trying things out.
+
+### 5. See what happened
+
+```bash
+./aoa status --path ./workspace       # Goals + Task states
+./aoa events --path ./workspace tail  # The Event Log
+```
+
+### Using a real AI agent
+
+Edit `aoa.toml` in your workspace:
+
+```toml
+backend = "claudecode"
+```
+
+Then run `./aoa run` again. The Scheduler will dispatch Tasks to a real coding agent.
 
 ## Configuration (`aoa.toml`)
 
 ```toml
-repo             = "./demo"          # integration git repository
+repo             = "./demo"          # git repository for agents to work on
 backend          = "mock"            # "mock" (offline) | "claudecode" (real agent)
-concurrency      = 4                 # max workers in flight (the governor)
-max_attempts     = 2                 # retries before a ticket fails
-conventions_file = "CONVENTIONS.md"  # injected into every agent prompt
-verify = [                           # the objective gate; nothing merges unless this passes
+concurrency      = 4                 # max Workers running at once
+max_attempts     = 2                 # retries before a Task fails
+conventions_file = "CONVENTIONS.md"  # coding rules injected into every agent prompt
+verify = [                           # the Gate — nothing merges unless this passes
   ["go", "build", "./..."],
   ["go", "test", "./..."],
 ]
@@ -60,14 +94,29 @@ verify = [                           # the objective gate; nothing merges unless
 
 ## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `aoa init` | Scaffold a workspace + integration repo and `aoa.toml` |
-| `aoa goal "…"` | Submit a goal |
-| `aoa run [--once]` | Run the reconciler (loops to completion; `--once` for a single pass) |
-| `aoa status` | Show goals and ticket states |
+| Command | What it does |
+|---------|--------------|
+| `aoa init` | Create a workspace + git repo and `aoa.toml` |
+| `aoa goal "…"` | Submit a Goal |
+| `aoa run [--once]` | Run the Scheduler (loops to completion; `--once` for a single pass) |
+| `aoa status` | Show Goals and Task states |
 | `aoa feed [--type T]` | Print the event stream |
-| `aoa events tail [--count N] \| replay` | Inspect the log |
+| `aoa events tail [--count N] \| replay` | Inspect the Event Log |
+
+## Project Layout
+
+| Path | What it does |
+|------|--------------|
+| `pkg/api` | Event types and typed payloads |
+| `internal/ledger` | Append-only JSONL Event Log |
+| `internal/state` | Replays events into current state (Task readiness, dependencies) |
+| `internal/orchestrator` | The Scheduler — the single control loop |
+| `internal/agent` | Backend interface + `mock` / `claudecode` implementations |
+| `internal/worktree` | Git worktree management for isolated Worker sandboxes |
+| `internal/verify` | The Gate — runs your verification commands |
+| `internal/mergequeue` | The Merge Queue — verify then merge into `main` |
+| `internal/config` | `aoa.toml` loading |
+| `cmd/aoa` | CLI entry point |
 
 ## Development
 
@@ -75,27 +124,12 @@ verify = [                           # the objective gate; nothing merges unless
 go build ./... && go vet ./... && go test ./...
 ```
 
-The `mock` backend makes the full orchestration loop hermetic and offline in tests. Real agent calls are
-isolated behind the [`agent.Backend`](internal/agent/agent.go) interface.
-
-## Layout
-
-| Path | Responsibility |
-|------|----------------|
-| `pkg/api` | Event envelope and typed payloads |
-| `internal/ledger` | Append-only JSONL event log |
-| `internal/state` | Pure fold of events → state, DAG readiness |
-| `internal/orchestrator` | The single reconciler |
-| `internal/agent` | `Backend` interface + `mock`/`claudecode` |
-| `internal/worktree` | Git repo + isolated worktrees |
-| `internal/verify` | Objective verification gate |
-| `internal/mergequeue` | Verify-then-merge into `main` |
-| `internal/config` | `aoa.toml` loading |
-| `cmd/aoa` | CLI |
+The `mock` Backend makes the full loop hermetic and offline in tests. Real agent calls are isolated behind the [`Backend`](internal/agent/agent.go) interface.
 
 ## Documentation
 
-- [`docs/v2/architecture.md`](docs/v2/architecture.md) — the design, with the research it rests on
-- [`docs/v2/adr/`](docs/v2/adr/) — the load-bearing decisions
-- [`docs/v2/metrics.md`](docs/v2/metrics.md) — success metrics and the eval-first litmus test
-- `docs/*.md` — the research corpus (`claude.md`, `gemini.md`, `grok.md`, `perplexity.md`, `research_links.md`)
+- [`docs/v2/architecture.md`](docs/v2/architecture.md) — design and research basis
+- [`docs/v2/getting_started.md`](docs/v2/getting_started.md) — step-by-step tutorial
+- [`docs/v2/adr/`](docs/v2/adr/) — architecture decision records
+- [`docs/v2/metrics.md`](docs/v2/metrics.md) — success metrics
+- `docs/*.md` — the research corpus

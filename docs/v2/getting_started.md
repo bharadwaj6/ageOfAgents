@@ -1,85 +1,108 @@
-# Getting Started with Age of Agents (`aoa`)
+# Getting Started with Age of Agents
 
-Welcome to **Age of Agents**, a minimal, verifier-gated orchestrator for fleets of AI coding agents. This guide will walk you through setting up your first workspace and executing a goal autonomously!
+This guide walks you through your first run of **Age of Agents** (`aoa`) — from zero to a fully orchestrated, verified code change in under five minutes.
 
-## What is Age of Agents?
+## Prerequisites
 
-Age of Agents is designed to manage and orchestrate AI agents working on your code. Unlike other complex frameworks, it relies on simple, tested distributed-systems primitives:
-- **Event Ledger**: An append-only log that acts as the single source of truth.
-- **Isolated Workers**: Agents work in isolated git worktrees, preventing conflicts.
-- **Merge Queue**: A serialized queue that uses your actual build/test commands as an objective gate. Code only reaches the main branch if it passes your tests.
+- **Go 1.21+** — [install Go](https://go.dev/doc/install)
+- **git** — any recent version
 
-## 1. Installation
+## Step 1: Build the CLI
 
-First, clone the repository and build the CLI binary:
+Clone the repo and compile the `aoa` binary:
+
 ```bash
 git clone https://github.com/bharadwaj6/ageOfAgents.git
 cd ageOfAgents
 go build -o aoa ./cmd/aoa
 ```
 
-## 2. Scaffolding a Workspace
+You now have a single `aoa` binary. No other dependencies needed.
 
-A **workspace** contains the orchestrator configuration, the event ledger, and the git repository your agents will be working on. 
+## Step 2: Create a Workspace
 
-To initialize a new workspace and an integration repo (e.g., a minimal Go module):
+A **workspace** is a directory where `aoa` keeps everything: your project's git repo, the Event Log, configuration, and worker sandboxes.
+
 ```bash
 ./aoa init --path ./workspace --repo ./demo
 ```
-This command creates:
-- A `.aoa/` directory holding the event ledger and worktrees.
-- An `aoa.toml` configuration file.
-- A `CONVENTIONS.md` file for providing prompt instructions to the agents.
-- The `demo/` folder acting as your target Git repository.
 
-## 3. Submitting a Goal
+**What just happened?**
+- `./workspace/.aoa/` — the Event Log and worktree storage
+- `./workspace/aoa.toml` — configuration file (Backend, Gate commands, concurrency)
+- `./workspace/CONVENTIONS.md` — coding rules injected into every agent prompt
+- `./workspace/demo/` — a minimal Go module (your target repo)
 
-You interact with the orchestrator by submitting high-level goals. The framework will automatically decompose the goal and dispatch tickets to agents.
+## Step 3: Submit a Goal
 
-Submit your first goal:
+A **Goal** is what you want done, in plain English. The Scheduler will break it into Tasks automatically.
+
 ```bash
 ./aoa goal --path ./workspace "Add a greeting function to the main package"
 ```
-You can view the goal and pending tickets at any time:
+
+Check the current state:
+
 ```bash
 ./aoa status --path ./workspace
 ```
 
-## 4. Running the Orchestrator
+You should see your Goal listed with a pending Task.
 
-The orchestrator reads the event ledger, detects the pending goal, and spins up agents to execute it. 
+## Step 4: Run the Scheduler
 
-To start the orchestrator loop:
+The **Scheduler** reads the Event Log, finds ready Tasks, dispatches Workers (AI agents) to execute them, and merges verified results into `main`.
+
 ```bash
 ./aoa run --path ./workspace
 ```
-*Note: By default, the `aoa.toml` is configured to use an offline `"mock"` backend, which will instantly simulate work. This is great for testing the workflow!*
 
-### Using a Real AI Agent
-To unleash a real coding agent, edit the `aoa.toml` inside your workspace root:
-```toml
-# Change the backend from "mock" to "claudecode"
-backend = "claudecode"
-```
-Once updated, run `./aoa run --path ./workspace` again. The orchestrator will invoke the agent, process the code, and merge it if it passes verification.
+**What just happened?**
+1. The Scheduler created a Task from your Goal
+2. A Worker claimed the Task and worked in an isolated git worktree
+3. The **Gate** ran your verification commands (`go build`, `go test`)
+4. The **Merge Queue** merged the passing change into `main`
 
-## 5. Monitoring and Auditing
+By default, `aoa.toml` uses the `mock` Backend — a deterministic, offline simulator. No API keys or network access needed. This is exactly how the test suite works too.
 
-Because everything is driven by the event ledger, you can track exactly what the agents are doing.
+## Step 5: Inspect the Results
 
-To view a real-time feed of events:
+See what happened:
+
 ```bash
+# Goal and Task states
+./aoa status --path ./workspace
+
+# Event-by-event audit trail
+./aoa events --path ./workspace tail
+
+# Full event stream (filterable by type)
 ./aoa feed --path ./workspace
 ```
 
-To view the raw event log:
-```bash
-./aoa events --path ./workspace tail
+Every action is recorded in the Event Log. You can replay it to reconstruct any past state.
+
+## Step 6: Use a Real AI Agent
+
+Ready to run a real coding agent? Edit `aoa.toml`:
+
+```toml
+backend = "claudecode"
 ```
 
-## 6. Configuring the Verification Gate
+Then submit a new goal and run again:
 
-The orchestrator enforces an objective gate on the merge queue. Agents' code is only merged if the configured commands exit successfully. You can customize this in your `aoa.toml`:
+```bash
+./aoa goal --path ./workspace "Add unit tests for the greeting function"
+./aoa run  --path ./workspace
+```
+
+The Scheduler will invoke the `claudecode` Backend, which drives a real coding agent as a subprocess in the Task's isolated worktree. The agent's code changes are only merged if they pass your Gate.
+
+## Step 7: Customize the Gate
+
+The **Gate** is the set of commands that every code change must pass before it can merge. Customize it in `aoa.toml`:
+
 ```toml
 verify = [
   ["go", "build", "./..."],
@@ -88,6 +111,23 @@ verify = [
 ]
 ```
 
+This is how `aoa` guarantees that `main` is always green — no change lands without passing your build, tests, and linter.
+
+## Concepts Recap
+
+| Concept | What it is |
+|---|---|
+| **Goal** | What you want done |
+| **Task** | A piece of work, auto-created from a Goal |
+| **Worker** | An AI agent executing one Task in isolation |
+| **Event Log** | Append-only record of everything — the single source of truth |
+| **Scheduler** | Deterministic loop: reads log → dispatches workers → drives merges |
+| **Gate** | Your build/test commands that every change must pass |
+| **Merge Queue** | Serializes merges to `main` — only Gate-passing code lands |
+| **Backend** | The AI engine (`mock` for testing, `claudecode` for real work) |
+
 ## Next Steps
 
-Now that you have your first workspace running, check out the [Architecture Design Document](architecture.md) for a deeper understanding of the internal deterministic orchestrator and stochastic execution!
+- **[Architecture](architecture.md)** — how the Scheduler, Event Log, and Merge Queue fit together
+- **[Architecture Decision Records](adr/)** — the design decisions and the research behind them
+- **[Success Metrics](metrics.md)** — how we measure whether the design works

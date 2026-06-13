@@ -49,7 +49,7 @@ func (c *ClaudeCode) Run(ctx context.Context, task Task) (Result, error) {
 }
 
 // BuildPrompt assembles the instruction handed to the agent. Conventions are
-// included up front as shared "Schelling points" to cut inter-agent
+// included up front as shared coding rules to cut inter-agent
 // misalignment (docs/v2/adr/006-emergent-task-graph-blackboard.md).
 func BuildPrompt(task Task) string {
 	var b strings.Builder

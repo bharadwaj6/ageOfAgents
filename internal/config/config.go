@@ -1,6 +1,6 @@
 // Package config loads and saves the single aoa.toml file that configures a
-// workspace: the integration repo, the agent backend, the concurrency governor, the
-// verification gate, and the conventions injected into agent prompts.
+// workspace: the integration repo, the agent Backend, the Concurrency Limit, the
+// Gate commands, and the Conventions injected into agent prompts.
 package config
 
 import (
@@ -19,20 +19,20 @@ type Config struct {
 	// Repo is the path to the integration git repository, relative to the workspace
 	// root (the directory containing aoa.toml) or absolute.
 	Repo string `toml:"repo"`
-	// Backend selects the agent backend: "mock" or "claudecode".
+	// Backend selects the agent Backend: "mock" or "claudecode".
 	Backend string `toml:"backend"`
-	// Concurrency caps the number of workers in flight (the governor).
+	// Concurrency caps the number of Workers in flight (the Concurrency Limit).
 	Concurrency int `toml:"concurrency"`
-	// MaxAttempts is how many times a ticket is retried before failing.
+	// MaxAttempts is how many times a Task is retried before failing.
 	MaxAttempts int `toml:"max_attempts"`
 	// ConventionsFile, if set, is read and injected into every agent prompt.
 	ConventionsFile string `toml:"conventions_file"`
-	// Verify is the ordered objective gate: each entry is an argv.
+	// Verify is the ordered Gate: each entry is an argv.
 	Verify [][]string `toml:"verify"`
 }
 
-// Default returns a config with sensible defaults: an offline mock backend and
-// a Go build+test gate.
+// Default returns a config with sensible defaults: an offline mock Backend and
+// a Go build+test Gate.
 func Default() Config {
 	return Config{
 		Repo:        "./repo",

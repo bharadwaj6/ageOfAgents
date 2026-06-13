@@ -1,22 +1,22 @@
-// Package agent defines the single seam between the orchestrator and the LLM
+// Package agent defines the single seam between the Scheduler and the AI
 // coding agent (docs/v2/adr/004-pluggable-agent-backend.md). Business logic
 // never calls a provider SDK directly; it goes through [Backend].
 //
 // A Backend's job is narrow: given a [Task], make the necessary file changes in
-// the task's isolated worktree and return a [Result] (a reasoning trace). The
-// orchestrator is responsible for committing those changes to a branch and for
-// verifying/merging them — the Backend does not touch git or the merge queue.
+// the Task's isolated worktree and return a [Result] (a reasoning trace). The
+// Scheduler is responsible for committing those changes to a branch and for
+// verifying/merging them — the Backend does not touch git or the Merge Queue.
 package agent
 
 import "context"
 
 // Task is a single unit of work handed to a Backend.
 type Task struct {
-	TicketID    string // stable ticket identifier
+	TicketID    string // stable Task identifier
 	Title       string // what to do
-	Goal        string // the parent goal text, for context
+	Goal        string // the parent Goal text, for context
 	Worktree    string // absolute path to the isolated git worktree to edit
-	Conventions string // project conventions, injected as shared "Schelling points"
+	Conventions string // project Conventions, injected as shared coding rules
 }
 
 // Result is what a Backend returns after editing the worktree.

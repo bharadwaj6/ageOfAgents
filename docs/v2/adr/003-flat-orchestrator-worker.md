@@ -4,17 +4,17 @@
 Accepted
 
 ## Context
-Gas Town and prior `aoa` used role hierarchies (Mayor/Witness/Deacon) or many controllers (eleven, in
-`main`). Anthropic's multi-agent work shows the **flat orchestrator–worker** topology is the simplest
+Earlier designs used role hierarchies (a coordinator LLM, watchdog daemons, lifecycle managers) or many
+controllers. Anthropic's multi-agent work shows the **flat orchestrator–worker** topology is the simplest
 sound default; markets/leader-election add complexity that aligned coding agents do not need.
 
 ## Decision
 A **single deterministic reconciler** (`internal/orchestrator`) runs the loop `observe → fold → diff →
 act`. Idle worker capacity **pulls** the next dependency-ready ticket (work-stealing); there is no
-"Mayor" pushing assignments and no role personas. A **concurrency governor** caps in-flight workers
+coordinator LLM pushing assignments and no role personas. A **concurrency governor** caps in-flight workers
 (backpressure). The reconciler is plain Go (sub-millisecond) — coordination cannot hallucinate and is
 not a cognitive bottleneck. Recovery is a **single failure detector + crash-only restart** from the
-durable log (replacing the Witness/Deacon/Dogs watchdog cast).
+durable log (replacing the multi-agent watchdog hierarchy).
 
 ## Consequences
 - One small, testable, deterministic control component instead of a role hierarchy.

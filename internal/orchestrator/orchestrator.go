@@ -1,12 +1,12 @@
-// Package orchestrator is the single deterministic reconciler that drives the
-// whole loop (docs/v2/adr/003-flat-orchestrator-worker.md):
+// Package orchestrator is the Scheduler — the single deterministic control loop
+// that drives the whole system (docs/v2/adr/003-flat-orchestrator-worker.md):
 //
-//	observe(ledger) -> fold -> diff desired vs actual -> act -> append events
+//	read(Event Log) -> replay -> diff desired vs actual -> act -> append events
 //
-// One controller, not eleven. It decomposes goals, promotes dependency-ready
-// tickets, dispatches workers under a concurrency governor, drives the
-// verifier-gated merge queue, and restarts stalled workers. All coordination
-// is plain Go (no LLM); only the work itself is done by the agent backend.
+// One controller, not eleven. It decomposes Goals into Tasks, promotes
+// dependency-ready Tasks, dispatches Workers under a Concurrency Limit, drives
+// the Gate-verified Merge Queue, and restarts stalled Workers. All coordination
+// is plain Go (no LLM); only the work itself is done by the agent Backend.
 package orchestrator
 
 import (
@@ -29,12 +29,12 @@ import (
 
 // Options configures an Orchestrator. Zero values fall back to sane defaults.
 type Options struct {
-	Concurrency  int           // max workers in flight (governor); default 4
-	MaxAttempts  int           // attempts per ticket before failing; default 2
-	Conventions  string        // injected into every agent prompt
+	Concurrency  int           // max Workers in flight (Concurrency Limit); default 4
+	MaxAttempts  int           // attempts per Task before failing; default 2
+	Conventions  string        // injected into every agent prompt (Conventions)
 	WorktreeBase string        // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
-	StallTimeout time.Duration // no-progress timeout for the failure detector; default 2m
-	MaxPasses    int           // safety bound on reconcile passes in Run; default 1000
+	StallTimeout time.Duration // no-progress timeout for the Stall Detector; default 2m
+	MaxPasses    int           // safety bound on Scheduler passes in Run; default 1000
 	Now          func() time.Time
 }
 
@@ -359,8 +359,8 @@ func goalText(s *state.State, t *state.Ticket) string {
 	return ""
 }
 
-// detectStalled returns claimed/running tickets whose last activity predates the
-// stall timeout. Pure function for testability.
+// detectStalled returns claimed/running Tasks whose last activity predates the
+// stall timeout. Pure function for testability (Stall Detector).
 func detectStalled(s *state.State, now time.Time, timeout time.Duration) []*state.Ticket {
 	var out []*state.Ticket
 	for _, t := range s.Tickets {

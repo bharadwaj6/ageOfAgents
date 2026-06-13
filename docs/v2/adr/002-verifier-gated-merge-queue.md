@@ -24,4 +24,4 @@ majority vote. The queue serializes *only writes to `main`* — it does **not** 
 
 ## Research basis
 MAST verification findings (arXiv:2503.13657); popularity trap (arXiv:2510.21513); debate ≈
-self-consistency (arXiv:2310.01798); linearizability (Kleppmann, *DDIA*); Gas Town's Refinery (kept).
+self-consistency (arXiv:2310.01798); linearizability (Kleppmann, *DDIA*).
