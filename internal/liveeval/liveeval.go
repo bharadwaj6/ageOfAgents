@@ -86,7 +86,7 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 	if err != nil {
 		return rep, err
 	}
-	gate := verify.Verifier{Commands: toCommands(t.Gate)}
+	gate := verify.Verifier{Commands: verify.ToCommands(t.Gate)}
 	o := orchestrator.New(led, repo, backend, mergequeue.New(repo, gate), orchestrator.Options{
 		Concurrency:  4,
 		WorktreeBase: filepath.Join(baseDir, "wt"),
@@ -120,20 +120,12 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 	// Success oracle: an explicit command set if given, else "merged something
 	// without breaking any invariant".
 	if len(t.Success) > 0 {
-		oracle := verify.Verifier{Commands: toCommands(t.Success)}
+		oracle := verify.Verifier{Commands: verify.ToCommands(t.Success)}
 		rep.Success = oracle.Run(ctx, repo.Dir).Passed && len(rep.Violations) == 0
 	} else {
 		rep.Success = rep.Metrics.Merged > 0 && len(rep.Violations) == 0
 	}
 	return rep, nil
-}
-
-func toCommands(cmds [][]string) []verify.Command {
-	out := make([]verify.Command, 0, len(cmds))
-	for _, c := range cmds {
-		out = append(out, verify.Command(c))
-	}
-	return out
 }
 
 // collectFailureReasons extracts the Reason field from every TicketFailed event

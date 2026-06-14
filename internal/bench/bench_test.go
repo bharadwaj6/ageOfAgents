@@ -15,12 +15,12 @@ func requireGit(t *testing.T) {
 
 func TestRunSuiteHoldsInvariants(t *testing.T) {
 	requireGit(t)
-	results, err := RunSuite(context.Background(), t.TempDir(), Suite(), AllStrategies)
+	results, err := RunSuite(context.Background(), t.TempDir(), Suite(), []Strategy{Single, PlanFirst, Emergent})
 	if err != nil {
 		t.Fatalf("RunSuite: %v", err)
 	}
-	if len(results) != len(Suite())*len(AllStrategies) {
-		t.Fatalf("got %d results, want %d", len(results), len(Suite())*len(AllStrategies))
+	if len(results) != len(Suite())*len([]Strategy{Single, PlanFirst, Emergent}) {
+		t.Fatalf("got %d results, want %d", len(results), len(Suite())*len([]Strategy{Single, PlanFirst, Emergent}))
 	}
 	for _, r := range results {
 		if len(r.Violations) != 0 {

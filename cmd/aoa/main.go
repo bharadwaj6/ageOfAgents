@@ -5,8 +5,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -184,7 +183,7 @@ func cmdGoal(args []string) error {
 	if err != nil {
 		return err
 	}
-	goalID := "g-" + shortID()
+	goalID := "g-" + orchestrator.ShortID()
 	ev, err := api.NewEvent(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: goalID, Text: text})
 	if err != nil {
 		return err
@@ -314,7 +313,7 @@ func cmdBench(args []string) error {
 	}
 	defer os.RemoveAll(dir)
 
-	results, err := bench.RunSuite(context.Background(), dir, bench.Suite(), bench.AllStrategies)
+	results, err := bench.RunSuite(context.Background(), dir, bench.Suite(), []bench.Strategy{bench.Single, bench.PlanFirst, bench.Emergent})
 	if err != nil {
 		return err
 	}
@@ -544,7 +543,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 			conventions = string(b)
 		}
 	}
-	gate := verify.Verifier{Commands: toCommands(cfg.Verify)}
+	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify)}
 	opt := orchestrator.Options{
 		Concurrency:     cfg.Concurrency,
 		MaxAttempts:     cfg.MaxAttempts,
@@ -567,14 +566,6 @@ func buildBackend(name string) (agent.Backend, error) {
 	default:
 		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok)", name)
 	}
-}
-
-func toCommands(cmds [][]string) []verify.Command {
-	out := make([]verify.Command, 0, len(cmds))
-	for _, c := range cmds {
-		out = append(out, verify.Command(c))
-	}
-	return out
 }
 
 // --- presentation ---------------------------------------------------------
@@ -640,12 +631,6 @@ func summarize(e api.Event) string {
 		}
 	}
 	return ""
-}
-
-func shortID() string {
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
 }
 
 func goVersion() string {

@@ -45,3 +45,12 @@ func (v Verifier) Run(ctx context.Context, dir string) Result {
 	}
 	return Result{Passed: true, Output: out.String()}
 }
+
+// ToCommands converts a slice of string slices into a slice of [Command].
+func ToCommands(cmds [][]string) []Command {
+	out := make([]Command, 0, len(cmds))
+	for _, c := range cmds {
+		out = append(out, Command(c))
+	}
+	return out
+}

@@ -71,7 +71,7 @@ func Compute(events []api.Event) Metrics {
 			firstTS = e.Timestamp
 		}
 		lastTS = e.Timestamp
-		id := payloadTicketID(e)
+		id := e.TicketID()
 
 		switch e.Type {
 		case api.TicketCreated:
@@ -220,18 +220,4 @@ func criticalPathDepth(s *state.State) int {
 		}
 	}
 	return max
-}
-
-// payloadTicketID extracts ticket_id from any payload carrying one.
-func payloadTicketID(e api.Event) string {
-	if len(e.Payload) == 0 {
-		return ""
-	}
-	var p struct {
-		TicketID string `json:"ticket_id"`
-	}
-	if e.DecodePayload(&p) != nil {
-		return ""
-	}
-	return p.TicketID
 }

@@ -38,9 +38,6 @@ const (
 	Emergent  Strategy = "emergent"
 )
 
-// AllStrategies is the default comparison set.
-var AllStrategies = []Strategy{Single, PlanFirst, Emergent}
-
 // Task is one benchmark workload: a goal that produces a set of components.
 type Task struct {
 	Name       string

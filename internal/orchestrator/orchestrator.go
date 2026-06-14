@@ -238,7 +238,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		return
 	}
 
-	branch := "aoa/" + worktree.SanitizeBranch(j.ticketID) + "-" + newID()
+	branch := "aoa/" + worktree.SanitizeBranch(j.ticketID) + "-" + ShortID()
 	dest := filepath.Join(o.opt.WorktreeBase, worktree.SanitizeBranch(branch))
 	wt, err := o.repo.AddWorktree(ctx, dest, branch)
 	if err != nil {
@@ -611,7 +611,8 @@ func detectStalled(s *state.State, now time.Time, timeout time.Duration) []*stat
 	return out
 }
 
-func newID() string {
+// ShortID returns 8 hex chars of random entropy, suitable for branch suffixes and goal IDs.
+func ShortID() string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])

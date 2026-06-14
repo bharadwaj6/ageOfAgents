@@ -89,6 +89,21 @@ func (e Event) DecodePayload(v any) error {
 	return nil
 }
 
+// TicketID extracts the ticket_id field from any payload that carries one.
+// Returns the empty string when the payload is absent or has no ticket_id.
+func (e Event) TicketID() string {
+	if len(e.Payload) == 0 {
+		return ""
+	}
+	var p struct {
+		TicketID string `json:"ticket_id"`
+	}
+	if e.DecodePayload(&p) != nil {
+		return ""
+	}
+	return p.TicketID
+}
+
 // --- Typed payloads -------------------------------------------------------
 
 // GoalSubmittedPayload accompanies [GoalSubmitted].

@@ -12,6 +12,8 @@ package diagnose
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
@@ -195,12 +197,12 @@ func Classify(events []api.Event) Report {
 		MissingVerification:  len(missingVerif),
 	}
 	tickets := map[Mode][]string{
-		StepRepetition:       keys(stepRep),
+		StepRepetition:       slices.Collect(maps.Keys(stepRep)),
 		PrematureTermination: premature,
 		DeadDependencyStall:  deadDep,
-		RetryChurn:           keys(verifFailed),
-		WorkerStall:          keys(stalled),
-		MissingVerification:  keys(missingVerif),
+		RetryChurn:           slices.Collect(maps.Keys(verifFailed)),
+		WorkerStall:          slices.Collect(maps.Keys(stalled)),
+		MissingVerification:  slices.Collect(maps.Keys(missingVerif)),
 	}
 
 	out := Report{Findings: make([]Finding, 0, len(modeOrder))}
@@ -213,15 +215,6 @@ func Classify(events []api.Event) Report {
 			Tickets: ts,
 			Detail:  modeDetail[m],
 		})
-	}
-	return out
-}
-
-// keys returns the keys of a set as a slice (unsorted; callers sort).
-func keys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
 	}
 	return out
 }

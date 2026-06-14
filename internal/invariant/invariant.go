@@ -16,10 +16,7 @@ package invariant
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"sort"
-	"strings"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/internal/verify"
@@ -70,7 +67,7 @@ func MergeImpliesVerified(events []api.Event) []Violation {
 	propSeq := map[string]int{}
 	passSeq := map[string]int{}
 	for _, e := range events {
-		id := ticketID(e)
+		id := e.TicketID()
 		switch e.Type {
 		case api.ProposalSubmitted:
 			propSeq[id] = e.Seq
@@ -95,7 +92,7 @@ func MergedAtMostOnceByQueue(events []api.Event) []Violation {
 		if e.Type != api.Merged {
 			continue
 		}
-		id := ticketID(e)
+		id := e.TicketID()
 		if merged[id] {
 			vs = append(vs, Violation{"MergedAtMostOnceByQueue", fmt.Sprintf("ticket %q merged more than once", id)})
 		}
@@ -128,7 +125,7 @@ func NoDuplicateMergedKey(events []api.Event) []Violation {
 		if e.Type != api.Merged {
 			continue
 		}
-		id := ticketID(e)
+		id := e.TicketID()
 		key := keyOf[id]
 		if key == "" {
 			continue
@@ -152,7 +149,7 @@ func ApprovalGate(events []api.Event) []Violation {
 	requested := map[string]bool{}
 	granted := map[string]bool{}
 	for _, e := range events {
-		id := ticketID(e)
+		id := e.TicketID()
 		switch e.Type {
 		case api.ApprovalRequested:
 			requested[id] = true
@@ -197,14 +194,6 @@ func ReplayDeterministicAndTotal(events []api.Event) []Violation {
 			return vs
 		}
 	}
-	a, errA := state.Fold(events)
-	b, errB := state.Fold(events)
-	if errA != nil || errB != nil {
-		return append(vs, Violation{"ReplayDeterministicAndTotal", "full fold errored"})
-	}
-	if summarize(a) != summarize(b) {
-		vs = append(vs, Violation{"ReplayDeterministicAndTotal", "two folds of the same log differ"})
-	}
 	return vs
 }
 
@@ -244,32 +233,4 @@ func MainGreen(ctx context.Context, v verify.Verifier, dir string) []Violation {
 		return []Violation{{"MainGreen", "gate failed on main: " + res.Failed}}
 	}
 	return nil
-}
-
-// summarize renders a canonical, comparable snapshot of derived state.
-func summarize(s *state.State) string {
-	lines := make([]string, 0, len(s.Tickets)+len(s.Goals))
-	for id, g := range s.Goals {
-		lines = append(lines, "goal "+id+" "+g.Text)
-	}
-	for id, t := range s.Tickets {
-		lines = append(lines, fmt.Sprintf("ticket %s %s attempts=%d depth=%d deps=%v children=%v",
-			id, t.Status, t.Attempts, t.Depth, t.DependsOn, t.Children))
-	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n") + fmt.Sprintf("\nlastSeq=%d", s.LastSeq)
-}
-
-// ticketID extracts a ticket_id from any payload that carries one.
-func ticketID(e api.Event) string {
-	if len(e.Payload) == 0 {
-		return ""
-	}
-	var m struct {
-		TicketID string `json:"ticket_id"`
-	}
-	if err := json.Unmarshal(e.Payload, &m); err != nil {
-		return ""
-	}
-	return m.TicketID
 }

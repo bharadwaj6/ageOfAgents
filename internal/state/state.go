@@ -386,21 +386,14 @@ func (s *State) TicketForKey(key string) (string, bool) {
 	return id, ok
 }
 
-// dependencyEdges returns the depends_on adjacency (ticket id -> dependency ids)
-// of every ticket currently in the graph.
-func (s *State) dependencyEdges() map[string][]string {
-	adj := make(map[string][]string, len(s.Tickets))
-	for id, t := range s.Tickets {
-		adj[id] = t.DependsOn
-	}
-	return adj
-}
-
 // WouldCycle reports whether adding the given edges (ticket id -> dependency
 // ids) to the current dependency graph would introduce a cycle. The Scheduler
 // uses this to reject emergent decompositions that would deadlock the graph.
 func (s *State) WouldCycle(extra map[string][]string) bool {
-	adj := s.dependencyEdges()
+	adj := make(map[string][]string, len(s.Tickets))
+	for id, t := range s.Tickets {
+		adj[id] = t.DependsOn
+	}
 	for n, deps := range extra {
 		adj[n] = append(append([]string(nil), adj[n]...), deps...)
 	}
