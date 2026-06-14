@@ -122,9 +122,17 @@ verify = [                           # the Gate — nothing merges unless this p
 
 ## Development
 
+A `Makefile` wraps the common commands (`make help` lists them all):
+
 ```bash
-go build ./... && go vet ./... && go test ./...
+make check   # pre-commit gate: build + vet + test + gofmt
+make build   # build the ./aoa binary
+make test    # full hermetic suite  (make test-short = faster)
+make bench   # the coordination benchmark
 ```
+
+Opt-in targets need external tools: `make smoke` (live run, needs an authenticated `claude` CLI) and
+`make formal` (TLA+ check, needs `java` + `TLA2TOOLS=path/to/tla2tools.jar`).
 
 The `mock` Backend makes the full loop hermetic and offline in tests. Real agent calls are isolated behind the [`Backend`](internal/agent/agent.go) interface.
 

@@ -46,6 +46,20 @@ User-facing docs use plain names; the Go code uses more specific identifiers. He
 
 ## Build, test, run
 
+A `Makefile` wraps the common commands — run `make help` for the full list. The everyday ones:
+
+| Target | What it runs |
+|--------|--------------|
+| `make check` | the pre-commit gate: `build` + `vet` + `test` + `gofmt` check (run this before any commit) |
+| `make build` | `go build -o aoa ./cmd/aoa` |
+| `make test` / `make test-short` | full suite / faster (fewer chaos seeds) |
+| `make bench` | the hermetic coordination benchmark (`aoa bench`) |
+| `make chaos` | the fault-injection soak (`COUNT=N` for a longer run) |
+| `make smoke` | live real-LLM smoke test (needs an authenticated `claude` CLI) |
+| `make formal` | model-check the TLA+ spec (needs `java` + `TLA2TOOLS=path/to/tla2tools.jar`) |
+
+The raw commands those wrap (use directly if you prefer):
+
 ```bash
 go build ./... && go vet ./... && go test ./...   # must be green before any commit
 gofmt -l cmd internal pkg                          # must print nothing

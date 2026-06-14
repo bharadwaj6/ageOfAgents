@@ -10,8 +10,9 @@ Project guidance for Claude Code. The full guide is in [`AGENTS.md`](AGENTS.md) 
   nothing merges unless the Gate passes; one deterministic Scheduler (no role hierarchy, no LLM
   coordinator); all LLM access goes through `agent.Backend`; no markets/voting/consensus; coordinate via
   the Shared Log, not messaging. (See ADRs 001–006.)
-- **Before any commit:** `go build ./... && go vet ./... && go test ./...` green and `gofmt -l` clean.
-  The test suite must stay hermetic/offline — the `mock` Backend never makes network calls.
+- **Before any commit:** run `make check` (build + vet + test + `gofmt` check) and ensure it is green.
+  The test suite must stay hermetic/offline — the `mock` Backend never makes network calls. (`make help`
+  lists all targets.)
 - **Commits:** Conventional Commits, ≤72-char subject, no AI model names in subject/body.
 
 See [`AGENTS.md`](AGENTS.md) for the repository map, glossary, conventions, and common tasks.

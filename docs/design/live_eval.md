@@ -26,6 +26,7 @@ is the agent's sandbox and the Gate, not the agent, decides what merges. Regress
 Run it yourself (needs `go` and an authenticated `claude` CLI):
 
 ```bash
+make smoke          # or, directly:
 scripts/live_smoke.sh
 ```
 

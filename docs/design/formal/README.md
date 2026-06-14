@@ -22,6 +22,7 @@ batching later).
 Needs Java and `tla2tools.jar` (TLC):
 
 ```bash
+make formal TLA2TOOLS=path/to/tla2tools.jar      # from the repo root, or directly:
 java -cp tla2tools.jar tlc2.TLC -config Orchestrator.cfg Orchestrator.tla
 # => "Model checking completed. No error has been found."
 ```
