@@ -14,6 +14,7 @@ package liveeval
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 
@@ -50,12 +51,13 @@ type Task struct {
 
 // Report is one task's outcome, derived almost entirely by replaying the log.
 type Report struct {
-	Task       string          `json:"task"`
-	Backend    string          `json:"backend"`
-	Success    bool            `json:"success"`
-	Metrics    metrics.Metrics `json:"metrics"`
-	MAST       diagnose.Report `json:"mast"`
-	Violations []string        `json:"violations,omitempty"`
+	Task        string          `json:"task"`
+	Backend     string          `json:"backend"`
+	Success     bool            `json:"success"`
+	Metrics     metrics.Metrics `json:"metrics"`
+	MAST        diagnose.Report `json:"mast"`
+	Violations  []string        `json:"violations,omitempty"`
+	AgentErrors []string        `json:"agent_errors,omitempty"`
 }
 
 // TaskFile is the on-disk format for `aoa eval --tasks`.
@@ -113,6 +115,7 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 	for _, v := range invariant.MainGreen(ctx, gate, repo.Dir) {
 		rep.Violations = append(rep.Violations, v.String())
 	}
+	rep.AgentErrors = collectFailureReasons(events)
 
 	// Success oracle: an explicit command set if given, else "merged something
 	// without breaking any invariant".
@@ -131,4 +134,22 @@ func toCommands(cmds [][]string) []verify.Command {
 		out = append(out, verify.Command(c))
 	}
 	return out
+}
+
+// collectFailureReasons extracts the Reason field from every TicketFailed event
+// in the log. This surfaces agent/worktree/commit error messages that would
+// otherwise be lost when the eval workspace is cleaned up.
+func collectFailureReasons(events []api.Event) []string {
+	var reasons []string
+	for _, e := range events {
+		if e.Type != api.TicketFailed {
+			continue
+		}
+		var p api.TicketFailedPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil || p.Reason == "" {
+			continue
+		}
+		reasons = append(reasons, p.Reason)
+	}
+	return reasons
 }
