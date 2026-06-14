@@ -85,7 +85,7 @@ Usage:
   aoa feed   [--path DIR] [--type T]      Print the event stream
   aoa events [--path DIR] tail [--count N] | replay
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
-  aoa eval   --tasks F [--backend B]      Run end-to-end tasks on real repos (mock|claudecode)
+  aoa eval   --tasks F [--backend B]      Run end-to-end tasks on real repos (mock|claudecode|grok)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
   aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
   aoa reject  [--path DIR] <ticket-id>    Reject a parked proposal (require_approval)
@@ -562,8 +562,10 @@ func buildBackend(name string) (agent.Backend, error) {
 		return agent.NewMock(), nil
 	case "claudecode":
 		return agent.NewClaudeCode(), nil
+	case "grok":
+		return agent.NewGrok(), nil
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode)", name)
+		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok)", name)
 	}
 }
 
