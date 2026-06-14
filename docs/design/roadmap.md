@@ -160,6 +160,21 @@ multi-node, log compaction, markets/voting).
 
 **Last status:** done. Full suite + chaos green, gofmt clean, TLC clean. Committed.
 
+### Track D follow-up — first live run + SWE-bench adapter
+
+- [x] **First real-LLM run, green.** `scripts/live_smoke.sh` drives the `claudecode` backend to fix a
+      seeded failing test; the agent's change passes the Gate and merges, `aoa diagnose` clean. Documented
+      in `docs/design/live_eval.md`.
+- [x] **Backend bug found & fixed.** Headless `claude -p` declined to edit files without a permission mode
+      (every Task failed "agent produced no changes"); the `claudecode` backend now defaults to
+      `--permission-mode acceptEdits`, regression-guarded by `TestNewClaudeCodeAllowsEdits`.
+- [x] **SWE-bench Lite adapter.** `scripts/swebench_to_tasks.py` clones each instance at its base commit,
+      normalizes it to a `main` branch, and emits an `aoa eval` `tasks.toml` (Goal = problem statement;
+      Gate + oracle = FAIL_TO_PASS). `scripts/eval_swebench.sh` wraps it. Env provisioning stays the
+      caller's job (ADR 009).
+- [ ] **Run SWE-bench Lite at scale** (needs API budget + a prepared Python env / SWE-bench Docker). The
+      machinery is ready; this is the remaining empirical step.
+
 ---
 
 ## Verification (end-to-end)

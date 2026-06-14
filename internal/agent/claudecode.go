@@ -17,20 +17,29 @@ const subtaskFence = "aoa:subtasks"
 // unparseable usage simply yields 0, keeping cost accounting opt-in.
 const usageFence = "aoa:usage"
 
+// defaultClaudeArgs let the headless agent actually apply its edits. Without a
+// permission mode, `claude -p` runs but declines to write files, so every Task
+// would fail with "agent produced no changes". acceptEdits auto-approves file
+// edits within the worktree (the worktree is the agent's sandbox; the Gate, not
+// the agent, decides what merges).
+var defaultClaudeArgs = []string{"--permission-mode", "acceptEdits"}
+
 // ClaudeCode drives a real coding agent as a subprocess inside the task's
-// worktree. The exact CLI is configurable; by default it invokes `claude -p
-// <prompt>` with the worktree as the working directory.
+// worktree. The exact CLI is configurable; by default it invokes
+// `claude --permission-mode acceptEdits -p <prompt>` with the worktree as the
+// working directory.
 type ClaudeCode struct {
 	Bin  string   // binary to invoke (default "claude")
-	Args []string // extra args inserted before the prompt
+	Args []string // extra args inserted before the prompt (default: acceptEdits)
 	// run executes the command; injectable for tests. dir is the working
 	// directory. Defaults to a real exec.CommandContext runner.
 	run func(ctx context.Context, dir, name string, args ...string) (string, error)
 }
 
-// NewClaudeCode returns a ClaudeCode backend with default settings.
+// NewClaudeCode returns a ClaudeCode backend with default settings, including
+// the permission flag that lets the headless agent edit files.
 func NewClaudeCode() *ClaudeCode {
-	return &ClaudeCode{Bin: "claude", run: defaultRunner}
+	return &ClaudeCode{Bin: "claude", Args: defaultClaudeArgs, run: defaultRunner}
 }
 
 // Name implements Backend.

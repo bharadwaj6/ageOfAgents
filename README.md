@@ -132,6 +132,7 @@ The `mock` Backend makes the full loop hermetic and offline in tests. Real agent
 
 - [`docs/design/architecture.md`](docs/design/architecture.md) — design and research basis
 - [`docs/design/getting_started.md`](docs/design/getting_started.md) — step-by-step tutorial
+- [`docs/design/live_eval.md`](docs/design/live_eval.md) — running aoa with a real agent (smoke test + SWE-bench)
 - [`docs/design/adr/`](docs/design/adr/) — architecture decision records
 - [`docs/design/metrics.md`](docs/design/metrics.md) — success metrics
 - `docs/*.md` — the research corpus

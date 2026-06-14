@@ -101,6 +101,17 @@ func TestClaudeCodeInvokesInWorktree(t *testing.T) {
 	}
 }
 
+func TestNewClaudeCodeAllowsEdits(t *testing.T) {
+	// Without a permission flag, headless `claude -p` runs but declines to write
+	// files, so every Task fails with "agent produced no changes". The default
+	// backend must pass acceptEdits.
+	c := NewClaudeCode()
+	joined := strings.Join(c.Args, " ")
+	if !strings.Contains(joined, "--permission-mode") || !strings.Contains(joined, "acceptEdits") {
+		t.Fatalf("NewClaudeCode args missing edit permission: %v", c.Args)
+	}
+}
+
 func TestBuildPromptIncludesContext(t *testing.T) {
 	p := BuildPrompt(Task{Title: "T", Goal: "G", Conventions: "C"})
 	for _, want := range []string{"T", "G", "C", "conventions", subtaskFence} {
