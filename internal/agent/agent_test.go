@@ -8,10 +8,11 @@ import (
 	"testing"
 )
 
-// Compile-time checks that both backends satisfy the interface.
+// Compile-time checks that the backends satisfy the interface.
 var (
 	_ Backend = (*Mock)(nil)
 	_ Backend = (*ClaudeCode)(nil)
+	_ Backend = (*Grok)(nil)
 )
 
 func TestMockWritesPlannedFiles(t *testing.T) {
@@ -152,5 +153,74 @@ func TestClaudeCodeNoSubtasksWhenImplementing(t *testing.T) {
 	}
 	if res.Subtasks != nil {
 		t.Errorf("expected no subtasks for an implementation, got %+v", res.Subtasks)
+	}
+}
+
+func TestGrokInvokesInWorktree(t *testing.T) {
+	var gotDir, gotBin string
+	var gotArgs []string
+	g := &Grok{
+		Bin:  "grok",
+		Args: defaultGrokArgs,
+		run: func(_ context.Context, dir, name string, args ...string) (string, error) {
+			gotDir, gotBin, gotArgs = dir, name, args
+			return "agent output", nil
+		},
+	}
+
+	task := Task{TicketID: "t1", Title: "add feature", Goal: "ship it", Worktree: "/tmp/wt", Conventions: "use tabs"}
+	res, err := g.Run(context.Background(), task)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if gotDir != "/tmp/wt" {
+		t.Errorf("dir = %q, want /tmp/wt", gotDir)
+	}
+	if gotBin != "grok" {
+		t.Errorf("bin = %q, want grok", gotBin)
+	}
+	if len(gotArgs) < 2 || gotArgs[len(gotArgs)-2] != "-p" {
+		t.Fatalf("expected -p <prompt>, got %v", gotArgs)
+	}
+	prompt := gotArgs[len(gotArgs)-1]
+	if !strings.Contains(prompt, "add feature") || !strings.Contains(prompt, "use tabs") {
+		t.Errorf("prompt missing title/conventions: %q", prompt)
+	}
+	if res.Trace != "agent output" {
+		t.Errorf("trace = %q", res.Trace)
+	}
+}
+
+func TestNewGrokAllowsEdits(t *testing.T) {
+	// Like claudecode, headless `grok -p` declines to write files without a
+	// permission flag, so the default backend must pass acceptEdits.
+	g := NewGrok()
+	joined := strings.Join(g.Args, " ")
+	if !strings.Contains(joined, "--permission-mode") || !strings.Contains(joined, "acceptEdits") {
+		t.Fatalf("NewGrok args missing edit permission: %v", g.Args)
+	}
+	if g.Bin != "grok" {
+		t.Errorf("NewGrok Bin = %q, want grok", g.Bin)
+	}
+}
+
+func TestGrokParsesSubtaskDecomposition(t *testing.T) {
+	out := "Decomposing.\n\n```" + subtaskFence + "\n" +
+		`[{"local_id":"types","title":"shared types","depends_on":[],"idempotency_key":"g:types"},` +
+		`{"local_id":"api","title":"the API","depends_on":["types"],"idempotency_key":"g:api"}]` +
+		"\n```\n"
+	g := &Grok{run: func(context.Context, string, string, ...string) (string, error) {
+		return out, nil
+	}}
+
+	res, err := g.Run(context.Background(), Task{TicketID: "t1", Title: "big task", Worktree: "/wt"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Subtasks) != 2 {
+		t.Fatalf("got %d subtasks, want 2", len(res.Subtasks))
+	}
+	if res.Subtasks[1].LocalID != "api" || len(res.Subtasks[1].DependsOn) != 1 || res.Subtasks[1].DependsOn[0] != "types" {
+		t.Errorf("second subtask malformed: %+v", res.Subtasks[1])
 	}
 }
