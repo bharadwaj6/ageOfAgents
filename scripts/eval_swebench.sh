@@ -34,7 +34,7 @@ LIMIT_ARG=()
 [ "$LIMIT" != "0" ] && LIMIT_ARG=(--limit "$LIMIT")
 
 echo "Preparing repos + tasks.toml from $INSTANCES ..."
-python3 scripts/swebench_to_tasks.py "$INSTANCES" "$WORK/repos" "$TASKS" "${LIMIT_ARG[@]}"
+uv run python scripts/swebench_to_tasks.py "$INSTANCES" "$WORK/repos" "$TASKS" "${LIMIT_ARG[@]}"
 
 echo ""
 echo "=== Running aoa eval (backend=$BACKEND) ==="

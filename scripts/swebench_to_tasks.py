@@ -87,6 +87,15 @@ def main():
     ap.add_argument("workdir", help="directory to clone repos into")
     ap.add_argument("out", help="tasks.toml to write")
     ap.add_argument("--limit", type=int, default=0, help="only the first N instances")
+    ap.add_argument(
+        "--inference-mode", action="store_true",
+        help=(
+            "Use a no-op Gate (always passes) so the agent can merge without a "
+            "prepared test environment. Intended for Phase 1 of the two-phase "
+            "Docker eval: aoa generates patches here; the official "
+            "swebench.harness.run_evaluation harness scores them in Docker later."
+        ),
+    )
     a = ap.parse_args()
 
     rows = load(a.instances)
@@ -98,19 +107,31 @@ def main():
     with open(a.out, "w") as f:
         for r in rows:
             iid = r["instance_id"]
-            dest = prepare_repo(a.workdir, iid, r["repo"], r["base_commit"])
+            base_commit = r["base_commit"]
+            dest = prepare_repo(a.workdir, iid, r["repo"], base_commit)
             f2p = as_list(r.get("FAIL_TO_PASS", []))
-            # The Gate (and success oracle) is the issue's reproduce tests.
-            if f2p:
-                gate = [["python", "-m", "pytest", "-q", t] for t in f2p]
+
+            if a.inference_mode:
+                # No-op Gate: agent's proposal always merges; the official Docker
+                # harness (Phase 2) does the real test verification.
+                gate = [["true"]]
+                success: list[list[str]] = []
             else:
-                gate = [["python", "-m", "pytest", "-q"]]
+                # Gate AND success oracle are the issue's reproduce tests.
+                if f2p:
+                    gate = [["python", "-m", "pytest", "-q", t] for t in f2p]
+                else:
+                    gate = [["python", "-m", "pytest", "-q"]]
+                success = gate
+
             f.write("[[task]]\n")
             f.write(f"name = {toml_str(iid)}\n")
             f.write(f"repo_dir = {toml_str(dest)}\n")
+            # base_commit is read by extract_swebench_patches.py; aoa ignores it.
+            f.write(f"base_commit = {toml_str(base_commit)}\n")
             f.write(f"goal = {toml_str(r.get('problem_statement', '').strip())}\n")
             f.write(f"gate = {toml_cmd_list(gate)}\n")
-            f.write(f"success = {toml_cmd_list(gate)}\n\n")
+            f.write(f"success = {toml_cmd_list(success)}\n\n")
             written += 1
             print(f"prepared {iid} -> {dest}", file=sys.stderr)
 
