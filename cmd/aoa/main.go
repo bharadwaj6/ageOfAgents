@@ -562,6 +562,7 @@ func buildBackend(name string) (agent.Backend, error) {
 	case "claudecode":
 		return agent.NewClaudeCode(), nil
 	case "grok":
+		agent.EnsureGrokLeader()
 		return agent.NewGrok(), nil
 	default:
 		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok)", name)
