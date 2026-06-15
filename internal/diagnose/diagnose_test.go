@@ -164,3 +164,78 @@ func TestClassifyReplayErrorOnCorruptLog(t *testing.T) {
 		t.Fatalf("expected a single replay_error finding, got %+v", r.Findings)
 	}
 }
+
+func TestClassifyQueueStarvation(t *testing.T) {
+	// A ticket becomes Ready but is never claimed — the run ends with it starved.
+	events := newSeq(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k1"}).
+		add(api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}).
+		events
+	r := Classify(events)
+	if f := find(t, r, QueueStarvation); f.Count != 1 || len(f.Tickets) != 1 || f.Tickets[0] != "t1" {
+		t.Fatalf("queue starvation: want 1 (t1), got %+v", f)
+	}
+	if f := find(t, r, SchedulerDeadlock); f.Count != 0 {
+		t.Fatalf("a Ready ticket is starvation, not deadlock; got %+v", f)
+	}
+}
+
+func TestClassifySchedulerDeadlock(t *testing.T) {
+	// A ticket is claimed and started, then the run ends mid-flight (worker never
+	// proposed, never restarted) — stuck mid-pipeline with no dead dependency.
+	events := newSeq(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k1"}).
+		add(api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.WorkStarted, api.WorkStartedPayload{TicketID: "t1", Worker: "w"}).
+		events
+	r := Classify(events)
+	if f := find(t, r, SchedulerDeadlock); f.Count != 1 || f.Tickets[0] != "t1" {
+		t.Fatalf("scheduler deadlock: want 1 (t1), got %+v", f)
+	}
+	if f := find(t, r, QueueStarvation); f.Count != 0 {
+		t.Fatalf("a claimed/running ticket is deadlock, not starvation; got %+v", f)
+	}
+}
+
+func TestClassifyRetryLivelock(t *testing.T) {
+	// A ticket terminated by the crash-loop governor (reason carries the marker).
+	events := newSeq(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k1"}).
+		add(api.TicketFailed, api.TicketFailedPayload{TicketID: "t1", Reason: "crash loop: verification failed: boom (×3)"}).
+		events
+	r := Classify(events)
+	if f := find(t, r, RetryLivelock); f.Count != 1 || f.Tickets[0] != "t1" {
+		t.Fatalf("retry livelock: want 1 (t1), got %+v", f)
+	}
+	// A plain failure (no crash-loop marker) is premature termination, not livelock.
+	plain := newSeq(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t2", Title: "y", IdempotencyKey: "k2"}).
+		add(api.TicketFailed, api.TicketFailedPayload{TicketID: "t2", Reason: "attempts exhausted"}).
+		events
+	if f := find(t, Classify(plain), RetryLivelock); f.Count != 0 {
+		t.Fatalf("a non-crash-loop failure is not a livelock, got %+v", f)
+	}
+}
+
+func TestClassifyVerificationBlindSpot(t *testing.T) {
+	// A merge that passed the Gate but a broader shadow set rejected (RegressionEscaped).
+	events := newSeq(t).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k1"}).
+		add(api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.WorkStarted, api.WorkStartedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "t1", Worker: "w", Commit: "c"}).
+		add(api.VerificationPassed, api.VerificationPassedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.Merged, api.MergedPayload{TicketID: "t1", Worker: "w", Commit: "c"}).
+		add(api.RegressionEscaped, api.RegressionEscapedPayload{TicketID: "t1", Reason: "broader suite failed"}).
+		events
+	r := Classify(events)
+	if f := find(t, r, VerificationBlindSpot); f.Count != 1 || f.Tickets[0] != "t1" {
+		t.Fatalf("verification blind spot: want 1 (t1), got %+v", f)
+	}
+	// The merge itself is healthy — no step repetition / missing verification.
+	if f := find(t, r, MissingVerification); f.Count != 0 {
+		t.Fatalf("blind-spot merge was verified; missing_verification should be 0, got %+v", f)
+	}
+}

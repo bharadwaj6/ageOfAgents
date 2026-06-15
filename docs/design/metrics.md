@@ -98,6 +98,23 @@ Configure it with `regression_verify` in `aoa.toml` (or `regression` on an `aoa 
 by default** (empty ⇒ no shadow run). Where the Gate is the merge *contract*, the Shadow set is the
 *audit* — the gap between them is exactly the blind spot, now a number.
 
+## The deterministic-orchestration failure taxonomy
+
+Mature systems stop failing for their original reasons and start failing for new ones. A *deterministic*
+control plane removes the MAST coordination failures but creates its own taxonomy. `internal/diagnose`
+scores these alongside the MAST modes (same `aoa diagnose` histogram, same pure-replay approach), so they
+are **measured, not assumed**. All are **0** on a healthy, settled run.
+
+| Mode | Signal in the Event Log | Why it matters |
+|---|---|---|
+| **queue_starvation** | a ticket left `Ready` (dispatchable) at end of run, never claimed | work that never got a worker slot — a concurrency/backpressure imbalance |
+| **scheduler_deadlock** | non-terminal work stuck mid-pipeline (pending/claimed/running/proposed) at end of run, with no dead dependency | the orchestrator's "made no progress but work is unsettled" condition, attributed to specific tickets |
+| **retry_livelock** | a ticket terminated by the crash-loop governor (`TicketFailed` reason begins `crash loop:`) | the same failure repeated until the governor gave up — distinct from `retry_churn`, which counts *all* rejections |
+| **verification_blind_spot** | a `RegressionEscaped` event — a merge the Gate accepted but the broader Shadow set rejected | the dangerous one (see above): the Gate was green but insufficient |
+
+`stale_spec_drift` (work proceeding against a superseded Goal) joins this table once mid-run Goal
+amendment lands the `GoalAmended` event it keys on.
+
 ## What we explicitly do NOT measure
 
 Pheromone convergence, trust-score discrimination, and stability-horizon round counts — these belonged to

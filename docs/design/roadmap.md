@@ -212,8 +212,10 @@ are met.
 - [ ] **#11** Mid-run goal amendment (`GoalAmended` event).
 - [ ] **#12** Live `aoa status` view; fold the duplicate `feed`/`events` dump.
 - [ ] **#13** Instrument the merge queue (depth + wait) + batch non-conflicting (disjoint-file) proposals.
-- [ ] **#14** Instrument the deterministic-orchestration failure taxonomy (extend `diagnose`).
-- [ ] **#15** README/positioning reframe ("Bors for AI agents, with the receipts").
+- [x] **#14** Instrument the deterministic-orchestration failure taxonomy (extend `diagnose`):
+      queue_starvation, scheduler_deadlock, retry_livelock, verification_blind_spot (stale_spec_drift
+      pending #11).
+- [x] **#15** README/positioning reframe ("Bors for AI agents, with the receipts").
 
 **P3 — deferred (build only when a metric justifies it)**
 - [ ] **#16** Speculative/batched merge with an adaptive window — gated on #13 showing serialization is
