@@ -222,11 +222,15 @@ are met.
       pending #11).
 - [x] **#15** README/positioning reframe ("Bors for AI agents, with the receipts").
 
-**P3 — deferred (build only when a metric justifies it)**
-- [ ] **#16** Speculative/batched merge with an adaptive window — gated on #13 showing serialization is
-      the real constraint.
-- [ ] **#17** Best-of-N with the test suite as verifier — after #4/#5/#7; track cost or it is a trap.
-- [ ] **#18** SPRT early-stopping for live evals.
+**P3 — deferred (closed as not-planned; reopen when the gate is met)**
+- [x] **#16** Speculative/batched merge with an adaptive window — *closed.* #13 shipped the instrumentation
+      (`merge_queue_wait_*`) + the cheap disjoint-batcher. **Reopen when** `merge_queue_wait_mean` climbs
+      with depth staying high (serialization demonstrably the bottleneck). No AIMD window before then.
+- [x] **#17** Best-of-N with the test suite as verifier — *closed.* Cost plumbing exists (#7). **Reopen
+      when** #4 has a reproducible pass@1 + cost-per-solve baseline to A/B against (track $/solve or it's a
+      trap).
+- [x] **#18** SPRT early-stopping for live evals — *closed.* **Reopen when** at-scale live evals (#4) are
+      routine and their token cost is worth cutting short. No correctness impact; strictly lower priority.
 
 **Retired priors** (raised in review, already satisfied — do not re-open): *delete the leader daemon* (it
 is only the grok-CLI auth bootstrap, not an LLM in the control plane); *build deterministic control-plane
@@ -234,7 +238,10 @@ tests* (the chaos harness + TLA+ spec + hermetic `mock` already do this). CAID's
 largely already shipped as emergent decomposition (ADR 006/007); its remaining half (recompute edges after
 each merge) pays off only past single-file Lite work — folded into #13 / future multi-file work.
 
-**Last status:** backlog filed (issues #4–#18, milestone v0.1). Not started.
+**Last status:** P1 + P2 shipped and merged (#5–#15, ten PRs); P3 (#16–#18) closed as deferred with
+explicit reopen gates. **Only P0 #4 remains** — the at-scale SWE-bench Lite run (needs API budget; the
+harness, cost columns, and adopt path are all ready). That single empirical artifact is what converts the
+project from "measured architecture" to "measured tool."
 
 ---
 
