@@ -71,13 +71,17 @@ func (g *Grok) Run(ctx context.Context, task Task) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("grok: %w", err)
 	}
-	
 	_ = os.WriteFile(filepath.Join(task.Worktree, "grok_transcript.log"), []byte(out), 0o644)
 
+	tokens, model := parseUsage(out)
+	if model == "" {
+		model = g.Name()
+	}
 	return Result{
 		Trace:    strings.TrimSpace(out),
 		Summary:  task.Title,
 		Subtasks: parseSubtasks(out),
-		Tokens:   parseUsage(out),
+		Tokens:   tokens,
+		Model:    model,
 	}, nil
 }

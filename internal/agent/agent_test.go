@@ -193,10 +193,11 @@ func TestGrokInvokesInWorktree(t *testing.T) {
 
 func TestNewGrokAllowsEdits(t *testing.T) {
 	// Like claudecode, headless `grok -p` declines to write files without a
-	// permission flag, so the default backend must pass acceptEdits.
+	// permission flag; grok uses bypassPermissions to let the agent edit its
+	// worktree sandbox (the Gate, not the agent, decides what merges).
 	g := NewGrok()
 	joined := strings.Join(g.Args, " ")
-	if !strings.Contains(joined, "--permission-mode") || !strings.Contains(joined, "acceptEdits") {
+	if !strings.Contains(joined, "--permission-mode") || !strings.Contains(joined, "bypassPermissions") {
 		t.Fatalf("NewGrok args missing edit permission: %v", g.Args)
 	}
 	if g.Bin != "grok" {

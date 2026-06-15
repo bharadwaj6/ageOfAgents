@@ -270,7 +270,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	// than editing code. Extend the graph via the Shared Log; nothing to commit.
 	if len(res.Subtasks) > 0 {
 		o.cleanupWorktree(ctx, j.ticketID)
-		o.decompose(j, worker, res.Subtasks, res.Tokens)
+		o.decompose(j, worker, res.Subtasks, res.Tokens, res.Model)
 		return
 	}
 
@@ -287,7 +287,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	}
 
 	_ = o.emit(api.ProposalSubmitted, api.ProposalSubmittedPayload{
-		TicketID: j.ticketID, Worker: worker, Branch: branch, Commit: sha, Trace: res.Trace, Tokens: res.Tokens,
+		TicketID: j.ticketID, Worker: worker, Branch: branch, Commit: sha, Trace: res.Trace, Tokens: res.Tokens, Model: res.Model,
 	})
 }
 
@@ -297,7 +297,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 // would create a cycle. A rejected decomposition fails the parent terminally —
 // re-running the same worker would propose the same invalid graph. On success
 // the parent becomes terminal (StatusDecomposed) and the children carry the work.
-func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subtask, tokens int) {
+func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subtask, tokens int, model string) {
 	s, err := o.loadState()
 	if err != nil {
 		return
@@ -430,7 +430,7 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 		})
 	}
 	_ = o.emit(api.TicketDecomposed, api.TicketDecomposedPayload{
-		TicketID: j.ticketID, Worker: worker, Children: childIDs, Tokens: tokens,
+		TicketID: j.ticketID, Worker: worker, Children: childIDs, Tokens: tokens, Model: model,
 	})
 }
 

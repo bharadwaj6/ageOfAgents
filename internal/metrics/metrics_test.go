@@ -202,3 +202,69 @@ func TestComputeRejectionRate(t *testing.T) {
 		t.Errorf("MeanAttemptsToMerge = %v, want 2.0", m.MeanAttemptsToMerge)
 	}
 }
+
+func TestComputeCostBreakdown(t *testing.T) {
+	// Two tickets in one goal, each from a different model, with known tokens.
+	s := newStream(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "a", IdempotencyKey: "g1:a"}).
+		add(api.TicketReady, "orchestrator", api.TicketReadyPayload{TicketID: "t1"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.WorkStarted, "orchestrator", api.WorkStartedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t1", Commit: "c1", Tokens: 1000, Model: "modelA"}).
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "t1"}).
+		add(api.Merged, "orchestrator", api.MergedPayload{TicketID: "t1", Commit: "c1"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t2", GoalID: "g1", Title: "b", IdempotencyKey: "g1:b"}).
+		add(api.TicketReady, "orchestrator", api.TicketReadyPayload{TicketID: "t2"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t2", Worker: "w"}).
+		add(api.WorkStarted, "orchestrator", api.WorkStartedPayload{TicketID: "t2", Worker: "w"}).
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t2", Commit: "c2", Tokens: 2000, Model: "modelB"}).
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "t2"}).
+		add(api.Merged, "orchestrator", api.MergedPayload{TicketID: "t2", Commit: "c2"})
+
+	m := Compute(s.events)
+
+	if m.TokensTotal != 3000 {
+		t.Fatalf("TokensTotal = %d, want 3000", m.TokensTotal)
+	}
+	if got := m.TokensByModel; got["modelA"] != 1000 || got["modelB"] != 2000 || len(got) != 2 {
+		t.Errorf("TokensByModel = %v, want {modelA:1000 modelB:2000}", got)
+	}
+
+	byTicket := map[string]TicketCost{}
+	for _, tc := range m.PerTicket {
+		byTicket[tc.TicketID] = tc
+	}
+	if tc := byTicket["t1"]; tc.Tokens != 1000 || tc.Model != "modelA" || tc.Status != "merged" || tc.GoalID != "g1" {
+		t.Errorf("PerTicket[t1] = %+v, want tokens=1000 model=modelA status=merged goal=g1", tc)
+	}
+	// t1 spans TicketCreated(seq2) → Merged(seq8): 6 one-second ticks.
+	if d := byTicket["t1"].DurationSeconds; d != 6 {
+		t.Errorf("PerTicket[t1].DurationSeconds = %v, want 6", d)
+	}
+	if tc := byTicket["t2"]; tc.Tokens != 2000 || tc.Model != "modelB" {
+		t.Errorf("PerTicket[t2] = %+v, want tokens=2000 model=modelB", tc)
+	}
+
+	if len(m.PerGoal) != 1 {
+		t.Fatalf("PerGoal len = %d, want 1", len(m.PerGoal))
+	}
+	g := m.PerGoal[0]
+	if g.GoalID != "g1" || g.Tokens != 3000 || g.Merged != 2 || g.Failed != 0 {
+		t.Errorf("PerGoal[0] = %+v, want goal=g1 tokens=3000 merged=2 failed=0", g)
+	}
+	// Goal spans t1's first event (seq2) → t2's last event (seq15): 13 ticks.
+	if g.DurationSeconds != 13 {
+		t.Errorf("PerGoal[0].DurationSeconds = %v, want 13", g.DurationSeconds)
+	}
+
+	// $ = 1000/1e6*15 + 2000/1e6*5 = 0.025.
+	cost := USD(m.TokensByModel, map[string]float64{"modelA": 15, "modelB": 5})
+	if cost < 0.02499 || cost > 0.02501 {
+		t.Errorf("USD = %v, want ~0.025", cost)
+	}
+	// An unpriced model contributes 0.
+	if c := USD(map[string]int{"unknown": 9999}, nil); c != 0 {
+		t.Errorf("USD(unpriced) = %v, want 0", c)
+	}
+}

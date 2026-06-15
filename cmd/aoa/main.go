@@ -217,7 +217,8 @@ func cmdRun(args []string) error {
 	} else if err := o.Run(ctx); err != nil {
 		return err
 	}
-	return printStatus(led)
+	cfg, _ := config.Load(ws.configPath)
+	return printStatus(led, cfg.Pricing)
 }
 
 func cmdStatus(args []string) error {
@@ -232,7 +233,8 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	return printStatus(led)
+	cfg, _ := config.Load(ws.configPath)
+	return printStatus(led, cfg.Pricing)
 }
 
 func cmdFeed(args []string) error {
@@ -336,6 +338,7 @@ func cmdEval(args []string) error {
 	tasksPath := fs.String("tasks", "", "path to a TOML task file")
 	backendName := fs.String("backend", "mock", "agent backend: mock|claudecode")
 	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
+	price := fs.Float64("price", 0, "USD per million tokens, for the $/solve column (0 = unpriced)")
 	_ = fs.Parse(args)
 
 	if *tasksPath == "" {
@@ -370,21 +373,23 @@ func cmdEval(args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(reports)
 	}
-	printEvalTable(reports)
+	printEvalTable(reports, *price)
 	return nil
 }
 
-// printEvalTable renders evaluation reports as a markdown table.
-func printEvalTable(reports []liveeval.Report) {
-	fmt.Println("| task | backend | success | merged | tokens | MAST | violations |")
-	fmt.Println("|------|---------|:-------:|-------:|-------:|-----:|-----------:|")
+// printEvalTable renders evaluation reports as a markdown table. pricePerMTok is
+// USD per million tokens for the run's model; 0 leaves the $ column at $0.0000.
+func printEvalTable(reports []liveeval.Report, pricePerMTok float64) {
+	fmt.Println("| task | backend | success | merged | tokens | $ | MAST | violations |")
+	fmt.Println("|------|---------|:-------:|-------:|-------:|--:|-----:|-----------:|")
 	for _, r := range reports {
 		ok := "no"
 		if r.Success {
 			ok = "yes"
 		}
-		fmt.Printf("| %s | %s | %s | %d | %d | %d | %d |\n",
-			r.Task, r.Backend, ok, r.Metrics.Merged, r.Metrics.TokensTotal, r.MAST.Total(), len(r.Violations))
+		cost := float64(r.Metrics.TokensTotal) / 1e6 * pricePerMTok
+		fmt.Printf("| %s | %s | %s | %d | %d | $%.4f | %d | %d |\n",
+			r.Task, r.Backend, ok, r.Metrics.Merged, r.Metrics.TokensTotal, cost, r.MAST.Total(), len(r.Violations))
 	}
 }
 
@@ -571,7 +576,7 @@ func buildBackend(name string) (agent.Backend, error) {
 
 // --- presentation ---------------------------------------------------------
 
-func printStatus(led *ledger.Ledger) error {
+func printStatus(led *ledger.Ledger, pricing map[string]float64) error {
 	events, err := led.Read()
 	if err != nil {
 		return err
@@ -583,6 +588,12 @@ func printStatus(led *ledger.Ledger) error {
 	if len(s.Goals) == 0 {
 		fmt.Println("no goals submitted")
 		return nil
+	}
+
+	m := metrics.Compute(events)
+	tokensByTicket := make(map[string]int, len(m.PerTicket))
+	for _, tc := range m.PerTicket {
+		tokensByTicket[tc.TicketID] = tc.Tokens
 	}
 
 	goalIDs := make([]string, 0, len(s.Goals))
@@ -608,10 +619,16 @@ func printStatus(led *ledger.Ledger) error {
 
 	for _, id := range ticketIDs {
 		t := s.Tickets[id]
-		fmt.Printf("  [%-8s] %s  (attempts=%d)\n", t.Status, t.ID, t.Attempts)
+		fmt.Printf("  [%-8s] %s  (attempts=%d tokens=%d)\n", t.Status, t.ID, t.Attempts, tokensByTicket[id])
 	}
+
+	fmt.Printf("\ntotal: tokens=%d  wall=%.1fs", m.TokensTotal, m.DurationSeconds)
+	if cost := metrics.USD(m.TokensByModel, pricing); cost > 0 {
+		fmt.Printf("  cost=$%.4f", cost)
+	}
+	fmt.Println()
 	if s.Settled() {
-		fmt.Println("\nall work settled")
+		fmt.Println("all work settled")
 	}
 	return nil
 }
