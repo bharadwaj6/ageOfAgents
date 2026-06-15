@@ -221,3 +221,26 @@ func TestAdoptedRepoRunsOnFeatureBranch(t *testing.T) {
 		t.Fatalf("expected 1 merged ticket on the feature branch, got %d", merged)
 	}
 }
+
+func TestFilterEvents(t *testing.T) {
+	mk := func(typ api.EventType) api.Event { return api.Event{Type: typ} }
+	events := []api.Event{
+		mk(api.GoalSubmitted), mk(api.TicketCreated), mk(api.Merged), mk(api.TicketCreated),
+	}
+	if got := filterEvents(events, ""); len(got) != 4 {
+		t.Errorf("empty filter should pass all 4, got %d", len(got))
+	}
+	got := filterEvents(events, string(api.TicketCreated))
+	if len(got) != 2 {
+		t.Fatalf("type filter: want 2 TicketCreated, got %d", len(got))
+	}
+	for _, e := range got {
+		if e.Type != api.TicketCreated {
+			t.Errorf("filtered event has wrong type %q", e.Type)
+		}
+	}
+	// Filtering doesn't mutate the input slice.
+	if events[2].Type != api.Merged {
+		t.Error("filterEvents must not modify the source slice")
+	}
+}

@@ -212,7 +212,8 @@ are met.
 - [x] **#11** Mid-run goal amendment (`GoalAmended` event) — `aoa amend <goal> "..."` appends guidance to
       the goal's effective text for future dispatches/retries (never preempts a running worker); adds the
       `stale_spec_drift` diagnose mode deferred from #14.
-- [ ] **#12** Live `aoa status` view; fold the duplicate `feed`/`events` dump.
+- [x] **#12** Live `aoa status --watch` (poll loop, no daemon, stops on settle); `--type` filter moved
+      into `aoa events` (tail|replay), `feed` folded to a deprecated alias via a shared renderer.
 - [ ] **#13** Instrument the merge queue (depth + wait) + batch non-conflicting (disjoint-file) proposals.
 - [x] **#14** Instrument the deterministic-orchestration failure taxonomy (extend `diagnose`):
       queue_starvation, scheduler_deadlock, retry_livelock, verification_blind_spot (stale_spec_drift
