@@ -695,9 +695,29 @@ func printStatus(led *ledger.Ledger, pricing map[string]float64) error {
 	}
 	sort.Strings(ticketIDs)
 
+	var needsHuman []*state.Ticket
 	for _, id := range ticketIDs {
 		t := s.Tickets[id]
 		fmt.Printf("  [%-8s] %s  (attempts=%d tokens=%d)\n", t.Status, t.ID, t.Attempts, tokensByTicket[id])
+		if t.Status == state.StatusFailed {
+			needsHuman = append(needsHuman, t)
+		}
+	}
+
+	// Warm handoff: list terminally-failed tickets with why they failed and the
+	// preserved worktree to take over (when one was kept).
+	if len(needsHuman) > 0 {
+		fmt.Println("\nneeds human — failed tickets:")
+		for _, t := range needsHuman {
+			reason := t.LastFailReason
+			if reason == "" {
+				reason = "(no reason recorded)"
+			}
+			fmt.Printf("  %s — %s\n", t.ID, reason)
+			if t.Worktree != "" {
+				fmt.Printf("      take over: cd %s\n", t.Worktree)
+			}
+		}
 	}
 
 	fmt.Printf("\ntotal: tokens=%d  wall=%.1fs", m.TokensTotal, m.DurationSeconds)

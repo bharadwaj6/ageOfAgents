@@ -269,7 +269,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	dest := filepath.Join(o.opt.WorktreeBase, worktree.SanitizeBranch(branch))
 	wt, err := o.repo.AddWorktree(ctx, dest, branch)
 	if err != nil {
-		o.failAttempt(j, worker, fmt.Sprintf("worktree: %v", err))
+		o.failAttempt(ctx, j, worker, fmt.Sprintf("worktree: %v", err))
 		return
 	}
 	o.mu.Lock()
@@ -288,8 +288,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		Conventions: o.opt.Conventions,
 	})
 	if err != nil {
-		o.cleanupWorktree(ctx, j.ticketID)
-		o.failAttempt(j, worker, fmt.Sprintf("agent: %v", err))
+		o.failAttempt(ctx, j, worker, fmt.Sprintf("agent: %v", err))
 		return
 	}
 
@@ -303,13 +302,11 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 
 	sha, changed, err := wt.Commit(ctx, fmt.Sprintf("feat: %s (%s)", j.title, j.ticketID))
 	if err != nil {
-		o.cleanupWorktree(ctx, j.ticketID)
-		o.failAttempt(j, worker, fmt.Sprintf("commit: %v", err))
+		o.failAttempt(ctx, j, worker, fmt.Sprintf("commit: %v", err))
 		return
 	}
 	if !changed {
-		o.cleanupWorktree(ctx, j.ticketID)
-		o.failAttempt(j, worker, "agent produced no changes")
+		o.failAttempt(ctx, j, worker, "agent produced no changes")
 		return
 	}
 
@@ -516,12 +513,10 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 	if o.opt.RequireApproval && !t.Approved {
 		out, err := o.mq.DryRun(ctx, mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch})
 		if err != nil {
-			o.cleanupWorktree(ctx, t.ID)
-			return o.rejectOrFail(t, t.Worker, fmt.Sprintf("merge queue: %v", err))
+			return o.rejectOrFail(ctx, t, t.Worker, fmt.Sprintf("merge queue: %v", err))
 		}
 		if !out.Verified {
-			o.cleanupWorktree(ctx, t.ID)
-			return o.rejectOrFail(t, t.Worker, out.Reason)
+			return o.rejectOrFail(ctx, t, t.Worker, out.Reason)
 		}
 		// Candidate passed the Gate. Record the pass and park for approval; keep
 		// the worktree alive so the real merge can reuse the branch.
@@ -534,8 +529,7 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 	out, err := o.mq.Process(ctx, mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch})
 	if err != nil {
 		// Infrastructure failure: treat as a failed attempt.
-		o.cleanupWorktree(ctx, t.ID)
-		return o.rejectOrFail(t, t.Worker, fmt.Sprintf("merge queue: %v", err))
+		return o.rejectOrFail(ctx, t, t.Worker, fmt.Sprintf("merge queue: %v", err))
 	}
 
 	if out.Merged {
@@ -556,8 +550,7 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 		return nil
 	}
 
-	o.cleanupWorktree(ctx, t.ID)
-	return o.rejectOrFail(t, t.Worker, out.Reason)
+	return o.rejectOrFail(ctx, t, t.Worker, out.Reason)
 }
 
 // pausedForApproval reports whether the run has no actionable work left and is
@@ -583,17 +576,21 @@ func pausedForApproval(s *state.State) bool {
 // won't help, so it gives up early instead of burning more tokens (even when
 // attempts remain). t reflects state *before* this rejection, so t.SameFailCount
 // counts the prior identical failures.
-func (o *Orchestrator) rejectOrFail(t *state.Ticket, worker, reason string) error {
+func (o *Orchestrator) rejectOrFail(ctx context.Context, t *state.Ticket, worker, reason string) error {
 	if o.opt.CrashLoopThreshold > 0 && reason != "" && reason == t.LastFailReason &&
 		t.SameFailCount+1 >= o.opt.CrashLoopThreshold {
 		return o.emit(api.TicketFailed, api.TicketFailedPayload{
 			TicketID: t.ID, Worker: worker,
-			Reason: fmt.Sprintf("crash loop: %s (×%d)", reason, t.SameFailCount+1),
+			Reason:   fmt.Sprintf("crash loop: %s (×%d)", reason, t.SameFailCount+1),
+			Worktree: o.preserveWorktree(t.ID),
 		})
 	}
 	if t.Attempts >= o.opt.MaxAttempts {
-		return o.emit(api.TicketFailed, api.TicketFailedPayload{TicketID: t.ID, Worker: worker, Reason: reason})
+		return o.emit(api.TicketFailed, api.TicketFailedPayload{
+			TicketID: t.ID, Worker: worker, Reason: reason, Worktree: o.preserveWorktree(t.ID),
+		})
 	}
+	o.cleanupWorktree(ctx, t.ID)
 	return o.emit(api.VerificationFailed, api.VerificationFailedPayload{TicketID: t.ID, Worker: worker, Reason: reason})
 }
 
@@ -654,12 +651,17 @@ func (o *Orchestrator) nextBackoffWait(s *state.State, now time.Time) (time.Dura
 	return wait, true
 }
 
-// failAttempt handles a dispatch-time failure (before a proposal existed).
-func (o *Orchestrator) failAttempt(j dispatchJob, worker, reason string) {
+// failAttempt handles a dispatch-time failure (before a proposal existed). A
+// retry cleans up the worktree; a terminal failure preserves it for a warm
+// handoff (the human can inspect/take over the agent's attempt).
+func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, reason string) {
 	if j.attempt >= o.opt.MaxAttempts {
-		_ = o.emit(api.TicketFailed, api.TicketFailedPayload{TicketID: j.ticketID, Worker: worker, Reason: reason})
+		_ = o.emit(api.TicketFailed, api.TicketFailedPayload{
+			TicketID: j.ticketID, Worker: worker, Reason: reason, Worktree: o.preserveWorktree(j.ticketID),
+		})
 		return
 	}
+	o.cleanupWorktree(ctx, j.ticketID)
 	_ = o.emit(api.WorkerRestarted, api.WorkerRestartedPayload{TicketID: j.ticketID, Worker: worker})
 }
 
@@ -671,6 +673,20 @@ func (o *Orchestrator) cleanupWorktree(ctx context.Context, ticketID string) {
 	if wt != nil {
 		_ = o.repo.Remove(ctx, wt)
 	}
+}
+
+// preserveWorktree drops the ticket from worktree tracking but leaves the
+// checkout on disk, returning its path (empty if none). Used on terminal
+// failure so a human can take over the agent's work (warm handoff).
+func (o *Orchestrator) preserveWorktree(ticketID string) string {
+	o.mu.Lock()
+	wt := o.worktrees[ticketID]
+	delete(o.worktrees, ticketID)
+	o.mu.Unlock()
+	if wt != nil {
+		return wt.Path
+	}
+	return ""
 }
 
 // --- helpers --------------------------------------------------------------

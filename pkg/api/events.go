@@ -199,11 +199,14 @@ type MergedPayload struct {
 	Commit   string `json:"commit"`
 }
 
-// TicketFailedPayload accompanies [TicketFailed].
+// TicketFailedPayload accompanies [TicketFailed]. Worktree, when set, is the
+// preserved checkout of the agent's last attempt — kept on disk for a human to
+// inspect or take over (warm handoff on terminal failure).
 type TicketFailedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker,omitempty"`
 	Reason   string `json:"reason"`
+	Worktree string `json:"worktree,omitempty"`
 }
 
 // WorkerStalledPayload accompanies [WorkerStalled].
