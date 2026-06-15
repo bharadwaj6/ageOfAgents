@@ -57,6 +57,7 @@ type Ticket struct {
 	LastActivity   time.Time
 	LastFailReason string // reason of the most recent verification failure (crash-loop detection)
 	SameFailCount  int    // consecutive verification failures sharing LastFailReason
+	Worktree       string // preserved checkout of a terminally-failed attempt (warm handoff); empty otherwise
 }
 
 // State is the derived snapshot produced by folding events.
@@ -241,6 +242,10 @@ func (s *State) Apply(e api.Event) error {
 		if t := s.Tickets[p.TicketID]; t != nil {
 			t.Status = StatusFailed
 			t.LastActivity = e.Timestamp
+			if p.Reason != "" {
+				t.LastFailReason = p.Reason
+			}
+			t.Worktree = p.Worktree // preserved checkout for a warm handoff ("" if none)
 		}
 
 	case api.ApprovalRequested:

@@ -40,6 +40,19 @@ func setup(t *testing.T, backend agent.Backend, gate verify.Verifier, opt Option
 	if err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
+	// Force-remove any worktrees the run leaves linked (preserved on terminal
+	// failure, parked, or crashed) before t.TempDir's RemoveAll — otherwise their
+	// admin files under <repo>/.git/worktrees race cleanup under parallel load.
+	// Registered after t.TempDir so it runs first (LIFO).
+	t.Cleanup(func() {
+		out, _ := exec.Command("git", "-C", repo.Dir, "worktree", "list", "--porcelain").Output()
+		for _, line := range strings.Split(string(out), "\n") {
+			if path, ok := strings.CutPrefix(line, "worktree "); ok {
+				_ = exec.Command("git", "-C", repo.Dir, "worktree", "remove", "--force", path).Run()
+			}
+		}
+		_ = exec.Command("git", "-C", repo.Dir, "worktree", "prune").Run()
+	})
 	led, err := ledger.Open(filepath.Join(base, "events.jsonl"))
 	if err != nil {
 		t.Fatalf("ledger.Open: %v", err)
@@ -461,6 +474,41 @@ func TestCrashLoopGivesUpEarly(t *testing.T) {
 	}
 	if !strings.Contains(failReason, "crash loop") {
 		t.Errorf("terminal reason = %q, want it to mention a crash loop", failReason)
+	}
+}
+
+func TestTerminalFailurePreservesWorktreeForHandoff(t *testing.T) {
+	gate := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{FailTitles: map[string]bool{"Implement: doomed": true}}
+	wtBase := t.TempDir()
+	o, h := setup(t, mock, gate, Options{Concurrency: 1, MaxAttempts: 2, WorktreeBase: wtBase})
+	h.submitGoal(t, "g1", "doomed")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	tk := h.state(t).Tickets["g1-impl"]
+	if tk == nil || tk.Status != state.StatusFailed {
+		t.Fatalf("status = %v, want failed", tk)
+	}
+	// A terminal failure preserves the agent's last attempt for a warm handoff.
+	if tk.Worktree == "" {
+		t.Fatal("terminal failure should preserve and record the worktree path")
+	}
+	if _, err := os.Stat(tk.Worktree); err != nil {
+		t.Errorf("preserved worktree should remain on disk: %v", err)
+	}
+	if tk.LastFailReason == "" {
+		t.Error("failed ticket should record why it gave up")
+	}
+	// Only the final attempt's worktree remains; the earlier retry was cleaned up.
+	entries, err := os.ReadDir(wtBase)
+	if err != nil {
+		t.Fatalf("read worktree base: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected exactly 1 preserved worktree, got %d (retries should clean up)", len(entries))
 	}
 }
 

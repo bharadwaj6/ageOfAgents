@@ -205,7 +205,8 @@ are met.
 **P1 — adoption ergonomics**
 - [x] **#9** `aoa init --adopt` an existing repo/branch + Gate auto-detect (worktrees cut from `HEAD`, so
       any branch works; never clobbers `aoa.toml`).
-- [ ] **#10** Warm handoff on terminal failure — preserve + surface the worktree + trace.
+- [x] **#10** Warm handoff on terminal failure — terminal `TicketFailed` preserves the worktree (retries
+      still clean up) and `aoa status` shows a "needs human" section with the reason + `cd <worktree>`.
 
 **P2 — steering, observability, positioning**
 - [ ] **#11** Mid-run goal amendment (`GoalAmended` event).
