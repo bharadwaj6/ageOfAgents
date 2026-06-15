@@ -28,6 +28,9 @@ type Metrics struct {
 	RejectedProposalRate float64        `json:"rejected_proposal_rate"` // rejected / (rejected + merged)
 	RegressionEscapes    int            `json:"regression_escapes"`     // merges that passed the Gate but failed a broader Shadow set
 	RegressionEscapeRate float64        `json:"regression_escape_rate"` // RegressionEscapes / merges (the Gate's blind spot)
+	MergeQueueMaxDepth   int            `json:"merge_queue_max_depth"`  // most proposals waiting in the merge queue at once
+	MergeQueueWaitMean   float64        `json:"merge_queue_wait_mean"`  // mean seconds a proposal waited (submitted → resolved)
+	MergeQueueWaitMax    float64        `json:"merge_queue_wait_max"`   // worst-case proposal wait, in seconds
 	StepRepetitions      int            `json:"step_repetitions"`       // merged tickets sharing an idempotency key
 	MeanAttemptsToMerge  float64        `json:"mean_attempts_to_merge"`
 	MaxConcurrentWorkers int            `json:"max_concurrent_workers"` // parallelism actually achieved
@@ -110,7 +113,28 @@ func Compute(events []api.Event) Metrics {
 		tokensByModel   = map[string]int{}
 		firstTSByTicket = map[string]time.Time{}
 		lastTSByTicket  = map[string]time.Time{}
+		// merge-queue instrumentation: depth (concurrent waiters) and wait time
+		// (ProposalSubmitted → resolution), all from the log.
+		inQueue    = map[string]bool{}
+		proposedAt = map[string]time.Time{}
+		waitSum    float64
+		waitCount  int
 	)
+	resolveQueue := func(id string, ts time.Time) {
+		if !inQueue[id] {
+			return
+		}
+		w := ts.Sub(proposedAt[id]).Seconds()
+		if w < 0 {
+			w = 0
+		}
+		waitSum += w
+		waitCount++
+		if w > m.MergeQueueWaitMax {
+			m.MergeQueueWaitMax = w
+		}
+		delete(inQueue, id)
+	}
 	for i, e := range events {
 		if i == 0 {
 			firstTS = e.Timestamp
@@ -145,6 +169,11 @@ func Compute(events []api.Event) Metrics {
 			delete(active, id)
 			if e.Type == api.ProposalSubmitted {
 				propSeq[id] = e.Seq
+				inQueue[id] = true
+				proposedAt[id] = e.Timestamp
+				if len(inQueue) > m.MergeQueueMaxDepth {
+					m.MergeQueueMaxDepth = len(inQueue)
+				}
 				var p api.ProposalSubmittedPayload
 				if e.DecodePayload(&p) == nil {
 					m.TokensTotal += p.Tokens
@@ -154,6 +183,9 @@ func Compute(events []api.Event) Metrics {
 						tokensByModel[p.Model] += p.Tokens
 					}
 				}
+			}
+			if e.Type == api.TicketFailed {
+				resolveQueue(id, e.Timestamp)
 			}
 			if e.Type == api.TicketDecomposed {
 				var p api.TicketDecomposedPayload
@@ -170,7 +202,11 @@ func Compute(events []api.Event) Metrics {
 			passSeq[id] = e.Seq
 		case api.VerificationFailed:
 			rejected++
+			resolveQueue(id, e.Timestamp)
+		case api.ApprovalRequested:
+			resolveQueue(id, e.Timestamp) // parked for a human; wait in the queue ends
 		case api.Merged:
+			resolveQueue(id, e.Timestamp)
 			merges++
 			if passSeq[id] != 0 && passSeq[id] >= propSeq[id] {
 				mergesVerified++
@@ -197,6 +233,9 @@ func Compute(events []api.Event) Metrics {
 	m.RegressionEscapes = regressionEscapes
 	if merges > 0 {
 		m.RegressionEscapeRate = float64(regressionEscapes) / float64(merges)
+	}
+	if waitCount > 0 {
+		m.MergeQueueWaitMean = waitSum / float64(waitCount)
 	}
 
 	for _, t := range s.Tickets {

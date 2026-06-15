@@ -181,6 +181,98 @@ func TestProcessNoEscapeWhenShadowPasses(t *testing.T) {
 	}
 }
 
+func TestProcessBatchMergesDisjointTogether(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+
+	// Three proposals touching disjoint files — all should merge in one batch.
+	a := proposeFile(t, repo, base, "a", "a.txt", "A\n")
+	b := proposeFile(t, repo, base, "b", "b.txt", "B\n")
+	c := proposeFile(t, repo, base, "c", "c.txt", "C\n")
+
+	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
+	outs, err := q.ProcessBatch(ctx, []Proposal{a, b, c})
+	if err != nil {
+		t.Fatalf("ProcessBatch: %v", err)
+	}
+	for i, o := range outs {
+		if !o.Merged || !o.Verified {
+			t.Errorf("outcome[%d] = %+v, want merged+verified", i, o)
+		}
+	}
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		if _, err := os.Stat(filepath.Join(repo.Dir, f)); err != nil {
+			t.Errorf("%s should be on main: %v", f, err)
+		}
+	}
+}
+
+func TestProcessBatchSerializesOverlapping(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+
+	// Two proposals both create dup.txt (overlapping files) → they cannot batch.
+	// Processed serially: the first lands; the second textually conflicts and is
+	// rejected (main stays coherent), exactly as the single-Process path behaves.
+	a := proposeFile(t, repo, base, "a", "dup.txt", "from-a\n")
+	b := proposeFile(t, repo, base, "b", "dup.txt", "from-b\n")
+
+	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
+	outs, err := q.ProcessBatch(ctx, []Proposal{a, b})
+	if err != nil {
+		t.Fatalf("ProcessBatch: %v", err)
+	}
+	merged := 0
+	for _, o := range outs {
+		if o.Merged {
+			merged++
+		}
+	}
+	if merged != 1 {
+		t.Fatalf("overlapping proposals: want exactly 1 merged, got %d (%+v)", merged, outs)
+	}
+	got, _ := os.ReadFile(filepath.Join(repo.Dir, "dup.txt"))
+	if string(got) != "from-a\n" {
+		t.Errorf("main dup.txt = %q, want a's content (first wins)", got)
+	}
+}
+
+func TestProcessBatchGateFailureIsolatesCulprit(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+
+	// Gate fails when a "BAD" marker file exists. a is clean, b is poison; their
+	// files are disjoint so they batch, the union fails the Gate → rollback →
+	// serial: a merges, b is rejected (the culprit is isolated).
+	a := proposeFile(t, repo, base, "a", "good.txt", "ok\n")
+	b := proposeFile(t, repo, base, "b", "BAD", "poison\n")
+	gate := verify.Verifier{Commands: []verify.Command{{"sh", "-c", "! test -f BAD"}}}
+
+	q := New(repo, gate)
+	outs, err := q.ProcessBatch(ctx, []Proposal{a, b})
+	if err != nil {
+		t.Fatalf("ProcessBatch: %v", err)
+	}
+	if !outs[0].Merged {
+		t.Errorf("clean proposal a should merge after isolation, got %+v", outs[0])
+	}
+	if outs[1].Merged {
+		t.Errorf("poison proposal b should be rejected, got %+v", outs[1])
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "good.txt")); err != nil {
+		t.Errorf("a's file should be on main: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "BAD")); !os.IsNotExist(err) {
+		t.Error("b's poison file must not remain on main")
+	}
+}
+
 func TestProcessRejectsOnMergeConflict(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()

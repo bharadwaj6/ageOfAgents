@@ -207,12 +207,33 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	}
 
 	// 4. Drain the merge queue for proposed tickets (serialized writes to main).
+	// When several proposals are waiting and neither the approval gate nor a
+	// Shadow set is in play, batch disjoint-file ones into a single Gate run;
+	// otherwise process them one at a time (the approval/shadow paths need a
+	// per-proposal Gate).
 	if s, err = o.loadState(); err != nil {
 		return err
 	}
-	for _, t := range s.Proposed() {
-		if err := o.processProposal(ctx, t); err != nil {
+	proposed := s.Proposed()
+	if len(proposed) > 1 && !o.opt.RequireApproval && len(o.mq.Shadow.Commands) == 0 {
+		props := make([]mergequeue.Proposal, len(proposed))
+		for i, t := range proposed {
+			props[i] = mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch}
+		}
+		outcomes, err := o.mq.ProcessBatch(ctx, props)
+		if err != nil {
 			return err
+		}
+		for i, t := range proposed {
+			if err := o.applyMergeOutcome(ctx, t, outcomes[i]); err != nil {
+				return err
+			}
+		}
+	} else {
+		for _, t := range proposed {
+			if err := o.processProposal(ctx, t); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -531,7 +552,14 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 		// Infrastructure failure: treat as a failed attempt.
 		return o.rejectOrFail(ctx, t, t.Worker, fmt.Sprintf("merge queue: %v", err))
 	}
+	return o.applyMergeOutcome(ctx, t, out)
+}
 
+// applyMergeOutcome turns a merge-queue Outcome into the right events: a merged
+// proposal emits VerificationPassed + Merged (+ RegressionEscaped on a shadow
+// miss); a rejected one re-readies or terminally fails the ticket. Shared by the
+// single (Process) and batched (ProcessBatch) merge paths.
+func (o *Orchestrator) applyMergeOutcome(ctx context.Context, t *state.Ticket, out mergequeue.Outcome) error {
 	if out.Merged {
 		if err := o.emit(api.VerificationPassed, api.VerificationPassedPayload{TicketID: t.ID, Worker: t.Worker}); err != nil {
 			return err
@@ -549,7 +577,6 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 		o.cleanupWorktree(ctx, t.ID)
 		return nil
 	}
-
 	return o.rejectOrFail(ctx, t, t.Worker, out.Reason)
 }
 

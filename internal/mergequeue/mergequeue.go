@@ -134,3 +134,108 @@ func (q *Queue) DryRun(ctx context.Context, p Proposal) (Outcome, error) {
 	out.Reason = "dry-run verified"
 	return out, nil
 }
+
+// ProcessBatch verifies a set of proposals, batching ones that touch disjoint
+// file sets into a single Gate run instead of one each — the throughput win
+// when work has good locality, without speculation. Proposals with disjoint
+// files cannot textually conflict, so they merge cleanly together; the Gate runs
+// once on the union. If that batch Gate fails, the whole batch is rolled back and
+// its members are re-processed one at a time to isolate the culprit (so a single
+// bad proposal never sinks good neighbours). Overlapping or undeterminable
+// proposals always serialize. `main` stays linearizable and green either way.
+//
+// Outcomes are returned aligned with props. ProcessBatch is *not* used when a
+// Shadow set is configured (regression-escape attribution needs per-proposal
+// Gate runs) — the orchestrator falls back to Process there.
+func (q *Queue) ProcessBatch(ctx context.Context, props []Proposal) ([]Outcome, error) {
+	outcomes := make([]Outcome, len(props))
+
+	// Greedily select a maximal prefix of proposals with pairwise-disjoint files.
+	used := map[string]bool{}
+	batch := make([]int, 0, len(props))
+	serial := make([]int, 0, len(props))
+	for i, p := range props {
+		files, err := q.Repo.ChangedFiles(ctx, p.Branch)
+		if err != nil || len(files) == 0 || overlaps(files, used) {
+			serial = append(serial, i)
+			continue
+		}
+		for _, f := range files {
+			used[f] = true
+		}
+		batch = append(batch, i)
+	}
+
+	// A batch of <2 buys nothing — serialize everything.
+	if len(batch) < 2 {
+		for i, p := range props {
+			out, err := q.Process(ctx, p)
+			if err != nil {
+				return outcomes, err
+			}
+			outcomes[i] = out
+		}
+		return outcomes, nil
+	}
+
+	pre, err := q.Repo.Head(ctx)
+	if err != nil {
+		return outcomes, fmt.Errorf("read head: %w", err)
+	}
+
+	// Merge the disjoint batch (cheap, conflict-free) then Gate once.
+	merged := true
+	for _, i := range batch {
+		sha, err := q.Repo.Merge(ctx, props[i].Branch, fmt.Sprintf("merge: %s", props[i].TicketID))
+		if err != nil {
+			merged = false // unexpected for disjoint files; fall back to serial
+			break
+		}
+		outcomes[i] = Outcome{TicketID: props[i].TicketID, Worker: props[i].Worker, MergeCommit: sha}
+	}
+	if merged {
+		res := q.Verifier.Run(ctx, q.Repo.Dir)
+		if res.Passed {
+			for _, i := range batch {
+				o := outcomes[i]
+				o.Verified, o.Merged, o.Output = true, true, res.Output
+				outcomes[i] = o
+			}
+		} else {
+			merged = false
+		}
+	}
+	if !merged {
+		// Batch Gate failed (or a merge hiccuped): discard the lot and isolate.
+		if rbErr := q.Repo.ResetHard(ctx, pre); rbErr != nil {
+			return outcomes, fmt.Errorf("rollback after batch: %w", rbErr)
+		}
+		for _, i := range batch {
+			out, err := q.Process(ctx, props[i])
+			if err != nil {
+				return outcomes, err
+			}
+			outcomes[i] = out
+		}
+	}
+
+	// Process overlapping / undeterminable proposals one at a time, on top.
+	for _, i := range serial {
+		out, err := q.Process(ctx, props[i])
+		if err != nil {
+			return outcomes, err
+		}
+		outcomes[i] = out
+	}
+	return outcomes, nil
+}
+
+// overlaps reports whether any of files is already in used.
+func overlaps(files []string, used map[string]bool) bool {
+	for _, f := range files {
+		if used[f] {
+			return true
+		}
+	}
+	return false
+}

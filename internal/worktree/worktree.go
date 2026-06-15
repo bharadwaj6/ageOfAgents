@@ -152,6 +152,23 @@ func (r *Repo) Merge(ctx context.Context, branch, msg string) (sha string, err e
 	return strings.TrimSpace(out), nil
 }
 
+// ChangedFiles lists the files branch changes relative to the integration
+// branch (the merge base with HEAD), used by the merge queue to detect whether
+// two proposals touch disjoint file sets and can be batch-verified together.
+func (r *Repo) ChangedFiles(ctx context.Context, branch string) ([]string, error) {
+	out, err := git(ctx, r.Dir, "diff", "--name-only", "HEAD..."+branch)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			files = append(files, line)
+		}
+	}
+	return files, nil
+}
+
 // ResetHard moves the integration branch back to sha, discarding any changes.
 // Used by the merge queue to roll back a merge that failed verification.
 func (r *Repo) ResetHard(ctx context.Context, sha string) error {

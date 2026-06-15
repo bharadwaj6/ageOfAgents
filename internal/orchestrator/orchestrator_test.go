@@ -522,6 +522,39 @@ func TestGoalAmendmentReachesNextDispatch(t *testing.T) {
 	}
 }
 
+func TestBatchMergePathEngagesAndStaysCorrect(t *testing.T) {
+	// A diamond's backend+frontend leaves (disjoint marker files) propose in the
+	// same pass, so the merge queue's disjoint-batch path runs. Assert everything
+	// merged and the queue actually held >1 proposal at once (batching engaged).
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{
+		Decompose: map[string][]agent.Subtask{
+			"Implement: build app": {
+				{LocalID: "types", Title: "shared types", IdempotencyKey: "g1:types"},
+				{LocalID: "backend", Title: "backend", DependsOn: []string{"types"}, IdempotencyKey: "g1:backend"},
+				{LocalID: "frontend", Title: "frontend", DependsOn: []string{"types"}, IdempotencyKey: "g1:frontend"},
+			},
+		},
+	}
+	o, h := setup(t, mock, pass, Options{Concurrency: 4})
+	h.submitGoal(t, "g1", "build app")
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	s := h.state(t)
+	for _, id := range []string{"g1-impl/types", "g1-impl/backend", "g1-impl/frontend"} {
+		if tk := s.Tickets[id]; tk == nil || tk.Status != state.StatusMerged {
+			t.Fatalf("child %s = %+v, want merged", id, tk)
+		}
+	}
+	events, _ := h.led.Read()
+	if d := metrics.Compute(events).MergeQueueMaxDepth; d < 2 {
+		t.Errorf("MergeQueueMaxDepth = %d, want >= 2 (backend+frontend queue together)", d)
+	}
+	assertInvariants(t, h, pass)
+}
+
 func TestTerminalFailurePreservesWorktreeForHandoff(t *testing.T) {
 	gate := verify.Verifier{Commands: []verify.Command{{"true"}}}
 	mock := &agent.Mock{FailTitles: map[string]bool{"Implement: doomed": true}}
