@@ -4,9 +4,10 @@
 fault-injection harness; replay-based metrics + benchmark + design comparison). **Track D complete**
 (external-critique response: MAST self-measurement, human-in-the-loop approval gate, live-eval harness,
 TLA+ spec + ADRs 008–011). This is the living plan + progress tracker and the **resume anchor**: a fresh
-agent (e.g. if the session runs out of credits) should start here. Next candidates (not yet started):
-*running* the live head-to-head competitor runs at scale (harness now exists; needs API budget) and
-speculative/batched merges for throughput.
+agent (e.g. if the session runs out of credits) should start here. Next work is **Phase E — measured &
+adoptable** (see below; GitHub milestone v0.1, issues #4–#18): land a reproducible cost-first SWE-bench
+number, add spend/safety governors, measure the verification blind spot, and make `aoa` adoptable on a
+real repo.
 
 ## Resuming agent: start here
 
@@ -174,6 +175,56 @@ multi-node, log compaction, markets/voting).
       caller's job (ADR 009).
 - [ ] **Run SWE-bench Lite at scale** (needs API budget + a prepared Python env / SWE-bench Docker). The
       machinery is ready; this is the remaining empirical step.
+
+---
+
+## Phase E — from prototype to measured & adoptable
+
+Tracks A–D are done. The system *proves things about itself* (hermetic, mock-backed) but does not yet
+*help anyone*: every headline number is from the `mock` backend, and the one differentiator — driving real
+agents to merged, correct code — is the unrun box above. This phase closes the gap from "clean prototype"
+to "tool engineers use daily." Work the issues in priority order; each is a clean A/B on
+solve-rate / cost / latency against the #4 baseline.
+
+GitHub: milestone **v0.1 — measured & adoptable**. Resume at the lowest-numbered open issue whose deps
+are met.
+
+**P0 — the baseline that unblocks everything**
+- [ ] **#4** Run SWE-bench Lite at scale — reproducible (pinned models + image digests), pass@1 / pass@k,
+      cost-per-solve, tokens-per-solve, MAST histogram → README. *The whole ballgame.*
+
+**P1 — cost & safety (real-money table stakes)**
+- [ ] **#5** Spend governor: per-goal token/$ ceiling + circuit breaker (the $100/hr failure mode).
+- [ ] **#6** Retry backoff + crash-loop detection (flaky vs. fundamentally broken).
+- [ ] **#7** Cost & latency as first-class metrics (per-ticket breakdown). *Unblocks the cost columns in #4.*
+
+**P1 — the verification ceiling (the honest gap)**
+- [ ] **#8** Measure the verification blind spot — regression-escape rate + coupled multi-file conflict test.
+
+**P1 — adoption ergonomics**
+- [ ] **#9** `aoa init --adopt` an existing repo/branch + Gate auto-detect (adopt-my-repo in <5 min).
+- [ ] **#10** Warm handoff on terminal failure — preserve + surface the worktree + trace.
+
+**P2 — steering, observability, positioning**
+- [ ] **#11** Mid-run goal amendment (`GoalAmended` event).
+- [ ] **#12** Live `aoa status` view; fold the duplicate `feed`/`events` dump.
+- [ ] **#13** Instrument the merge queue (depth + wait) + batch non-conflicting (disjoint-file) proposals.
+- [ ] **#14** Instrument the deterministic-orchestration failure taxonomy (extend `diagnose`).
+- [ ] **#15** README/positioning reframe ("Bors for AI agents, with the receipts").
+
+**P3 — deferred (build only when a metric justifies it)**
+- [ ] **#16** Speculative/batched merge with an adaptive window — gated on #13 showing serialization is
+      the real constraint.
+- [ ] **#17** Best-of-N with the test suite as verifier — after #4/#5/#7; track cost or it is a trap.
+- [ ] **#18** SPRT early-stopping for live evals.
+
+**Retired priors** (raised in review, already satisfied — do not re-open): *delete the leader daemon* (it
+is only the grok-CLI auth bootstrap, not an LLM in the control plane); *build deterministic control-plane
+tests* (the chaos harness + TLA+ spec + hermetic `mock` already do this). CAID's dynamic dependency DAG is
+largely already shipped as emergent decomposition (ADR 006/007); its remaining half (recompute edges after
+each merge) pays off only past single-file Lite work — folded into #13 / future multi-file work.
+
+**Last status:** backlog filed (issues #4–#18, milestone v0.1). Not started.
 
 ---
 
