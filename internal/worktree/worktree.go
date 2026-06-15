@@ -35,6 +35,10 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 		"-c", "user.name=Age of Agents",
 		"-c", "commit.gpgsign=false",
 		"-c", "advice.detachedHead=false",
+		// No background auto-gc: keeps git operations deterministic and avoids a
+		// detached `git gc --auto` process writing into .git while the workspace
+		// is being torn down (which races cleanup under load).
+		"-c", "gc.auto=0",
 	}
 	cmd := exec.CommandContext(ctx, "git", append(pre, args...)...)
 	if dir != "" {
@@ -78,12 +82,21 @@ func (r *Repo) Head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
-// AddWorktree creates a new worktree at dest on a fresh branch cut from main.
+// CurrentBranch returns the name of the repo's currently checked-out branch.
+func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
+	out, err := git(ctx, r.Dir, "rev-parse", "--abbrev-ref", "HEAD")
+	return strings.TrimSpace(out), err
+}
+
+// AddWorktree creates a new worktree at dest on a fresh branch cut from the
+// integration branch's current tip (HEAD). Cutting from HEAD rather than a fixed
+// "main" lets aoa adopt an existing repo on any branch (master, a feature
+// branch, …); for a scaffolded repo HEAD is main, so behavior is unchanged.
 func (r *Repo) AddWorktree(ctx context.Context, dest, branch string) (*Worktree, error) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return nil, fmt.Errorf("create worktree parent: %w", err)
 	}
-	if _, err := git(ctx, r.Dir, "worktree", "add", "-b", branch, dest, DefaultBranch); err != nil {
+	if _, err := git(ctx, r.Dir, "worktree", "add", "-b", branch, dest, "HEAD"); err != nil {
 		return nil, err
 	}
 	return &Worktree{Path: dest, Branch: branch}, nil

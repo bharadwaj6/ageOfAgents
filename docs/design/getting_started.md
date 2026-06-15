@@ -33,6 +33,24 @@ A **workspace** is a directory where `aoa` keeps everything: your project's git 
 - `./workspace/CONVENTIONS.md` — coding rules injected into every agent prompt
 - `./workspace/demo/` — a minimal Go module (your target repo)
 
+### Or: adopt your own repo
+
+To point `aoa` at an **existing** repository instead of a scaffolded demo, use
+`--adopt`. It works on whatever branch the repo is currently checked out on
+(`main`, `master`, a feature branch — `aoa` cuts worker branches from `HEAD`),
+writes nothing into your tree, and auto-detects a sensible Gate:
+
+```bash
+./aoa init --path . --adopt /path/to/my-repo
+```
+
+`aoa` sniffs the project and writes a starting `verify` Gate into `aoa.toml` —
+`go build`/`go test` for a `go.mod`, `npm test` for a `package.json`,
+`python -m pytest` for a Python project, or `make test` for a `Makefile`. Review
+and adjust it (provisioning the test environment is your job — see
+[ADR 009](adr/009-live-evaluation-out-of-hermetic-suite.md)). `init` never
+overwrites an existing `aoa.toml`; pass `--force` to replace one.
+
 ## Step 3: Submit a Goal
 
 A **Goal** is what you want done, in plain English. The Scheduler will break it into Tasks automatically.

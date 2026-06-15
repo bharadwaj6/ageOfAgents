@@ -120,7 +120,9 @@ func resolve(root, p string) string {
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	path := fs.String("path", ".", "workspace root")
-	repo := fs.String("repo", "./repo", "integration repo path (relative to workspace root)")
+	repo := fs.String("repo", "./repo", "integration repo path (scaffold mode)")
+	adopt := fs.String("adopt", "", "adopt an existing git repo at this path (on its current branch) instead of scaffolding")
+	force := fs.Bool("force", false, "overwrite an existing aoa.toml")
 	_ = fs.Parse(args)
 
 	ctx := context.Background()
@@ -128,16 +130,48 @@ func cmdInit(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Never clobber an existing workspace config — inspect before writing.
+	if _, err := os.Stat(ws.configPath); err == nil && !*force {
+		return fmt.Errorf("%s already exists — use --force to overwrite", ws.configPath)
+	}
 	if err := os.MkdirAll(filepath.Join(ws.root, ".aoa"), 0o755); err != nil {
 		return err
 	}
+	cfg := config.Default()
 
+	// Adopt mode: point aoa at the user's existing repo as-is (no scaffolding,
+	// no commits, no files written into their tree). Auto-detect a sensible Gate.
+	if *adopt != "" {
+		repoPath, err := filepath.Abs(resolve(ws.root, *adopt))
+		if err != nil {
+			return err
+		}
+		if fi, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil || !fi.IsDir() {
+			return fmt.Errorf("--adopt %s is not a git repository (no .git directory)", repoPath)
+		}
+		branch, err := worktree.OpenRepo(repoPath).CurrentBranch(ctx)
+		if err != nil {
+			return fmt.Errorf("read current branch of %s: %w", repoPath, err)
+		}
+		cfg.Repo = repoPath
+		gate, lang := detectGate(repoPath)
+		if gate != nil {
+			cfg.Verify = gate
+		}
+		if err := cfg.Save(ws.configPath); err != nil {
+			return err
+		}
+		fmt.Printf("Adopted %s\n  branch: %s\n  gate:   %s  (detected: %s)\n  config: %s\n\nReview the gate in aoa.toml (test-env setup is yours — ADR 009), then:\n  aoa goal --path %s \"your objective\"\n  aoa run  --path %s\n",
+			repoPath, branch, gateString(cfg.Verify), lang, ws.configPath, *path, *path)
+		return nil
+	}
+
+	// Scaffold mode: create a fresh Go-module repo to try aoa against.
 	repoPath := resolve(ws.root, *repo)
 	r, err := worktree.InitRepo(ctx, repoPath)
 	if err != nil {
 		return err
 	}
-	// Seed a minimal Go module so the default `go build/test` gate is real.
 	module := worktree.SanitizeBranch(filepath.Base(repoPath))
 	goMod := fmt.Sprintf("module %s\n\ngo %s\n", module, goVersion())
 	if err := os.WriteFile(filepath.Join(repoPath, "go.mod"), []byte(goMod), 0o644); err != nil {
@@ -151,7 +185,6 @@ func cmdInit(args []string) error {
 		return err
 	}
 
-	cfg := config.Default()
 	cfg.Repo = *repo
 	cfg.ConventionsFile = "CONVENTIONS.md"
 	if err := cfg.Save(ws.configPath); err != nil {
@@ -165,6 +198,37 @@ func cmdInit(args []string) error {
 	fmt.Printf("Initialized workspace at %s\n  repo:   %s\n  config: %s\n\nNext:\n  aoa goal --path %s \"your objective\"\n  aoa run  --path %s\n",
 		ws.root, repoPath, ws.configPath, *path, *path)
 	return nil
+}
+
+// detectGate sniffs an adopted repo for a sensible default Gate. The user can
+// always edit `verify` in aoa.toml afterward; provisioning the test environment
+// is the caller's job (ADR 009). Returns nil when nothing is recognized.
+func detectGate(repoDir string) (gate [][]string, lang string) {
+	has := func(name string) bool {
+		_, err := os.Stat(filepath.Join(repoDir, name))
+		return err == nil
+	}
+	switch {
+	case has("go.mod"):
+		return [][]string{{"go", "build", "./..."}, {"go", "test", "./..."}}, "go"
+	case has("package.json"):
+		return [][]string{{"npm", "test"}}, "node"
+	case has("pyproject.toml"), has("setup.py"), has("setup.cfg"), has("pytest.ini"), has("tox.ini"):
+		return [][]string{{"python", "-m", "pytest"}}, "python"
+	case has("Makefile"), has("makefile"):
+		return [][]string{{"make", "test"}}, "make"
+	default:
+		return nil, "none — set `verify` in aoa.toml manually"
+	}
+}
+
+// gateString renders a Gate (list of argv) as a human-readable "a && b" line.
+func gateString(verify [][]string) string {
+	parts := make([]string, len(verify))
+	for i, c := range verify {
+		parts[i] = strings.Join(c, " ")
+	}
+	return strings.Join(parts, " && ")
 }
 
 func cmdGoal(args []string) error {
