@@ -31,6 +31,7 @@ by replaying the Event Log, not by bespoke instrumentation.
 | **Event-replay fidelity** | Can any historical state be reproduced by replaying the Event Log? (yes/no per run) |
 | **Single-point-of-failure count** | Components whose failure halts the system. Target **0**: the Scheduler is crash-only and restarts from the durable Event Log. |
 | **Mean attempts-to-merge** | Average Task attempts before a successful merge (retry pressure). |
+| **Merge-queue depth / wait** | `merge_queue_max_depth` (most proposals queued at once) and `merge_queue_wait_{mean,max}` (seconds a proposal waited, submitted → resolved). **This is the gate that decides whether merge serialization is the real bottleneck** before investing in speculative batching (see the comparison doc + the deferred speculative-merge work). Disjoint-file proposals are already batch-verified in one Gate run; only a rising wait under real load justifies more. |
 
 ## Simplicity metrics (a goal, not an anti-goal)
 

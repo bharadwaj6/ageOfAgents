@@ -214,7 +214,9 @@ are met.
       `stale_spec_drift` diagnose mode deferred from #14.
 - [x] **#12** Live `aoa status --watch` (poll loop, no daemon, stops on settle); `--type` filter moved
       into `aoa events` (tail|replay), `feed` folded to a deprecated alias via a shared renderer.
-- [ ] **#13** Instrument the merge queue (depth + wait) + batch non-conflicting (disjoint-file) proposals.
+- [x] **#13** Instrument the merge queue (`merge_queue_max_depth` + `wait_{mean,max}`, pure from the log,
+      shown in `aoa status`) + batch disjoint-file proposals into one Gate run with serial fallback
+      (skipped when an approval gate or shadow set is in play). Speculation stays deferred (#16).
 - [x] **#14** Instrument the deterministic-orchestration failure taxonomy (extend `diagnose`):
       queue_starvation, scheduler_deadlock, retry_livelock, verification_blind_spot (stale_spec_drift
       pending #11).

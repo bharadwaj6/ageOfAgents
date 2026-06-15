@@ -802,6 +802,10 @@ func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, 
 		fmt.Printf("  cost=$%.4f", cost)
 	}
 	fmt.Println()
+	if m.MergeQueueMaxDepth > 0 {
+		fmt.Printf("merge queue: max-depth=%d  wait-mean=%.1fs  wait-max=%.1fs\n",
+			m.MergeQueueMaxDepth, m.MergeQueueWaitMean, m.MergeQueueWaitMax)
+	}
 	settled = s.Settled()
 	if settled {
 		fmt.Println("all work settled")

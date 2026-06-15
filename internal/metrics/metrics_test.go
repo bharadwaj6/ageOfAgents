@@ -296,3 +296,32 @@ func TestComputeRegressionEscapeRate(t *testing.T) {
 		t.Errorf("RegressionEscapeRate = %v, want 0.5 (1 of 2 merges)", m.RegressionEscapeRate)
 	}
 }
+
+func TestComputeMergeQueueDepthAndWait(t *testing.T) {
+	// Two proposals sit in the queue together (depth 2), then resolve. The stream
+	// helper advances the clock 1s per event, so waits are exact:
+	//   t1 proposed @e6, merged @e9 → 3s;  t2 proposed @e7, merged @e11 → 4s.
+	s := newStream(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "x"}).                                               // e1
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "a", IdempotencyKey: "k1"}). // e2
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t2", GoalID: "g1", Title: "b", IdempotencyKey: "k2"}). // e3
+		add(api.TicketReady, "orchestrator", api.TicketReadyPayload{TicketID: "t1"}).                                                     // e4
+		add(api.TicketReady, "orchestrator", api.TicketReadyPayload{TicketID: "t2"}).                                                     // e5
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t1", Commit: "c1"}).                           // e6
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t2", Commit: "c2"}).                           // e7 (depth=2)
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "t1"}).                                       // e8
+		add(api.Merged, "orchestrator", api.MergedPayload{TicketID: "t1", Commit: "c1"}).                                                 // e9 (wait 3s)
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "t2"}).                                       // e10
+		add(api.Merged, "orchestrator", api.MergedPayload{TicketID: "t2", Commit: "c2"})                                                  // e11 (wait 4s)
+
+	m := Compute(s.events)
+	if m.MergeQueueMaxDepth != 2 {
+		t.Errorf("MergeQueueMaxDepth = %d, want 2", m.MergeQueueMaxDepth)
+	}
+	if m.MergeQueueWaitMax != 4 {
+		t.Errorf("MergeQueueWaitMax = %v, want 4", m.MergeQueueWaitMax)
+	}
+	if m.MergeQueueWaitMean != 3.5 {
+		t.Errorf("MergeQueueWaitMean = %v, want 3.5", m.MergeQueueWaitMean)
+	}
+}
