@@ -15,6 +15,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
@@ -46,6 +47,27 @@ const (
 	// ReplayError: the log could not be folded into state. Surfaced as its own
 	// finding so a corrupt history is never silently scored as healthy.
 	ReplayError Mode = "replay_error"
+
+	// --- Deterministic-orchestration taxonomy ---------------------------------
+	// Mature systems stop failing for their original reasons and start failing
+	// for new ones. These are the failure modes a *deterministic* control plane
+	// creates — distinct from the MAST modes above, but measured the same way
+	// (pure functions of the log). All are 0 on a healthy, settled run.
+
+	// QueueStarvation: a ticket became dispatchable (Ready) but the run ended
+	// with it still unclaimed — work that never got a worker slot.
+	QueueStarvation Mode = "queue_starvation"
+	// SchedulerDeadlock: non-terminal work is stuck mid-pipeline at end of run
+	// (pending/claimed/running/proposed) with no dead dependency to explain it —
+	// the orchestrator's "made no progress but work is unsettled" condition.
+	SchedulerDeadlock Mode = "scheduler_deadlock"
+	// RetryLivelock: a ticket hit the crash-loop ceiling — the same failure
+	// repeated until the governor gave up (see retry backoff / crash-loop, #6).
+	RetryLivelock Mode = "retry_livelock"
+	// VerificationBlindSpot: a merge passed the Gate but a broader shadow test
+	// set rejected it — the regression-escape signal (#8). The dangerous one: the
+	// Gate was green but insufficient.
+	VerificationBlindSpot Mode = "verification_blind_spot"
 )
 
 // modeOrder fixes the histogram's row order so output is deterministic.
@@ -56,17 +78,28 @@ var modeOrder = []Mode{
 	RetryChurn,
 	WorkerStall,
 	MissingVerification,
+	QueueStarvation,
+	SchedulerDeadlock,
+	RetryLivelock,
+	VerificationBlindSpot,
 }
 
 // modeDetail is the human-readable description shown beside each mode.
 var modeDetail = map[Mode]string{
-	StepRepetition:       "same logical ticket merged more than once (idempotency violation)",
-	PrematureTermination: "ticket failed without delivering and without a dead dependency",
-	DeadDependencyStall:  "ticket blocked or failed because a dependency can never complete",
-	RetryChurn:           "proposals rejected by the Gate and re-attempted",
-	WorkerStall:          "stall detector flagged a worker with no progress",
-	MissingVerification:  "merge without a preceding VerificationPassed (invariant: must be 0)",
+	StepRepetition:        "same logical ticket merged more than once (idempotency violation)",
+	PrematureTermination:  "ticket failed without delivering and without a dead dependency",
+	DeadDependencyStall:   "ticket blocked or failed because a dependency can never complete",
+	RetryChurn:            "proposals rejected by the Gate and re-attempted",
+	WorkerStall:           "stall detector flagged a worker with no progress",
+	MissingVerification:   "merge without a preceding VerificationPassed (invariant: must be 0)",
+	QueueStarvation:       "ticket left Ready (dispatchable) but never claimed by a worker",
+	SchedulerDeadlock:     "non-terminal work stuck mid-pipeline at end of run, no dead dependency",
+	RetryLivelock:         "ticket hit the crash-loop ceiling (same failure repeated until giving up)",
+	VerificationBlindSpot: "merge passed the Gate but a broader shadow test set rejected it",
 }
+
+// crashLoopPrefix marks a TicketFailed reason the crash-loop governor emitted.
+const crashLoopPrefix = "crash loop:"
 
 // Finding is one row of the failure-mode histogram.
 type Finding struct {
@@ -112,6 +145,8 @@ func Classify(events []api.Event) Report {
 		stalled        = map[string]bool{}   // tickets the stall detector flagged
 		missingVerif   = map[string]bool{}   // merges with no prior verification
 		retryEvents    int
+		blindSpot      []string              // tickets that escaped a broader verifier (#8)
+		failReason     = map[string]string{} // ticket id -> latest TicketFailed reason
 	)
 	for _, e := range events {
 		switch e.Type {
@@ -146,6 +181,16 @@ func Classify(events []api.Event) Report {
 			var p api.WorkerStalledPayload
 			if e.DecodePayload(&p) == nil {
 				stalled[p.TicketID] = true
+			}
+		case api.TicketFailed:
+			var p api.TicketFailedPayload
+			if e.DecodePayload(&p) == nil {
+				failReason[p.TicketID] = p.Reason
+			}
+		case api.RegressionEscaped:
+			var p api.RegressionEscapedPayload
+			if e.DecodePayload(&p) == nil {
+				blindSpot = append(blindSpot, p.TicketID)
 			}
 		}
 	}
@@ -188,21 +233,52 @@ func Classify(events []api.Event) Report {
 		}
 	}
 
+	// Deterministic-orchestration taxonomy: leftover non-terminal tickets at end
+	// of run are a stuck-scheduler symptom — Ready ones starved for a slot, the
+	// rest deadlocked mid-pipeline (excluding dead-dep stalls already counted and
+	// Awaiting tickets parked for approval, which is intentional, not a failure).
+	var starved, deadlocked []string
+	for _, t := range s.Tickets {
+		switch t.Status {
+		case state.StatusReady:
+			starved = append(starved, t.ID)
+		case state.StatusPending, state.StatusClaimed, state.StatusRunning, state.StatusProposed:
+			if !deadSeen[t.ID] {
+				deadlocked = append(deadlocked, t.ID)
+			}
+		}
+	}
+	// Retry livelock: tickets the crash-loop governor terminated (#6).
+	var livelock []string
+	for id, reason := range failReason {
+		if strings.HasPrefix(reason, crashLoopPrefix) {
+			livelock = append(livelock, id)
+		}
+	}
+
 	counts := map[Mode]int{
-		StepRepetition:       len(stepRep),
-		PrematureTermination: len(premature),
-		DeadDependencyStall:  len(deadDep),
-		RetryChurn:           retryEvents,
-		WorkerStall:          len(stalled),
-		MissingVerification:  len(missingVerif),
+		StepRepetition:        len(stepRep),
+		PrematureTermination:  len(premature),
+		DeadDependencyStall:   len(deadDep),
+		RetryChurn:            retryEvents,
+		WorkerStall:           len(stalled),
+		MissingVerification:   len(missingVerif),
+		QueueStarvation:       len(starved),
+		SchedulerDeadlock:     len(deadlocked),
+		RetryLivelock:         len(livelock),
+		VerificationBlindSpot: len(blindSpot),
 	}
 	tickets := map[Mode][]string{
-		StepRepetition:       slices.Collect(maps.Keys(stepRep)),
-		PrematureTermination: premature,
-		DeadDependencyStall:  deadDep,
-		RetryChurn:           slices.Collect(maps.Keys(verifFailed)),
-		WorkerStall:          slices.Collect(maps.Keys(stalled)),
-		MissingVerification:  slices.Collect(maps.Keys(missingVerif)),
+		StepRepetition:        slices.Collect(maps.Keys(stepRep)),
+		PrematureTermination:  premature,
+		DeadDependencyStall:   deadDep,
+		RetryChurn:            slices.Collect(maps.Keys(verifFailed)),
+		WorkerStall:           slices.Collect(maps.Keys(stalled)),
+		MissingVerification:   slices.Collect(maps.Keys(missingVerif)),
+		QueueStarvation:       starved,
+		SchedulerDeadlock:     deadlocked,
+		RetryLivelock:         livelock,
+		VerificationBlindSpot: blindSpot,
 	}
 
 	out := Report{Findings: make([]Finding, 0, len(modeOrder))}
