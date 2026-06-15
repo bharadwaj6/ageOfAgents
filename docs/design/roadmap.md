@@ -203,7 +203,8 @@ are met.
       `RegressionEscaped` event + `regression_escape_rate` metric) + a coupled multi-file conflict test.
 
 **P1 — adoption ergonomics**
-- [ ] **#9** `aoa init --adopt` an existing repo/branch + Gate auto-detect (adopt-my-repo in <5 min).
+- [x] **#9** `aoa init --adopt` an existing repo/branch + Gate auto-detect (worktrees cut from `HEAD`, so
+      any branch works; never clobbers `aoa.toml`).
 - [ ] **#10** Warm handoff on terminal failure — preserve + surface the worktree + trace.
 
 **P2 — steering, observability, positioning**
