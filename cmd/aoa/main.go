@@ -43,6 +43,8 @@ func main() {
 		err = cmdInit(args)
 	case "goal":
 		err = cmdGoal(args)
+	case "amend":
+		err = cmdAmend(args)
 	case "run":
 		err = cmdRun(args)
 	case "status":
@@ -80,6 +82,7 @@ func usage() {
 Usage:
   aoa init   [--path DIR] [--repo PATH]   Scaffold a workspace + integration repo
   aoa goal   [--path DIR] "objective"     Submit a goal
+  aoa amend  [--path DIR] <goal-id> "..."  Append steering guidance to a goal mid-run
   aoa run    [--path DIR] [--once]        Run the reconciler (loop by default)
   aoa status [--path DIR]                 Show goals and tickets
   aoa feed   [--path DIR] [--type T]      Print the event stream
@@ -257,6 +260,53 @@ func cmdGoal(args []string) error {
 		return err
 	}
 	fmt.Printf("submitted goal %s: %q\n", goalID, text)
+	return nil
+}
+
+// cmdAmend appends steering guidance to a Goal mid-run (GoalAmended). Future
+// dispatches and retries carry the amended context; a running worker finishes
+// its current attempt uninterrupted. Run `aoa run` afterward to act on it.
+func cmdAmend(args []string) error {
+	fs := flag.NewFlagSet("amend", flag.ExitOnError)
+	path := fs.String("path", ".", "workspace root")
+	_ = fs.Parse(args)
+
+	rest := fs.Args()
+	if len(rest) < 2 {
+		return fmt.Errorf("usage: aoa amend <goal-id> \"new guidance\"")
+	}
+	goalID := rest[0]
+	guidance := strings.TrimSpace(strings.Join(rest[1:], " "))
+	if guidance == "" {
+		return fmt.Errorf("amendment guidance is required: aoa amend %s \"...\"", goalID)
+	}
+	ws, err := workspaceAt(*path)
+	if err != nil {
+		return err
+	}
+	led, err := ledger.Open(ws.ledgerPath)
+	if err != nil {
+		return err
+	}
+	events, err := led.Read()
+	if err != nil {
+		return err
+	}
+	s, err := state.Fold(events)
+	if err != nil {
+		return err
+	}
+	if s.Goals[goalID] == nil {
+		return fmt.Errorf("unknown goal %q", goalID)
+	}
+	ev, err := api.NewEvent(api.GoalAmended, "human", api.GoalAmendedPayload{GoalID: goalID, Guidance: guidance})
+	if err != nil {
+		return err
+	}
+	if _, err := led.Append(ev); err != nil {
+		return err
+	}
+	fmt.Printf("amended goal %s — run `aoa run --path %s` to apply it to pending work\n", goalID, *path)
 	return nil
 }
 

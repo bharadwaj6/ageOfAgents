@@ -239,3 +239,40 @@ func TestClassifyVerificationBlindSpot(t *testing.T) {
 		t.Fatalf("blind-spot merge was verified; missing_verification should be 0, got %+v", f)
 	}
 }
+
+func TestClassifyStaleSpecDrift(t *testing.T) {
+	// t1 is running (WorkStarted) when g1 is amended → it drifts. t2 finished
+	// (Merged) before the amendment → it does not.
+	events := newSeq(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t2", GoalID: "g1", Title: "done", IdempotencyKey: "k2"}).
+		add(api.TicketReady, api.TicketReadyPayload{TicketID: "t2"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t2", Worker: "w2"}).
+		add(api.WorkStarted, api.WorkStartedPayload{TicketID: "t2", Worker: "w2"}).
+		add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "t2", Worker: "w2", Commit: "c2"}).
+		add(api.VerificationPassed, api.VerificationPassedPayload{TicketID: "t2", Worker: "w2"}).
+		add(api.Merged, api.MergedPayload{TicketID: "t2", Worker: "w2", Commit: "c2"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "wip", IdempotencyKey: "k1"}).
+		add(api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
+		add(api.WorkStarted, api.WorkStartedPayload{TicketID: "t1", Worker: "w1"}).
+		add(api.GoalAmended, api.GoalAmendedPayload{GoalID: "g1", Guidance: "change of plan"}).
+		events
+	f := find(t, Classify(events), StaleSpecDrift)
+	if f.Count != 1 || len(f.Tickets) != 1 || f.Tickets[0] != "t1" {
+		t.Fatalf("stale spec drift: want 1 (t1, in-flight at amend time), got %+v", f)
+	}
+}
+
+func TestClassifyNoStaleDriftWhenIdle(t *testing.T) {
+	// Amending a goal with nothing in-flight is not drift.
+	events := newSeq(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "x", IdempotencyKey: "k1"}).
+		add(api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}).
+		add(api.GoalAmended, api.GoalAmendedPayload{GoalID: "g1", Guidance: "more detail"}).
+		events
+	if f := find(t, Classify(events), StaleSpecDrift); f.Count != 0 {
+		t.Fatalf("no in-flight work at amend time → 0 drift, got %+v", f)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -474,6 +475,50 @@ func TestCrashLoopGivesUpEarly(t *testing.T) {
 	}
 	if !strings.Contains(failReason, "crash loop") {
 		t.Errorf("terminal reason = %q, want it to mention a crash loop", failReason)
+	}
+}
+
+// recordBackend captures the Task.Goal text each Run sees, then delegates.
+type recordBackend struct {
+	inner agent.Backend
+	mu    sync.Mutex
+	goals []string
+}
+
+func (r *recordBackend) Name() string { return "record" }
+func (r *recordBackend) Run(ctx context.Context, task agent.Task) (agent.Result, error) {
+	r.mu.Lock()
+	r.goals = append(r.goals, task.Goal)
+	r.mu.Unlock()
+	return r.inner.Run(ctx, task)
+}
+func (r *recordBackend) seen() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.goals...)
+}
+
+func TestGoalAmendmentReachesNextDispatch(t *testing.T) {
+	gate := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	rec := &recordBackend{inner: agent.NewMock()}
+	o, h := setup(t, rec, gate, Options{Concurrency: 1})
+	h.submitGoal(t, "g1", "build a parser")
+
+	// Amend before the run: the dispatch should carry the amended context.
+	h.appendAt(t, time.Now(), api.GoalAmended, api.GoalAmendedPayload{GoalID: "g1", Guidance: "ALSO_HANDLE_COMMENTS"})
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	seen := rec.seen()
+	if len(seen) == 0 {
+		t.Fatal("backend was never dispatched")
+	}
+	for _, g := range seen {
+		if !strings.Contains(g, "build a parser") || !strings.Contains(g, "ALSO_HANDLE_COMMENTS") {
+			t.Errorf("dispatched goal text = %q, want it to include the original + the amendment", g)
+		}
 	}
 }
 

@@ -5,6 +5,7 @@ package state
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
@@ -34,8 +35,26 @@ func (s TicketStatus) IsTerminal() bool {
 type Goal struct {
 	ID             string
 	Text           string
-	TokensSpent    int  // LLM tokens charged to this Goal's tickets (spend governor)
-	BudgetExceeded bool // the per-Goal token budget tripped; no more work is dispatched
+	Amendments     []string // steering guidance appended mid-run (GoalAmended)
+	TokensSpent    int      // LLM tokens charged to this Goal's tickets (spend governor)
+	BudgetExceeded bool     // the per-Goal token budget tripped; no more work is dispatched
+}
+
+// EffectiveText is the Goal's text plus any mid-run amendments, as handed to a
+// worker for context. Amendments steer future dispatches without rewriting the
+// original objective.
+func (g *Goal) EffectiveText() string {
+	if len(g.Amendments) == 0 {
+		return g.Text
+	}
+	var b strings.Builder
+	b.WriteString(g.Text)
+	b.WriteString("\n\nAmendments (most recent guidance):")
+	for _, a := range g.Amendments {
+		b.WriteString("\n- ")
+		b.WriteString(a)
+	}
+	return b.String()
 }
 
 // Ticket is a unit of work in the task graph.
@@ -289,6 +308,15 @@ func (s *State) Apply(e api.Event) error {
 		}
 		if g := s.Goals[p.GoalID]; g != nil {
 			g.BudgetExceeded = true
+		}
+
+	case api.GoalAmended:
+		var p api.GoalAmendedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if g := s.Goals[p.GoalID]; g != nil && p.Guidance != "" {
+			g.Amendments = append(g.Amendments, p.Guidance)
 		}
 
 	case api.RegressionEscaped:

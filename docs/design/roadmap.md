@@ -209,7 +209,9 @@ are met.
       still clean up) and `aoa status` shows a "needs human" section with the reason + `cd <worktree>`.
 
 **P2 — steering, observability, positioning**
-- [ ] **#11** Mid-run goal amendment (`GoalAmended` event).
+- [x] **#11** Mid-run goal amendment (`GoalAmended` event) — `aoa amend <goal> "..."` appends guidance to
+      the goal's effective text for future dispatches/retries (never preempts a running worker); adds the
+      `stale_spec_drift` diagnose mode deferred from #14.
 - [ ] **#12** Live `aoa status` view; fold the duplicate `feed`/`events` dump.
 - [ ] **#13** Instrument the merge queue (depth + wait) + batch non-conflicting (disjoint-file) proposals.
 - [x] **#14** Instrument the deterministic-orchestration failure taxonomy (extend `diagnose`):

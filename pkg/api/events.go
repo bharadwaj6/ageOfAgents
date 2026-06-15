@@ -59,6 +59,10 @@ const (
 	// failed on it — a verification blind spot. Observational (the merge stands);
 	// it feeds the regression-escape-rate metric.
 	RegressionEscaped EventType = "RegressionEscaped"
+	// GoalAmended: a human appended steering guidance to a Goal mid-run. Future
+	// dispatches (and retries) carry the amended context; running workers are not
+	// preempted. Feeds the stale_spec_drift diagnose signal.
+	GoalAmended EventType = "GoalAmended"
 )
 
 // Event is the append-only log envelope. Seq is assigned by the ledger on
@@ -248,6 +252,13 @@ type GoalBudgetExceededPayload struct {
 	GoalID      string `json:"goal_id"`
 	SpentTokens int    `json:"spent_tokens"`
 	Limit       int    `json:"limit"`
+}
+
+// GoalAmendedPayload accompanies [GoalAmended]. Guidance is steering text
+// appended to the Goal's effective context for subsequent dispatches.
+type GoalAmendedPayload struct {
+	GoalID   string `json:"goal_id"`
+	Guidance string `json:"guidance"`
 }
 
 // RegressionEscapedPayload accompanies [RegressionEscaped]. Reason is what the
