@@ -745,7 +745,7 @@ func sortedGoals(s *state.State) []*state.Goal {
 
 func goalText(s *state.State, t *state.Ticket) string {
 	if g := s.Goals[t.GoalID]; g != nil {
-		return g.Text
+		return g.EffectiveText() // includes any mid-run amendments (GoalAmended)
 	}
 	return ""
 }

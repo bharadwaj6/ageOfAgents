@@ -1,6 +1,7 @@
 package state
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
@@ -298,5 +299,31 @@ func TestGoalBudgetExceededSetsFlag(t *testing.T) {
 		fold()
 	if !s.Goals["g1"].BudgetExceeded {
 		t.Error("BudgetExceeded should be true after a GoalBudgetExceeded event")
+	}
+}
+
+func TestGoalAmendmentAppendsToEffectiveText(t *testing.T) {
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build a parser"}).
+		add(api.GoalAmended, api.GoalAmendedPayload{GoalID: "g1", Guidance: "also handle comments"}).
+		add(api.GoalAmended, api.GoalAmendedPayload{GoalID: "g1", Guidance: "use the stdlib scanner"}).
+		fold()
+
+	g := s.Goals["g1"]
+	if g == nil {
+		t.Fatal("goal g1 missing")
+	}
+	if len(g.Amendments) != 2 {
+		t.Fatalf("Amendments = %v, want 2", g.Amendments)
+	}
+	eff := g.EffectiveText()
+	for _, want := range []string{"build a parser", "also handle comments", "use the stdlib scanner"} {
+		if !strings.Contains(eff, want) {
+			t.Errorf("EffectiveText() = %q, missing %q", eff, want)
+		}
+	}
+	// An un-amended goal returns its text verbatim.
+	if (&Goal{Text: "plain"}).EffectiveText() != "plain" {
+		t.Error("un-amended goal should return its text unchanged")
 	}
 }

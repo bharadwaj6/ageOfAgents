@@ -68,6 +68,9 @@ const (
 	// set rejected it — the regression-escape signal (#8). The dangerous one: the
 	// Gate was green but insufficient.
 	VerificationBlindSpot Mode = "verification_blind_spot"
+	// StaleSpecDrift: a worker was in-flight (running) when its Goal was amended,
+	// so it proceeded against a now-superseded spec (mid-run goal amendment, #11).
+	StaleSpecDrift Mode = "stale_spec_drift"
 )
 
 // modeOrder fixes the histogram's row order so output is deterministic.
@@ -82,6 +85,7 @@ var modeOrder = []Mode{
 	SchedulerDeadlock,
 	RetryLivelock,
 	VerificationBlindSpot,
+	StaleSpecDrift,
 }
 
 // modeDetail is the human-readable description shown beside each mode.
@@ -96,6 +100,7 @@ var modeDetail = map[Mode]string{
 	SchedulerDeadlock:     "non-terminal work stuck mid-pipeline at end of run, no dead dependency",
 	RetryLivelock:         "ticket hit the crash-loop ceiling (same failure repeated until giving up)",
 	VerificationBlindSpot: "merge passed the Gate but a broader shadow test set rejected it",
+	StaleSpecDrift:        "worker was running when its Goal was amended (proceeding against a stale spec)",
 }
 
 // crashLoopPrefix marks a TicketFailed reason the crash-loop governor emitted.
@@ -147,13 +152,32 @@ func Classify(events []api.Event) Report {
 		retryEvents    int
 		blindSpot      []string              // tickets that escaped a broader verifier (#8)
 		failReason     = map[string]string{} // ticket id -> latest TicketFailed reason
+		goalOf         = map[string]string{} // ticket id -> goal id
+		running        = map[string]bool{}   // tickets currently in-flight (WorkStarted, not yet terminal)
+		driftSet       = map[string]bool{}   // tickets running when their Goal was amended (#11)
 	)
 	for _, e := range events {
 		switch e.Type {
 		case api.TicketCreated:
 			var p api.TicketCreatedPayload
-			if e.DecodePayload(&p) == nil && p.IdempotencyKey != "" {
-				keyOf[p.TicketID] = p.IdempotencyKey
+			if e.DecodePayload(&p) == nil {
+				if p.IdempotencyKey != "" {
+					keyOf[p.TicketID] = p.IdempotencyKey
+				}
+				goalOf[p.TicketID] = p.GoalID
+			}
+		case api.WorkStarted:
+			running[e.TicketID()] = true
+		case api.GoalAmended:
+			// Any worker in-flight for this goal is now building against a stale
+			// spec — the amendment supersedes what it was told.
+			var p api.GoalAmendedPayload
+			if e.DecodePayload(&p) == nil {
+				for tid := range running {
+					if goalOf[tid] == p.GoalID {
+						driftSet[tid] = true
+					}
+				}
 			}
 		case api.VerificationPassed:
 			var p api.VerificationPassedPayload
@@ -165,11 +189,15 @@ func Classify(events []api.Event) Report {
 			if e.DecodePayload(&p) == nil {
 				verifFailed[p.TicketID]++
 				retryEvents++
+				delete(running, p.TicketID)
 			}
+		case api.ProposalSubmitted:
+			delete(running, e.TicketID()) // work submitted; no longer in-flight
 		case api.Merged:
 			var p api.MergedPayload
 			if e.DecodePayload(&p) == nil {
 				mergeByTicket[p.TicketID]++
+				delete(running, p.TicketID)
 				if !verified[p.TicketID] {
 					missingVerif[p.TicketID] = true
 				}
@@ -186,7 +214,10 @@ func Classify(events []api.Event) Report {
 			var p api.TicketFailedPayload
 			if e.DecodePayload(&p) == nil {
 				failReason[p.TicketID] = p.Reason
+				delete(running, p.TicketID)
 			}
+		case api.WorkerRestarted, api.TicketDecomposed:
+			delete(running, e.TicketID()) // attempt ended; no longer in-flight
 		case api.RegressionEscaped:
 			var p api.RegressionEscapedPayload
 			if e.DecodePayload(&p) == nil {
@@ -267,6 +298,7 @@ func Classify(events []api.Event) Report {
 		SchedulerDeadlock:     len(deadlocked),
 		RetryLivelock:         len(livelock),
 		VerificationBlindSpot: len(blindSpot),
+		StaleSpecDrift:        len(driftSet),
 	}
 	tickets := map[Mode][]string{
 		StepRepetition:        slices.Collect(maps.Keys(stepRep)),
@@ -279,6 +311,7 @@ func Classify(events []api.Event) Report {
 		SchedulerDeadlock:     deadlocked,
 		RetryLivelock:         livelock,
 		VerificationBlindSpot: blindSpot,
+		StaleSpecDrift:        slices.Collect(maps.Keys(driftSet)),
 	}
 
 	out := Report{Findings: make([]Finding, 0, len(modeOrder))}

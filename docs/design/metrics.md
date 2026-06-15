@@ -111,9 +111,7 @@ are **measured, not assumed**. All are **0** on a healthy, settled run.
 | **scheduler_deadlock** | non-terminal work stuck mid-pipeline (pending/claimed/running/proposed) at end of run, with no dead dependency | the orchestrator's "made no progress but work is unsettled" condition, attributed to specific tickets |
 | **retry_livelock** | a ticket terminated by the crash-loop governor (`TicketFailed` reason begins `crash loop:`) | the same failure repeated until the governor gave up — distinct from `retry_churn`, which counts *all* rejections |
 | **verification_blind_spot** | a `RegressionEscaped` event — a merge the Gate accepted but the broader Shadow set rejected | the dangerous one (see above): the Gate was green but insufficient |
-
-`stale_spec_drift` (work proceeding against a superseded Goal) joins this table once mid-run Goal
-amendment lands the `GoalAmended` event it keys on.
+| **stale_spec_drift** | a worker was in-flight (running) when its Goal was amended (`GoalAmended`) | the worker is proceeding against a now-superseded spec; mid-run amendment steers *future* dispatches but does not preempt a running one |
 
 ## What we explicitly do NOT measure
 
