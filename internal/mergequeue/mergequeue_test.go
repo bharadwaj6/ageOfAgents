@@ -140,6 +140,47 @@ func TestDryRunReportsUnverifiedWhenGateFails(t *testing.T) {
 	}
 }
 
+func TestProcessRecordsRegressionEscape(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
+
+	// Gate passes; the broader Shadow set fails. The merge is kept (the Gate is
+	// the contract), but flagged as a regression the Gate's blind spot let through.
+	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
+	q.Shadow = verify.Verifier{Commands: []verify.Command{{"false"}}}
+	out, err := q.Process(ctx, p)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if !out.Merged {
+		t.Fatalf("Gate passed, expected merge, got %+v", out)
+	}
+	if !out.RegressionEscaped {
+		t.Error("Shadow failed but RegressionEscaped was not set")
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "feature.txt")); err != nil {
+		t.Errorf("merge must be kept despite the shadow failure: %v", err)
+	}
+}
+
+func TestProcessNoEscapeWhenShadowPasses(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
+
+	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
+	q.Shadow = verify.Verifier{Commands: []verify.Command{{"true"}}}
+	out, _ := q.Process(ctx, p)
+	if !out.Merged || out.RegressionEscaped {
+		t.Fatalf("shadow passes → merged with no escape; got %+v", out)
+	}
+}
+
 func TestProcessRejectsOnMergeConflict(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()

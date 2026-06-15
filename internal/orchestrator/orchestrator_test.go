@@ -12,6 +12,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/internal/mergequeue"
+	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/internal/verify"
 	"github.com/bharadwaj6/ageOfAgents/internal/worktree"
@@ -460,5 +461,49 @@ func TestCrashLoopGivesUpEarly(t *testing.T) {
 	}
 	if !strings.Contains(failReason, "crash loop") {
 		t.Errorf("terminal reason = %q, want it to mention a crash loop", failReason)
+	}
+}
+
+func TestRegressionEscapeOnCoupledMultiFileChange(t *testing.T) {
+	// A deliberately-coupled change: ticket A introduces a new API in api.go;
+	// ticket B (textually disjoint, in caller.go, depending on A) uses the OLD
+	// API. The two merge cleanly — no textual conflict — and the narrow Gate
+	// (`true`) accepts both, but a broader Shadow set catches the stale usage.
+	// This is the verification blind spot the regression-escape rate measures.
+	mock := &agent.Mock{
+		Decompose: map[string][]agent.Subtask{
+			"Implement: coupled goal": {
+				{LocalID: "a", Title: "write api", IdempotencyKey: "g1:a"},
+				{LocalID: "b", Title: "call api", DependsOn: []string{"a"}, IdempotencyKey: "g1:b"},
+			},
+		},
+		Plan: map[string][]agent.File{
+			"write api": {{Path: "api.go", Content: "// API v2\n"}},
+			"call api":  {{Path: "caller.go", Content: "// USES_OLD_API\n"}},
+		},
+	}
+	narrowGate := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	o, h := setup(t, mock, narrowGate, Options{Concurrency: 2})
+	// Broader set: fail if any tracked file still uses the old API.
+	o.mq.Shadow = verify.Verifier{Commands: []verify.Command{
+		{"sh", "-c", "! grep -rqF --exclude-dir=.git USES_OLD_API ."},
+	}}
+	h.submitGoal(t, "g1", "coupled goal")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Both children merged cleanly under the narrow Gate (no textual conflict).
+	for _, id := range []string{"g1-impl/a", "g1-impl/b"} {
+		if tk := h.state(t).Tickets[id]; tk == nil || tk.Status != state.StatusMerged {
+			t.Fatalf("%s status = %v, want merged", id, tk)
+		}
+	}
+	// But the broader Shadow set caught the stale-API regression the Gate missed.
+	events, _ := h.led.Read()
+	m := metrics.Compute(events)
+	if m.RegressionEscapes < 1 || m.RegressionEscapeRate == 0 {
+		t.Errorf("expected a regression escape; got escapes=%d rate=%v", m.RegressionEscapes, m.RegressionEscapeRate)
 	}
 }

@@ -268,3 +268,31 @@ func TestComputeCostBreakdown(t *testing.T) {
 		t.Errorf("USD(unpriced) = %v, want 0", c)
 	}
 }
+
+func TestComputeRegressionEscapeRate(t *testing.T) {
+	// Two merges; the broader Shadow set flagged the second as an escape.
+	merge := func(s *stream, id string) *stream {
+		return s.
+			add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: id, GoalID: "g1", Title: id, IdempotencyKey: "g1:" + id}).
+			add(api.TicketReady, "orchestrator", api.TicketReadyPayload{TicketID: id}).
+			add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: id, Worker: "w"}).
+			add(api.WorkStarted, "orchestrator", api.WorkStartedPayload{TicketID: id, Worker: "w"}).
+			add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: id, Commit: id}).
+			add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: id}).
+			add(api.Merged, "orchestrator", api.MergedPayload{TicketID: id, Commit: id})
+	}
+	s := newStream(t).add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "x"})
+	merge(s, "a")
+	merge(s, "b").add(api.RegressionEscaped, "orchestrator", api.RegressionEscapedPayload{TicketID: "b", Reason: "broader suite failed"})
+
+	m := Compute(s.events)
+	if m.Merged != 2 {
+		t.Fatalf("Merged = %d, want 2", m.Merged)
+	}
+	if m.RegressionEscapes != 1 {
+		t.Errorf("RegressionEscapes = %d, want 1", m.RegressionEscapes)
+	}
+	if m.RegressionEscapeRate != 0.5 {
+		t.Errorf("RegressionEscapeRate = %v, want 0.5 (1 of 2 merges)", m.RegressionEscapeRate)
+	}
+}

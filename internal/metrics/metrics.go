@@ -26,6 +26,8 @@ type Metrics struct {
 	TokensTotal          int            `json:"tokens_total"`           // LLM tokens across all work (0 for the mock backend)
 	MergeCorrectness     float64        `json:"merge_correctness"`      // fraction of merges that passed the Gate first
 	RejectedProposalRate float64        `json:"rejected_proposal_rate"` // rejected / (rejected + merged)
+	RegressionEscapes    int            `json:"regression_escapes"`     // merges that passed the Gate but failed a broader Shadow set
+	RegressionEscapeRate float64        `json:"regression_escape_rate"` // RegressionEscapes / merges (the Gate's blind spot)
 	StepRepetitions      int            `json:"step_repetitions"`       // merged tickets sharing an idempotency key
 	MeanAttemptsToMerge  float64        `json:"mean_attempts_to_merge"`
 	MaxConcurrentWorkers int            `json:"max_concurrent_workers"` // parallelism actually achieved
@@ -94,6 +96,7 @@ func Compute(events []api.Event) Metrics {
 	// Walk the stream once for the event-shaped metrics.
 	var (
 		merges, mergesVerified, rejected int
+		regressionEscapes                int
 		propSeq                          = map[string]int{}
 		passSeq                          = map[string]int{}
 		active                           = map[string]bool{}
@@ -178,6 +181,8 @@ func Compute(events []api.Event) Metrics {
 					m.StepRepetitions++
 				}
 			}
+		case api.RegressionEscaped:
+			regressionEscapes++
 		}
 	}
 
@@ -188,6 +193,10 @@ func Compute(events []api.Event) Metrics {
 	}
 	if denom := rejected + merges; denom > 0 {
 		m.RejectedProposalRate = float64(rejected) / float64(denom)
+	}
+	m.RegressionEscapes = regressionEscapes
+	if merges > 0 {
+		m.RegressionEscapeRate = float64(regressionEscapes) / float64(merges)
 	}
 
 	for _, t := range s.Tickets {

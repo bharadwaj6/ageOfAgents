@@ -29,6 +29,11 @@ type Config struct {
 	ConventionsFile string `toml:"conventions_file"`
 	// Verify is the ordered Gate: each entry is an argv.
 	Verify [][]string `toml:"verify"`
+	// RegressionVerify is an optional broader test set run against post-merge main
+	// after a proposal passes the Gate. It never blocks a merge; it measures the
+	// regression-escape rate — how often the Gate's blind spot lets a regression
+	// through (see docs/design/metrics.md). Empty = off.
+	RegressionVerify [][]string `toml:"regression_verify"`
 	// RequireApproval parks every Gate-verified proposal for a human decision
 	// (aoa approve / aoa reject) before it merges to main (ADR 008). Default off.
 	RequireApproval bool `toml:"require_approval"`

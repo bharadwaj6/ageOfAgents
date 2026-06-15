@@ -193,13 +193,14 @@ are met.
 - [ ] **#4** Run SWE-bench Lite at scale — reproducible (pinned models + image digests), pass@1 / pass@k,
       cost-per-solve, tokens-per-solve, MAST histogram → README. *The whole ballgame.*
 
-**P1 — cost & safety (real-money table stakes)**
-- [ ] **#5** Spend governor: per-goal token/$ ceiling + circuit breaker (the $100/hr failure mode).
-- [ ] **#6** Retry backoff + crash-loop detection (flaky vs. fundamentally broken).
-- [ ] **#7** Cost & latency as first-class metrics (per-ticket breakdown). *Unblocks the cost columns in #4.*
+**P1 — cost & safety (real-money table stakes)** — *done (PRs #20, #23, #22)*
+- [x] **#5** Spend governor: per-goal token/$ ceiling + circuit breaker (the $100/hr failure mode).
+- [x] **#6** Retry backoff + crash-loop detection (flaky vs. fundamentally broken).
+- [x] **#7** Cost & latency as first-class metrics (per-ticket breakdown). *Unblocks the cost columns in #4.*
 
 **P1 — the verification ceiling (the honest gap)**
-- [ ] **#8** Measure the verification blind spot — regression-escape rate + coupled multi-file conflict test.
+- [x] **#8** Measure the verification blind spot — regression-escape rate (Merge Queue `Shadow` set +
+      `RegressionEscaped` event + `regression_escape_rate` metric) + a coupled multi-file conflict test.
 
 **P1 — adoption ergonomics**
 - [ ] **#9** `aoa init --adopt` an existing repo/branch + Gate auto-detect (adopt-my-repo in <5 min).
