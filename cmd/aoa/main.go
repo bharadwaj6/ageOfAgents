@@ -84,9 +84,9 @@ Usage:
   aoa goal   [--path DIR] "objective"     Submit a goal
   aoa amend  [--path DIR] <goal-id> "..."  Append steering guidance to a goal mid-run
   aoa run    [--path DIR] [--once]        Run the reconciler (loop by default)
-  aoa status [--path DIR]                 Show goals and tickets
-  aoa feed   [--path DIR] [--type T]      Print the event stream
-  aoa events [--path DIR] tail [--count N] | replay
+  aoa status [--path DIR] [--watch]       Show goals and tickets (--watch to live-refresh)
+  aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
+  aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
   aoa eval   --tasks F [--backend B]      Run end-to-end tasks on real repos (mock|claudecode|grok)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
@@ -333,12 +333,15 @@ func cmdRun(args []string) error {
 		return err
 	}
 	cfg, _ := config.Load(ws.configPath)
-	return printStatus(led, cfg.Pricing)
+	_, err = printStatus(led, cfg.Pricing)
+	return err
 }
 
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	path := fs.String("path", ".", "workspace root")
+	watch := fs.Bool("watch", false, "re-render until all work settles (poll the Event Log)")
+	interval := fs.Duration("interval", 2*time.Second, "refresh interval for --watch")
 	_ = fs.Parse(args)
 	ws, err := workspaceAt(*path)
 	if err != nil {
@@ -349,39 +352,40 @@ func cmdStatus(args []string) error {
 		return err
 	}
 	cfg, _ := config.Load(ws.configPath)
-	return printStatus(led, cfg.Pricing)
+
+	if !*watch {
+		_, err = printStatus(led, cfg.Pricing)
+		return err
+	}
+	// Watch mode: clear + re-render each interval until settled. No daemon — just
+	// a poll loop the user can Ctrl-C out of.
+	for {
+		fmt.Print("\033[H\033[2J") // clear screen, cursor home
+		fmt.Printf("aoa status — %s  (Ctrl-C to stop)\n\n", time.Now().Format("15:04:05"))
+		settled, err := printStatus(led, cfg.Pricing)
+		if err != nil {
+			return err
+		}
+		if settled {
+			return nil
+		}
+		time.Sleep(*interval)
+	}
 }
 
+// cmdFeed is a deprecated alias for `aoa events tail`. Kept so existing scripts
+// don't break; it prints the whole stream (the old behavior) and points at the
+// canonical command.
 func cmdFeed(args []string) error {
-	fs := flag.NewFlagSet("feed", flag.ExitOnError)
-	path := fs.String("path", ".", "workspace root")
-	typ := fs.String("type", "", "filter by event type")
-	_ = fs.Parse(args)
-	ws, err := workspaceAt(*path)
-	if err != nil {
-		return err
-	}
-	led, err := ledger.Open(ws.ledgerPath)
-	if err != nil {
-		return err
-	}
-	events, err := led.Read()
-	if err != nil {
-		return err
-	}
-	for _, e := range events {
-		if *typ != "" && string(e.Type) != *typ {
-			continue
-		}
-		fmt.Println(formatEvent(e))
-	}
-	return nil
+	fmt.Fprintln(os.Stderr, "note: `aoa feed` is deprecated — use `aoa events tail [--type T]`")
+	return cmdEvents(append([]string{"tail", "--count", "0"}, args...))
 }
 
 func cmdEvents(args []string) error {
 	fs := flag.NewFlagSet("events", flag.ExitOnError)
 	path := fs.String("path", ".", "workspace root")
-	count := fs.Int("count", 20, "number of events for tail")
+	count := fs.Int("count", 20, "number of events for tail (0 = all)")
+	typ := fs.String("type", "", "filter by event type")
 	_ = fs.Parse(args)
 
 	sub := "tail"
@@ -402,21 +406,42 @@ func cmdEvents(args []string) error {
 	}
 	switch sub {
 	case "tail":
-		start := 0
-		if len(events) > *count {
-			start = len(events) - *count
-		}
-		for _, e := range events[start:] {
-			fmt.Println(formatEvent(e))
-		}
+		renderEvents(filterEvents(events, *typ), *count, false)
 	case "replay":
-		for _, e := range events {
-			fmt.Printf("%s  %s\n", formatEvent(e), string(e.Payload))
-		}
+		renderEvents(filterEvents(events, *typ), 0, true)
 	default:
 		return fmt.Errorf("unknown events subcommand %q (want tail|replay)", sub)
 	}
 	return nil
+}
+
+// filterEvents keeps only events of the given type ("" = all).
+func filterEvents(events []api.Event, typ string) []api.Event {
+	if typ == "" {
+		return events
+	}
+	out := make([]api.Event, 0, len(events))
+	for _, e := range events {
+		if string(e.Type) == typ {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// renderEvents prints events; count>0 keeps only the last count (a tail),
+// withPayload appends the raw JSON payload (replay).
+func renderEvents(events []api.Event, count int, withPayload bool) {
+	if count > 0 && len(events) > count {
+		events = events[len(events)-count:]
+	}
+	for _, e := range events {
+		if withPayload {
+			fmt.Printf("%s  %s\n", formatEvent(e), string(e.Payload))
+		} else {
+			fmt.Println(formatEvent(e))
+		}
+	}
 }
 
 func cmdBench(args []string) error {
@@ -704,18 +729,20 @@ func buildBackend(name string) (agent.Backend, error) {
 
 // --- presentation ---------------------------------------------------------
 
-func printStatus(led *ledger.Ledger, pricing map[string]float64) error {
+// printStatus renders the run's live state and reports whether all work has
+// settled (the signal --watch uses to stop polling).
+func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, err error) {
 	events, err := led.Read()
 	if err != nil {
-		return err
+		return false, err
 	}
 	s, err := state.Fold(events)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(s.Goals) == 0 {
 		fmt.Println("no goals submitted")
-		return nil
+		return true, nil
 	}
 
 	m := metrics.Compute(events)
@@ -775,10 +802,11 @@ func printStatus(led *ledger.Ledger, pricing map[string]float64) error {
 		fmt.Printf("  cost=$%.4f", cost)
 	}
 	fmt.Println()
-	if s.Settled() {
+	settled = s.Settled()
+	if settled {
 		fmt.Println("all work settled")
 	}
-	return nil
+	return settled, nil
 }
 
 func formatEvent(e api.Event) string {
