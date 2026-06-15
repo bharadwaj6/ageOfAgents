@@ -1,8 +1,44 @@
 # Age of Agents
 
-**Age of Agents** (`aoa`) coordinates a fleet of AI coding agents working on your codebase — safely and deterministically, with near-zero coordination overhead and nothing merged unless your build and tests pass.
+**Age of Agents** (`aoa`) is **not a multi-agent framework. It's a deterministic build system whose
+compile step happens to be a stochastic LLM** — Bors for AI agents.
 
-You give it a **Goal** (what you want built). It breaks that Goal into **Tasks**, dispatches each Task to a **Worker** (an AI agent in an isolated git checkout), and merges the results into `main` — but only if your build and tests pass. One binary, one config file, git only.
+Scheduling, state, merge, and done-ness are plain, deterministic Go gated on objective signals (your
+build, your tests, the compiler). The LLM only ever emits a *candidate diff*; whether it lands is decided
+by your Gate, not by the agent. That inverts the usual bet: where most agent frameworks chase orchestration
+cleverness — which better models erode — `aoa`'s bet is that **verification, not intelligence, is the
+scaling constraint**. Better models only sharpen the worker; the control plane is unchanged.
+
+You give it a **Goal**. It breaks that into **Tasks**, dispatches each to a **Worker** (an agent in an
+isolated git worktree — i.e. a worker process that emits a candidate diff), and merges results into `main`
+**only if your build and tests pass**. One binary, one config file, git only — no database, no broker, no
+LLM coordinator.
+
+## Why this is different — the receipts
+
+This isn't a gentler org chart (no Mayor/Witness/Deacon, no role hierarchy, no agents chatting). It's the
+boring distributed-systems core, with proofs attached:
+
+- **The Event Log is the single source of truth** — an append-only JSONL ledger; all state is derived by
+  replay, so crash recovery, audit, and every metric come for free (ADR 001).
+- **A verifier-gated, serializing merge queue** keeps `main` linearizable and always green: merge → run
+  the Gate on the *post-merge* state → keep it only if it passes, else roll back (ADR 002).
+- **One deterministic Scheduler**, not eleven — no LLM in the control plane; coordination is plain Go via
+  the shared log (ADR 003).
+- **Proven, not asserted:** a hermetic Jepsen-style invariant harness with seeded fault injection, plus a
+  TLA+ model of the merge/approval invariants. The whole test suite is offline (the `mock` Backend never
+  touches the network).
+- **Honest about its own ceiling:** because the system is only as good as its Gate, it *measures* the
+  blind spot — a [regression-escape rate](docs/design/metrics.md) (merges the Gate accepted but a broader
+  shadow test set would reject) and a per-run **MAST** failure-mode histogram (`aoa diagnose`).
+- **Cost-aware and bounded:** token/`$` accounting per ticket and per goal, a per-goal **spend governor**
+  (circuit breaker), and retry **backoff + crash-loop** detection so a runaway loop can't burn your budget.
+- **Adoptable and recoverable:** point it at your own repo on any branch (`aoa init --adopt`); on a
+  terminal failure it preserves the agent's worktree and hands it back to you (`aoa status`).
+
+> **SWE-bench Lite:** the headline solve-rate / cost-per-solve number goes here once the at-scale run lands
+> (the harness is ready; see [`docs/design/live_eval.md`](docs/design/live_eval.md)). Until then, every
+> number in this repo comes from the hermetic `mock` backend and is labeled as such.
 
 ## Core Concepts
 
@@ -42,10 +78,15 @@ go build -o aoa ./cmd/aoa
 ### 2. Create a workspace
 
 ```bash
-./aoa init --path ./workspace --repo ./demo
+./aoa init --path ./workspace --repo ./demo      # scaffold a demo repo to try it out
+# — or — adopt your own repo (on whatever branch it's on), Gate auto-detected:
+./aoa init --path . --adopt /path/to/my-repo
 ```
 
-This creates a workspace with an `aoa.toml` config, an Event Log, and a `demo/` git repo for your agents to work on.
+`--repo` scaffolds a throwaway demo; `--adopt` points `aoa` at an existing repository as-is (no files
+written into your tree) and sniffs a starting Gate from the project (`go.mod` → `go build`/`go test`,
+`package.json` → `npm test`, Python → `pytest`, `Makefile` → `make test`). Either way you get an
+`aoa.toml` config and an Event Log under `.aoa/`.
 
 ### 3. Submit a Goal
 
@@ -81,29 +122,40 @@ Then run `./aoa run` again. The Scheduler will dispatch Tasks to a real coding a
 ## Configuration (`aoa.toml`)
 
 ```toml
-repo             = "./demo"          # git repository for agents to work on
-backend          = "mock"            # "mock" (offline) | "claudecode" (real agent)
-concurrency      = 4                 # max Workers running at once
-max_attempts     = 2                 # retries before a Task fails
-conventions_file = "CONVENTIONS.md"  # coding rules injected into every agent prompt
-require_approval = false             # if true, park each verified proposal for `aoa approve`
-verify = [                           # the Gate — nothing merges unless this passes
+repo                = "./demo"          # git repository for agents to work on
+backend             = "mock"            # "mock" (offline) | "claudecode" | "grok"
+concurrency         = 4                 # max Workers running at once
+max_attempts        = 2                 # retries before a Task fails
+conventions_file    = "CONVENTIONS.md"  # coding rules injected into every agent prompt
+require_approval     = false            # if true, park each verified proposal for `aoa approve`
+max_tokens_per_goal = 0                 # spend governor: per-goal token ceiling (0 = unlimited)
+retry_backoff       = "0s"              # wait before re-dispatching a failed Task (grows per attempt)
+crash_loop_threshold = 3                # give up after N identical failures, even under max_attempts
+verify = [                              # the Gate — nothing merges unless this passes
   ["go", "build", "./..."],
   ["go", "test", "./..."],
 ]
+regression_verify = []                  # optional broader set; measures the regression-escape rate
+                                        # (never blocks a merge — see docs/design/metrics.md)
+
+[pricing]                               # optional: $ per *million* tokens, by model — powers cost columns
+# claudecode = 15.0
 ```
 
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
-| `aoa init` | Create a workspace + git repo and `aoa.toml` |
+| `aoa init [--repo \| --adopt PATH]` | Scaffold a demo, or adopt your own repo (Gate auto-detected) |
 | `aoa goal "…"` | Submit a Goal |
 | `aoa run [--once]` | Run the Scheduler (loops to completion; `--once` for a single pass) |
-| `aoa status` | Show Goals and Task states |
+| `aoa status` | Goals, Task states, per-ticket tokens, run cost, and a "needs human" handoff for failures |
+| `aoa approve \| reject <ticket>` | Decide a proposal parked by the approval gate (ADR 008) |
 | `aoa feed [--type T]` | Print the event stream |
 | `aoa events tail [--count N] \| replay` | Inspect the Event Log |
 | `aoa diagnose [--json]` | MAST-style failure-mode histogram for a run |
+| `aoa eval --tasks T [--price N]` | Run end-to-end eval tasks; reports success, tokens, `$`, MAST |
+| `aoa bench [--json]` | The hermetic coordination benchmark |
 
 ## Project Layout
 
