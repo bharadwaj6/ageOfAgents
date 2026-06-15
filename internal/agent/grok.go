@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -69,6 +71,9 @@ func (g *Grok) Run(ctx context.Context, task Task) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("grok: %w", err)
 	}
+	
+	_ = os.WriteFile(filepath.Join(task.Worktree, "grok_transcript.log"), []byte(out), 0o644)
+
 	return Result{
 		Trace:    strings.TrimSpace(out),
 		Summary:  task.Title,
