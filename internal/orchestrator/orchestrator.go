@@ -39,6 +39,7 @@ type Options struct {
 	MaxGraphDepth     int           // max emergent decomposition depth (graph governor); default 5
 	MaxTicketsPerGoal int           // max tickets a single Goal may spawn (graph governor); default 64
 	MaxFanOut         int           // max NEW children one decomposition may emit (graph governor); default 8
+	MaxTokensPerGoal  int           // per-Goal token budget; the spend governor stops a Goal past it; 0 = unlimited
 	RequireApproval   bool          // park each verified proposal for human approval before merge (ADR 008)
 	Now               func() time.Time
 }
@@ -139,6 +140,17 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 			}); err != nil {
 				return err
 			}
+		}
+	}
+
+	// 1b. Spend governor: stop Goals that have exhausted their token budget
+	// before dispatching any more work (circuit breaker).
+	if o.opt.MaxTokensPerGoal > 0 {
+		if s, err = o.loadState(); err != nil {
+			return err
+		}
+		if err := o.enforceBudgets(s); err != nil {
+			return err
 		}
 	}
 
@@ -442,6 +454,43 @@ func (o *Orchestrator) failDecompose(j dispatchJob, worker, reason string) {
 
 // childID builds a stable, hierarchical ticket ID for an emergent child.
 func childID(parentID, local string) string { return parentID + "/" + local }
+
+// enforceBudgets is the spend governor (circuit breaker). Any Goal whose tickets
+// have spent at least MaxTokensPerGoal tokens stops here: its not-yet-dispatched
+// work (Pending/Ready) is failed so no further tokens are spent, while
+// already-Proposed/Awaiting work is left to merge (its tokens are already
+// charged). The trip is recorded once via GoalBudgetExceeded. Tokens spent in a
+// pass that is already in flight may overshoot by up to one dispatch wave — the
+// breaker bounds the *next* wave, which is the right granularity for a governor.
+func (o *Orchestrator) enforceBudgets(s *state.State) error {
+	for _, g := range sortedGoals(s) {
+		if g.TokensSpent < o.opt.MaxTokensPerGoal {
+			continue
+		}
+		if !g.BudgetExceeded {
+			if err := o.emit(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{
+				GoalID: g.ID, SpentTokens: g.TokensSpent, Limit: o.opt.MaxTokensPerGoal,
+			}); err != nil {
+				return err
+			}
+		}
+		var doomed []*state.Ticket
+		for _, t := range s.Tickets {
+			if t.GoalID == g.ID && (t.Status == state.StatusPending || t.Status == state.StatusReady) {
+				doomed = append(doomed, t)
+			}
+		}
+		sort.Slice(doomed, func(i, j int) bool { return doomed[i].ID < doomed[j].ID })
+		for _, t := range doomed {
+			if err := o.emit(api.TicketFailed, api.TicketFailedPayload{
+				TicketID: t.ID, Worker: t.Worker, Reason: "goal token budget exceeded",
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 // processProposal verifies and merges a proposed ticket, or rejects it. When
 // RequireApproval is set and the ticket is not yet approved, it instead dry-runs
