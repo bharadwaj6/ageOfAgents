@@ -55,6 +55,10 @@ const (
 	// GoalBudgetExceeded: a Goal reached its per-Goal token budget; the spend
 	// governor stopped dispatching its remaining work (circuit breaker).
 	GoalBudgetExceeded EventType = "GoalBudgetExceeded"
+	// RegressionEscaped: a merge passed the Gate but a broader Shadow test set
+	// failed on it — a verification blind spot. Observational (the merge stands);
+	// it feeds the regression-escape-rate metric.
+	RegressionEscaped EventType = "RegressionEscaped"
 )
 
 // Event is the append-only log envelope. Seq is assigned by the ledger on
@@ -241,4 +245,12 @@ type GoalBudgetExceededPayload struct {
 	GoalID      string `json:"goal_id"`
 	SpentTokens int    `json:"spent_tokens"`
 	Limit       int    `json:"limit"`
+}
+
+// RegressionEscapedPayload accompanies [RegressionEscaped]. Reason is what the
+// broader Shadow test set reported on the merge the Gate accepted.
+type RegressionEscapedPayload struct {
+	TicketID string `json:"ticket_id"`
+	Worker   string `json:"worker,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }

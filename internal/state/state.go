@@ -286,6 +286,11 @@ func (s *State) Apply(e api.Event) error {
 			g.BudgetExceeded = true
 		}
 
+	case api.RegressionEscaped:
+		// Observational only: the broader Shadow set failed on a commit the Gate
+		// accepted. The merge stands; this feeds the regression-escape-rate
+		// metric. No state transition, but it must replay cleanly (total Apply).
+
 	case api.WorkerStalled:
 		// Advisory; the WorkerRestarted event performs the reset.
 

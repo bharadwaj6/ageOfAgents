@@ -33,12 +33,22 @@ type Outcome struct {
 	MergeCommit string // set when Merged, or the candidate commit for a passing DryRun
 	Reason      string // set when !Merged
 	Output      string // verifier output (when verification ran)
+	// RegressionEscaped is set when the merge passed the Gate but a broader
+	// Shadow verifier failed on the post-merge state — a verification blind spot
+	// the Gate let through. It is observational: the merge is kept (the Gate is
+	// the contract), and ShadowReason records what the broader set caught.
+	RegressionEscaped bool
+	ShadowReason      string
 }
 
 // Queue verifies and merges proposals one at a time.
 type Queue struct {
 	Repo     *worktree.Repo
 	Verifier verify.Verifier
+	// Shadow is an optional broader test set run against post-merge main after a
+	// proposal passes the Gate. It never blocks or rolls back a merge; it only
+	// measures the regression-escape rate (the Gate's blind spot). Empty = off.
+	Shadow verify.Verifier
 }
 
 // New constructs a Queue.
@@ -75,6 +85,16 @@ func (q *Queue) Process(ctx context.Context, p Proposal) (Outcome, error) {
 	out.Verified = true
 	out.Merged = true
 	out.MergeCommit = mergeSHA
+
+	// Shadow check: run the broader test set against the kept merge. A failure
+	// here is a regression the Gate missed — record it, but keep the merge (the
+	// Gate is the merge contract; the shadow only measures its blind spot).
+	if len(q.Shadow.Commands) > 0 {
+		if sres := q.Shadow.Run(ctx, q.Repo.Dir); !sres.Passed {
+			out.RegressionEscaped = true
+			out.ShadowReason = sres.Failed
+		}
+	}
 	return out, nil
 }
 

@@ -568,7 +568,9 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		RetryBackoff:       backoff,
 		CrashLoopThreshold: cfg.CrashLoopThreshold,
 	}
-	o := orchestrator.New(led, repo, backend, mergequeue.New(repo, gate), opt)
+	mq := mergequeue.New(repo, gate)
+	mq.Shadow = verify.Verifier{Commands: verify.ToCommands(cfg.RegressionVerify)}
+	o := orchestrator.New(led, repo, backend, mq, opt)
 	return o, led, nil
 }
 

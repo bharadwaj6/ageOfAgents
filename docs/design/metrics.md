@@ -76,6 +76,28 @@ Inspect it with `aoa diagnose [--json]`; the `aoa bench` table reports each stra
 On live-LLM runs (see [`roadmap.md`](roadmap.md)) this histogram is the primary instrument for
 checking whether the design's failure-mode *prevention* survives contact with a real agent.
 
+## The verification blind spot (regression-escape rate)
+
+The whole design bets that **verification, not intelligence, is the scaling constraint** — so the
+system is only ever as good as its Gate. The `MergeImpliesVerified` invariant proves the Gate *ran*;
+it says nothing about whether the Gate was *sufficient*. An agent can make the Gate green while
+silently breaking something the Gate does not cover (on SWE-bench Lite, that is the `PASS_TO_PASS`
+regression set; the merge queue also cannot catch two textually-disjoint changes that are *semantically*
+incompatible — e.g. a signature change in one file and an old-style caller in another).
+
+To make that ceiling **measured rather than assumed**, the Merge Queue takes an optional **Shadow**
+verifier — a broader test set run against post-merge `main` *after* a proposal passes the Gate. It never
+blocks or rolls back a merge (the Gate is the merge contract); a failure emits a `RegressionEscaped`
+event, and `metrics` reports:
+
+| Metric | What it measures | Why it matters |
+|---|---|---|
+| **regression_escape_rate** | `RegressionEscaped` / merges — merges the Gate accepted but the broader Shadow set rejected | The honest answer to "what new failure modes does a verification-centric architecture create"; a rising rate means the Gate is too narrow for the work. |
+
+Configure it with `regression_verify` in `aoa.toml` (or `regression` on an `aoa eval` task). It is **off
+by default** (empty ⇒ no shadow run). Where the Gate is the merge *contract*, the Shadow set is the
+*audit* — the gap between them is exactly the blind spot, now a number.
+
 ## What we explicitly do NOT measure
 
 Pheromone convergence, trust-score discrimination, and stability-horizon round counts — these belonged to

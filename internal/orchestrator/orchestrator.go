@@ -545,6 +545,13 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 		if err := o.emit(api.Merged, api.MergedPayload{TicketID: t.ID, Worker: t.Worker, Commit: out.MergeCommit}); err != nil {
 			return err
 		}
+		// The Gate accepted the merge but the broader Shadow set caught a
+		// regression: record the escape (observational; the merge stands).
+		if out.RegressionEscaped {
+			if err := o.emit(api.RegressionEscaped, api.RegressionEscapedPayload{TicketID: t.ID, Worker: t.Worker, Reason: out.ShadowReason}); err != nil {
+				return err
+			}
+		}
 		o.cleanupWorktree(ctx, t.ID)
 		return nil
 	}

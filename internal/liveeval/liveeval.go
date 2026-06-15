@@ -47,6 +47,10 @@ type Task struct {
 	// task to count as solved (e.g. the issue's reproduce test). When empty, a
 	// run counts as successful if it merged work with no invariant violations.
 	Success [][]string `toml:"success"`
+	// Regression is an optional broader test set run post-merge (the Shadow gate)
+	// to measure the regression-escape rate — merges the Gate accepted but a
+	// wider suite would reject. Reported in Metrics.RegressionEscapeRate.
+	Regression [][]string `toml:"regression"`
 }
 
 // Report is one task's outcome, derived almost entirely by replaying the log.
@@ -87,7 +91,9 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 		return rep, err
 	}
 	gate := verify.Verifier{Commands: verify.ToCommands(t.Gate)}
-	o := orchestrator.New(led, repo, backend, mergequeue.New(repo, gate), orchestrator.Options{
+	mq := mergequeue.New(repo, gate)
+	mq.Shadow = verify.Verifier{Commands: verify.ToCommands(t.Regression)}
+	o := orchestrator.New(led, repo, backend, mq, orchestrator.Options{
 		Concurrency:  4,
 		WorktreeBase: filepath.Join(baseDir, "wt"),
 	})
