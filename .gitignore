@@ -15,3 +15,8 @@ docs/design/formal/states/
 
 # OS
 .DS_Store
+
+# Evaluation artifacts
+aoa-*.json
+/logs/
+scripts/swebench_lite.json
