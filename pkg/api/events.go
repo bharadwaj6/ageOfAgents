@@ -52,6 +52,9 @@ const (
 	ApprovalGranted EventType = "ApprovalGranted"
 	// ApprovalDenied: a human rejected a parked proposal; the ticket fails.
 	ApprovalDenied EventType = "ApprovalDenied"
+	// GoalBudgetExceeded: a Goal reached its per-Goal token budget; the spend
+	// governor stopped dispatching its remaining work (circuit breaker).
+	GoalBudgetExceeded EventType = "GoalBudgetExceeded"
 )
 
 // Event is the append-only log envelope. Seq is assigned by the ledger on
@@ -230,4 +233,12 @@ type ApprovalDeniedPayload struct {
 	TicketID string `json:"ticket_id"`
 	By       string `json:"by,omitempty"`
 	Reason   string `json:"reason,omitempty"`
+}
+
+// GoalBudgetExceededPayload accompanies [GoalBudgetExceeded]. SpentTokens is the
+// Goal's cumulative token spend at the moment the budget tripped.
+type GoalBudgetExceededPayload struct {
+	GoalID      string `json:"goal_id"`
+	SpentTokens int    `json:"spent_tokens"`
+	Limit       int    `json:"limit"`
 }

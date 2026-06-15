@@ -271,3 +271,70 @@ func TestDetectStalled(t *testing.T) {
 		t.Errorf("recent activity should not be stalled, got %v", got)
 	}
 }
+
+func TestSpendGovernorStopsOverBudgetGoal(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{
+		Decompose: map[string][]agent.Subtask{
+			"Implement: budget goal": {
+				{LocalID: "a", Title: "a", IdempotencyKey: "g1:a"},
+				{LocalID: "b", Title: "b", IdempotencyKey: "g1:b"},
+			},
+		},
+		TokensPerTask: 100, // the decomposition alone charges 100, over the 50 budget
+	}
+	o, h := setup(t, mock, pass, Options{Concurrency: 2, MaxTokensPerGoal: 50})
+	h.submitGoal(t, "g1", "budget goal")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run did not converge: %v", err)
+	}
+
+	s := h.state(t)
+	g := s.Goals["g1"]
+	if !g.BudgetExceeded {
+		t.Errorf("goal BudgetExceeded = false, want true (spent %d, limit 50)", g.TokensSpent)
+	}
+	for _, id := range []string{"g1-impl/a", "g1-impl/b"} {
+		tk := s.Tickets[id]
+		if tk == nil {
+			t.Fatalf("child %s missing", id)
+		}
+		if tk.Status != state.StatusFailed {
+			t.Errorf("child %s status = %s, want failed (budget)", id, tk.Status)
+		}
+	}
+	// No child merged — the governor stopped further spend.
+	for _, tk := range s.Tickets {
+		if tk.Status == state.StatusMerged {
+			t.Errorf("ticket %s merged, but the goal was over budget", tk.ID)
+		}
+	}
+	// The trip is recorded exactly once (idempotent breaker).
+	events, _ := h.led.Read()
+	trips := 0
+	for _, e := range events {
+		if e.Type == api.GoalBudgetExceeded {
+			trips++
+		}
+	}
+	if trips != 1 {
+		t.Errorf("GoalBudgetExceeded count = %d, want 1", trips)
+	}
+}
+
+func TestSpendGovernorOffByDefaultMergesGoal(t *testing.T) {
+	// With MaxTokensPerGoal=0 the governor is inert: the goal completes normally
+	// even though its work charges tokens.
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{TokensPerTask: 10_000}
+	o, h := setup(t, mock, pass, Options{Concurrency: 2})
+	h.submitGoal(t, "g1", "unbudgeted")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if tk := h.state(t).Tickets["g1-impl"]; tk == nil || tk.Status != state.StatusMerged {
+		t.Fatalf("g1-impl status = %v, want merged", tk)
+	}
+}

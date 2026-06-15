@@ -266,3 +266,37 @@ func ids(ts []*Ticket) []string {
 	}
 	return out
 }
+
+func TestGoalTokensSpentAccumulates(t *testing.T) {
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "root", GoalID: "g1", Title: "root", IdempotencyKey: "g1:root"}).
+		add(api.TicketDecomposed, api.TicketDecomposedPayload{TicketID: "root", Children: []string{"c"}, Tokens: 250}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "c", GoalID: "g1", Title: "child", IdempotencyKey: "g1:c"}).
+		add(api.TicketReady, api.TicketReadyPayload{TicketID: "c"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "c", Worker: "w"}).
+		add(api.WorkStarted, api.WorkStartedPayload{TicketID: "c", Worker: "w"}).
+		add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "c", Commit: "x", Tokens: 750}).
+		fold()
+
+	g := s.Goals["g1"]
+	if g == nil {
+		t.Fatal("goal g1 missing")
+	}
+	if g.TokensSpent != 1000 {
+		t.Errorf("TokensSpent = %d, want 1000 (250 decompose + 750 proposal)", g.TokensSpent)
+	}
+	if g.BudgetExceeded {
+		t.Error("BudgetExceeded should be false without a GoalBudgetExceeded event")
+	}
+}
+
+func TestGoalBudgetExceededSetsFlag(t *testing.T) {
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{GoalID: "g1", SpentTokens: 1000, Limit: 500}).
+		fold()
+	if !s.Goals["g1"].BudgetExceeded {
+		t.Error("BudgetExceeded should be true after a GoalBudgetExceeded event")
+	}
+}

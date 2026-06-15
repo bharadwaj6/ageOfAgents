@@ -32,8 +32,10 @@ func (s TicketStatus) IsTerminal() bool {
 
 // Goal is a submitted objective.
 type Goal struct {
-	ID   string
-	Text string
+	ID             string
+	Text           string
+	TokensSpent    int  // LLM tokens charged to this Goal's tickets (spend governor)
+	BudgetExceeded bool // the per-Goal token budget tripped; no more work is dispatched
 }
 
 // Ticket is a unit of work in the task graph.
@@ -131,6 +133,9 @@ func (s *State) Apply(e api.Event) error {
 			t.Status = StatusDecomposed
 			t.Children = p.Children
 			t.LastActivity = e.Timestamp
+			if g := s.Goals[t.GoalID]; g != nil {
+				g.TokensSpent += p.Tokens
+			}
 		}
 
 	case api.TicketReady:
@@ -184,6 +189,9 @@ func (s *State) Apply(e api.Event) error {
 			t.Commit = p.Commit
 			t.Trace = p.Trace
 			t.LastActivity = e.Timestamp
+			if g := s.Goals[t.GoalID]; g != nil {
+				g.TokensSpent += p.Tokens
+			}
 		}
 
 	case api.VerificationPassed:
@@ -257,6 +265,15 @@ func (s *State) Apply(e api.Event) error {
 		if t := s.Tickets[p.TicketID]; t != nil && t.Status == StatusAwaiting {
 			t.Status = StatusFailed
 			t.LastActivity = e.Timestamp
+		}
+
+	case api.GoalBudgetExceeded:
+		var p api.GoalBudgetExceededPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if g := s.Goals[p.GoalID]; g != nil {
+			g.BudgetExceeded = true
 		}
 
 	case api.WorkerStalled:
