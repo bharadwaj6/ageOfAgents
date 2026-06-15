@@ -30,18 +30,21 @@ import (
 
 // Options configures an Orchestrator. Zero values fall back to sane defaults.
 type Options struct {
-	Concurrency       int           // max Workers in flight (Concurrency Limit); default 4
-	MaxAttempts       int           // attempts per Task before failing; default 2
-	Conventions       string        // injected into every agent prompt (Conventions)
-	WorktreeBase      string        // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
-	StallTimeout      time.Duration // no-progress timeout for the Stall Detector; default 2m
-	MaxPasses         int           // safety bound on Scheduler passes in Run; default 1000
-	MaxGraphDepth     int           // max emergent decomposition depth (graph governor); default 5
-	MaxTicketsPerGoal int           // max tickets a single Goal may spawn (graph governor); default 64
-	MaxFanOut         int           // max NEW children one decomposition may emit (graph governor); default 8
-	MaxTokensPerGoal  int           // per-Goal token budget; the spend governor stops a Goal past it; 0 = unlimited
-	RequireApproval   bool          // park each verified proposal for human approval before merge (ADR 008)
-	Now               func() time.Time
+	Concurrency        int           // max Workers in flight (Concurrency Limit); default 4
+	MaxAttempts        int           // attempts per Task before failing; default 2
+	Conventions        string        // injected into every agent prompt (Conventions)
+	WorktreeBase       string        // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
+	StallTimeout       time.Duration // no-progress timeout for the Stall Detector; default 2m
+	MaxPasses          int           // safety bound on Scheduler passes in Run; default 1000
+	MaxGraphDepth      int           // max emergent decomposition depth (graph governor); default 5
+	MaxTicketsPerGoal  int           // max tickets a single Goal may spawn (graph governor); default 64
+	MaxFanOut          int           // max NEW children one decomposition may emit (graph governor); default 8
+	MaxTokensPerGoal   int           // per-Goal token budget; the spend governor stops a Goal past it; 0 = unlimited
+	RequireApproval    bool          // park each verified proposal for human approval before merge (ADR 008)
+	RetryBackoff       time.Duration // base wait before re-dispatching a failed ticket (exponential per attempt); 0 = off
+	CrashLoopThreshold int           // N identical-reason verify failures in a row → give up even under MaxAttempts; default 3
+	Now                func() time.Time
+	Sleep              func(time.Duration) // injectable for tests; default time.Sleep
 }
 
 // Orchestrator owns one run of the control loop.
@@ -79,11 +82,17 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 	if opt.MaxFanOut <= 0 {
 		opt.MaxFanOut = 8
 	}
+	if opt.CrashLoopThreshold <= 0 {
+		opt.CrashLoopThreshold = 3
+	}
 	if opt.WorktreeBase == "" {
 		opt.WorktreeBase = filepath.Join(repo.Dir, ".git", "aoa-worktrees")
 	}
 	if opt.Now == nil {
 		opt.Now = time.Now
+	}
+	if opt.Sleep == nil {
+		opt.Sleep = time.Sleep
 	}
 	return &Orchestrator{
 		led: led, repo: repo, backend: backend, mq: mq, opt: opt,
@@ -116,6 +125,12 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 			// approval, pause cleanly — a later `aoa approve` + `aoa run` resumes.
 			if pausedForApproval(s) {
 				return nil
+			}
+			// If the only thing blocking progress is a retry backoff, wait for the
+			// nearest ticket to become dispatchable rather than failing the run.
+			if wait, ok := o.nextBackoffWait(s, o.opt.Now()); ok {
+				o.opt.Sleep(wait)
+				continue
 			}
 			return fmt.Errorf("orchestrator made no progress but work is unsettled (seq %d)", s.LastSeq)
 		}
@@ -169,7 +184,7 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		return err
 	}
 	slots := o.opt.Concurrency - s.ActiveCount()
-	ready := s.ReadyTickets()
+	ready := o.dispatchable(s.ReadyTickets(), o.opt.Now())
 	n := min(slots, len(ready))
 	if n > 0 {
 		var wg sync.WaitGroup
@@ -556,12 +571,80 @@ func pausedForApproval(s *state.State) bool {
 }
 
 // rejectOrFail re-readies a ticket for another attempt, or fails it terminally
-// once the attempt cap is reached.
+// once the attempt cap is reached. It also short-circuits a crash loop: the same
+// verification failure repeated CrashLoopThreshold times means more attempts
+// won't help, so it gives up early instead of burning more tokens (even when
+// attempts remain). t reflects state *before* this rejection, so t.SameFailCount
+// counts the prior identical failures.
 func (o *Orchestrator) rejectOrFail(t *state.Ticket, worker, reason string) error {
+	if o.opt.CrashLoopThreshold > 0 && reason != "" && reason == t.LastFailReason &&
+		t.SameFailCount+1 >= o.opt.CrashLoopThreshold {
+		return o.emit(api.TicketFailed, api.TicketFailedPayload{
+			TicketID: t.ID, Worker: worker,
+			Reason: fmt.Sprintf("crash loop: %s (×%d)", reason, t.SameFailCount+1),
+		})
+	}
 	if t.Attempts >= o.opt.MaxAttempts {
 		return o.emit(api.TicketFailed, api.TicketFailedPayload{TicketID: t.ID, Worker: worker, Reason: reason})
 	}
 	return o.emit(api.VerificationFailed, api.VerificationFailedPayload{TicketID: t.ID, Worker: worker, Reason: reason})
+}
+
+// backoffFor returns how long a ticket must wait before its next attempt:
+// exponential in the attempts already made, capped to avoid runaway waits. A
+// zero base disables backoff entirely.
+func backoffFor(base time.Duration, attempts int) time.Duration {
+	if base <= 0 || attempts <= 0 {
+		return 0
+	}
+	shift := attempts - 1
+	if shift > 6 {
+		shift = 6 // cap at base*64
+	}
+	return base << shift
+}
+
+// dispatchable filters out ready tickets still serving their retry backoff (a
+// ticket re-readied by a failure waits backoffFor(attempts) from that failure,
+// timestamped as LastActivity). Fresh tickets (no prior attempt) pass straight
+// through, so backoff only ever delays retries.
+func (o *Orchestrator) dispatchable(ready []*state.Ticket, now time.Time) []*state.Ticket {
+	if o.opt.RetryBackoff <= 0 {
+		return ready
+	}
+	out := make([]*state.Ticket, 0, len(ready))
+	for _, t := range ready {
+		if d := backoffFor(o.opt.RetryBackoff, t.Attempts); d > 0 && now.Sub(t.LastActivity) < d {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// nextBackoffWait returns how long until the earliest ready ticket leaves its
+// retry backoff, but only when backoff is the *sole* thing blocking progress —
+// if any ready ticket is already dispatchable (or there are none), it reports
+// false so Run treats a genuine stall as an error rather than sleeping.
+func (o *Orchestrator) nextBackoffWait(s *state.State, now time.Time) (time.Duration, bool) {
+	if o.opt.RetryBackoff <= 0 {
+		return 0, false
+	}
+	wait := time.Duration(-1)
+	for _, t := range s.ReadyTickets() {
+		d := backoffFor(o.opt.RetryBackoff, t.Attempts)
+		remaining := d - now.Sub(t.LastActivity)
+		if d <= 0 || remaining <= 0 {
+			return 0, false // something is dispatchable now; not a backoff stall
+		}
+		if wait < 0 || remaining < wait {
+			wait = remaining
+		}
+	}
+	if wait < 0 {
+		return 0, false // no ready tickets at all
+	}
+	return wait, true
 }
 
 // failAttempt handles a dispatch-time failure (before a proposal existed).

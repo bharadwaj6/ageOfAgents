@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -336,5 +337,128 @@ func TestSpendGovernorOffByDefaultMergesGoal(t *testing.T) {
 	}
 	if tk := h.state(t).Tickets["g1-impl"]; tk == nil || tk.Status != state.StatusMerged {
 		t.Fatalf("g1-impl status = %v, want merged", tk)
+	}
+}
+
+func TestBackoffFor(t *testing.T) {
+	base := time.Second
+	cases := []struct {
+		attempts int
+		want     time.Duration
+	}{
+		{0, 0}, {1, time.Second}, {2, 2 * time.Second}, {3, 4 * time.Second},
+		{8, 64 * time.Second}, {20, 64 * time.Second}, // capped at base<<6
+	}
+	for _, c := range cases {
+		if got := backoffFor(base, c.attempts); got != c.want {
+			t.Errorf("backoffFor(1s, %d) = %v, want %v", c.attempts, got, c.want)
+		}
+	}
+	if got := backoffFor(0, 3); got != 0 {
+		t.Errorf("backoffFor(0, 3) = %v, want 0 (disabled)", got)
+	}
+}
+
+func TestDispatchableRespectsBackoff(t *testing.T) {
+	o := &Orchestrator{opt: Options{RetryBackoff: time.Minute}}
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fresh := &state.Ticket{ID: "fresh", Attempts: 0}
+	retry := &state.Ticket{ID: "retry", Attempts: 1, LastActivity: t0}
+	ready := []*state.Ticket{fresh, retry}
+
+	// 30s after the failure: retry is still in its 1m backoff; fresh dispatches.
+	got := o.dispatchable(ready, t0.Add(30*time.Second))
+	if len(got) != 1 || got[0].ID != "fresh" {
+		t.Errorf("during backoff: got %d tickets, want only [fresh]", len(got))
+	}
+	// Past the backoff: both dispatch.
+	if got := o.dispatchable(ready, t0.Add(61*time.Second)); len(got) != 2 {
+		t.Errorf("after backoff: got %d, want 2", len(got))
+	}
+	// Backoff off: no filtering.
+	off := &Orchestrator{opt: Options{}}
+	if got := off.dispatchable(ready, t0); len(got) != 2 {
+		t.Errorf("backoff disabled: got %d, want 2", len(got))
+	}
+}
+
+func TestBackoffDelaysRedispatch(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := t0
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	o, h := setup(t, agent.NewMock(), pass, Options{
+		Concurrency:  1,
+		RetryBackoff: time.Minute,
+		Now:          func() time.Time { return clock },
+	})
+	// Seed a ticket that just failed verification at t0 (Ready, Attempts=1).
+	h.submitGoal(t, "g1", "x")
+	h.appendAt(t, t0, api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "g1:impl"})
+	h.appendAt(t, t0, api.TicketReady, api.TicketReadyPayload{TicketID: "t1"})
+	h.appendAt(t, t0, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w"})
+	h.appendAt(t, t0, api.VerificationFailed, api.VerificationFailedPayload{TicketID: "t1", Reason: "boom"})
+
+	// Within the 1m backoff window: ReconcileOnce must not dispatch.
+	clock = t0.Add(30 * time.Second)
+	before := h.state(t).LastSeq
+	if err := o.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce: %v", err)
+	}
+	if got := h.state(t).LastSeq; got != before {
+		t.Errorf("dispatched during backoff (seq %d→%d)", before, got)
+	}
+	if st := h.state(t).Tickets["t1"].Status; st != state.StatusReady {
+		t.Errorf("status = %s, want ready (still backing off)", st)
+	}
+
+	// Past the backoff: it dispatches and merges (gate passes).
+	clock = t0.Add(2 * time.Minute)
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run after backoff: %v", err)
+	}
+	if st := h.state(t).Tickets["t1"].Status; st != state.StatusMerged {
+		t.Errorf("status = %s, want merged after backoff elapsed", st)
+	}
+}
+
+func TestCrashLoopGivesUpEarly(t *testing.T) {
+	fail := verify.Verifier{Commands: []verify.Command{{"false"}}} // always fails the gate
+	o, h := setup(t, agent.NewMock(), fail, Options{
+		Concurrency:        1,
+		MaxAttempts:        5,
+		CrashLoopThreshold: 3,
+	})
+	h.submitGoal(t, "g1", "loops")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run did not converge: %v", err)
+	}
+
+	tk := h.state(t).Tickets["g1-impl"]
+	if tk == nil || tk.Status != state.StatusFailed {
+		t.Fatalf("g1-impl status = %v, want failed", tk)
+	}
+	if tk.Attempts != 3 {
+		t.Errorf("Attempts = %d, want 3 (crash loop tripped before MaxAttempts=5)", tk.Attempts)
+	}
+
+	events, _ := h.led.Read()
+	verifFails := 0
+	failReason := ""
+	for _, e := range events {
+		switch e.Type {
+		case api.VerificationFailed:
+			verifFails++
+		case api.TicketFailed:
+			var p api.TicketFailedPayload
+			_ = e.DecodePayload(&p)
+			failReason = p.Reason
+		}
+	}
+	if verifFails != 2 {
+		t.Errorf("VerificationFailed count = %d, want 2 (3rd identical failure is the crash-loop terminal)", verifFails)
+	}
+	if !strings.Contains(failReason, "crash loop") {
+		t.Errorf("terminal reason = %q, want it to mention a crash loop", failReason)
 	}
 }
