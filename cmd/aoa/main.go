@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
 	"github.com/bharadwaj6/ageOfAgents/internal/bench"
@@ -549,13 +550,23 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		}
 	}
 	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify)}
+	var backoff time.Duration
+	if cfg.RetryBackoff != "" {
+		d, err := time.ParseDuration(cfg.RetryBackoff)
+		if err != nil {
+			return nil, nil, fmt.Errorf("retry_backoff %q: %w", cfg.RetryBackoff, err)
+		}
+		backoff = d
+	}
 	opt := orchestrator.Options{
-		Concurrency:      cfg.Concurrency,
-		MaxAttempts:      cfg.MaxAttempts,
-		Conventions:      conventions,
-		WorktreeBase:     ws.worktreeBase,
-		RequireApproval:  cfg.RequireApproval,
-		MaxTokensPerGoal: cfg.MaxTokensPerGoal,
+		Concurrency:        cfg.Concurrency,
+		MaxAttempts:        cfg.MaxAttempts,
+		Conventions:        conventions,
+		WorktreeBase:       ws.worktreeBase,
+		RequireApproval:    cfg.RequireApproval,
+		MaxTokensPerGoal:   cfg.MaxTokensPerGoal,
+		RetryBackoff:       backoff,
+		CrashLoopThreshold: cfg.CrashLoopThreshold,
 	}
 	o := orchestrator.New(led, repo, backend, mergequeue.New(repo, gate), opt)
 	return o, led, nil

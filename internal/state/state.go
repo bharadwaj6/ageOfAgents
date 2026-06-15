@@ -55,6 +55,8 @@ type Ticket struct {
 	Depth          int  // decomposition depth; tickets seeded from a goal are 0
 	Approved       bool // a human approved the parked proposal (ADR 008)
 	LastActivity   time.Time
+	LastFailReason string // reason of the most recent verification failure (crash-loop detection)
+	SameFailCount  int    // consecutive verification failures sharing LastFailReason
 }
 
 // State is the derived snapshot produced by folding events.
@@ -206,6 +208,14 @@ func (s *State) Apply(e api.Event) error {
 		// Send the ticket back to Ready for another attempt; the reconciler
 		// caps attempts and emits TicketFailed when exhausted.
 		if t := s.Tickets[p.TicketID]; t != nil {
+			// Track the consecutive identical-reason failure streak so the
+			// reconciler can detect a crash loop (same failure, no progress).
+			if p.Reason != "" && p.Reason == t.LastFailReason {
+				t.SameFailCount++
+			} else {
+				t.LastFailReason = p.Reason
+				t.SameFailCount = 1
+			}
 			t.Status = StatusReady
 			t.Worker = ""
 			t.Branch, t.Commit, t.Trace = "", "", ""

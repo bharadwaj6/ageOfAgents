@@ -36,6 +36,14 @@ type Config struct {
 	// spend governor stops dispatching its remaining work (circuit breaker).
 	// 0 = unlimited (default).
 	MaxTokensPerGoal int `toml:"max_tokens_per_goal"`
+	// RetryBackoff is the base wait before re-dispatching a failed ticket, as a
+	// duration string (e.g. "2s"); the wait grows exponentially per attempt.
+	// Empty or "0s" = retry immediately (default).
+	RetryBackoff string `toml:"retry_backoff"`
+	// CrashLoopThreshold is how many identical-reason verification failures in a
+	// row make a ticket give up, even under MaxAttempts. 0 ⇒ default 3 (inert
+	// while ≤ max_attempts).
+	CrashLoopThreshold int `toml:"crash_loop_threshold"`
 	// Pricing maps a model id (as reported by the Backend) to its cost in USD per
 	// *million* tokens, used to turn token counts into a $ figure in `aoa status`.
 	// Absent ⇒ unpriced ($0). Example: [pricing] then claudecode = 15.0.
