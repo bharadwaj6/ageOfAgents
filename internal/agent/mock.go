@@ -28,6 +28,10 @@ type Mock struct {
 	// Run return those Subtasks (a decomposition) instead of writing files, so
 	// the emergent task graph can be exercised deterministically and offline.
 	Decompose map[string][]Subtask
+	// TokensPerTask, when > 0, is reported as the Result's token count for every
+	// Run (implementation or decomposition), so the spend governor and cost
+	// metrics can be exercised deterministically and offline.
+	TokensPerTask int
 }
 
 // NewMock returns an empty Mock with default marker-file behavior.
@@ -52,6 +56,7 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 			Trace:    fmt.Sprintf("mock decomposed %q into %d subtask(s)", task.Title, len(subs)),
 			Summary:  task.Title,
 			Subtasks: subs,
+			Tokens:   m.TokensPerTask,
 		}, nil
 	}
 
@@ -76,5 +81,6 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 	return Result{
 		Trace:   fmt.Sprintf("mock wrote %d file(s) for %q", len(files), task.Title),
 		Summary: task.Title,
+		Tokens:  m.TokensPerTask,
 	}, nil
 }

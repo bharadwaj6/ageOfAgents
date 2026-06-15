@@ -550,11 +550,12 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	}
 	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify)}
 	opt := orchestrator.Options{
-		Concurrency:     cfg.Concurrency,
-		MaxAttempts:     cfg.MaxAttempts,
-		Conventions:     conventions,
-		WorktreeBase:    ws.worktreeBase,
-		RequireApproval: cfg.RequireApproval,
+		Concurrency:      cfg.Concurrency,
+		MaxAttempts:      cfg.MaxAttempts,
+		Conventions:      conventions,
+		WorktreeBase:     ws.worktreeBase,
+		RequireApproval:  cfg.RequireApproval,
+		MaxTokensPerGoal: cfg.MaxTokensPerGoal,
 	}
 	o := orchestrator.New(led, repo, backend, mergequeue.New(repo, gate), opt)
 	return o, led, nil

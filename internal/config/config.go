@@ -32,6 +32,10 @@ type Config struct {
 	// RequireApproval parks every Gate-verified proposal for a human decision
 	// (aoa approve / aoa reject) before it merges to main (ADR 008). Default off.
 	RequireApproval bool `toml:"require_approval"`
+	// MaxTokensPerGoal caps the LLM tokens a single Goal may spend before the
+	// spend governor stops dispatching its remaining work (circuit breaker).
+	// 0 = unlimited (default).
+	MaxTokensPerGoal int `toml:"max_tokens_per_goal"`
 	// Pricing maps a model id (as reported by the Backend) to its cost in USD per
 	// *million* tokens, used to turn token counts into a $ figure in `aoa status`.
 	// Absent ⇒ unpriced ($0). Example: [pricing] then claudecode = 15.0.
