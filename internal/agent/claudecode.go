@@ -64,28 +64,36 @@ func (c *ClaudeCode) Run(ctx context.Context, task Task) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("claudecode: %w", err)
 	}
+	tokens, model := parseUsage(out)
+	if model == "" {
+		model = c.Name()
+	}
 	return Result{
 		Trace:    strings.TrimSpace(out),
 		Summary:  task.Title,
 		Subtasks: parseSubtasks(out),
-		Tokens:   parseUsage(out),
+		Tokens:   tokens,
+		Model:    model,
 	}, nil
 }
 
 // parseUsage extracts token usage from an optional "aoa:usage" fenced block
-// whose body is JSON like {"tokens": 1234}. Returns 0 when absent or unparseable.
-func parseUsage(out string) int {
+// whose body is JSON like {"tokens": 1234, "model": "..."}. Returns (0, "")
+// when absent or unparseable, keeping cost accounting opt-in. The model is
+// optional; callers fall back to the backend name when it is empty.
+func parseUsage(out string) (int, string) {
 	body, ok := fencedBlock(out, usageFence)
 	if !ok {
-		return 0
+		return 0, ""
 	}
 	var u struct {
-		Tokens int `json:"tokens"`
+		Tokens int    `json:"tokens"`
+		Model  string `json:"model"`
 	}
 	if err := json.Unmarshal([]byte(body), &u); err != nil {
-		return 0
+		return 0, ""
 	}
-	return u.Tokens
+	return u.Tokens, u.Model
 }
 
 // parseSubtasks extracts an emergent decomposition from agent output: a fenced

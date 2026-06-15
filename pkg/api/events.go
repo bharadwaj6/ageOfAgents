@@ -133,6 +133,7 @@ type TicketDecomposedPayload struct {
 	Worker   string   `json:"worker,omitempty"`
 	Children []string `json:"children"`
 	Tokens   int      `json:"tokens,omitempty"` // LLM tokens the decomposition consumed (0 when unknown)
+	Model    string   `json:"model,omitempty"`  // model that produced the decomposition, for per-model cost
 }
 
 // TicketReadyPayload accompanies [TicketReady].
@@ -167,6 +168,7 @@ type ProposalSubmittedPayload struct {
 	Commit   string `json:"commit"`
 	Trace    string `json:"trace,omitempty"`
 	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the work consumed (0 when unknown)
+	Model    string `json:"model,omitempty"`  // model that produced the change, for per-model cost
 }
 
 // VerificationPassedPayload accompanies [VerificationPassed].
