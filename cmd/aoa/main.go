@@ -887,7 +887,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 			conventions = string(b)
 		}
 	}
-	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify)}
+	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify), Sandbox: cfg.Sandbox}
 	var backoff time.Duration
 	if cfg.RetryBackoff != "" {
 		d, err := time.ParseDuration(cfg.RetryBackoff)
@@ -910,7 +910,9 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		CrashLoopThreshold: cfg.CrashLoopThreshold,
 	}
 	mq := mergequeue.New(repo, gate)
-	mq.Shadow = verify.Verifier{Commands: verify.ToCommands(cfg.RegressionVerify)}
+	if len(cfg.RegressionVerify) > 0 {
+		mq.Shadow = verify.Verifier{Commands: verify.ToCommands(cfg.RegressionVerify), Sandbox: cfg.Sandbox}
+	}
 	o := orchestrator.New(led, repo, backend, mq, opt)
 	return o, led, nil
 }

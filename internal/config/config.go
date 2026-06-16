@@ -63,6 +63,9 @@ type Config struct {
 	// row make a ticket give up, even under MaxAttempts. 0 ⇒ default 3 (inert
 	// while ≤ max_attempts).
 	CrashLoopThreshold int `toml:"crash_loop_threshold"`
+	// Sandbox specifies how to isolate untrusted code execution (e.g. the verifier gate).
+	// Supported values: "" (no sandboxing, runs on host) or "docker".
+	Sandbox string `toml:"sandbox"`
 	// Pricing maps a model id (as reported by the Backend) to its cost in USD per
 	// *million* tokens, used to turn token counts into a $ figure in `aoa status`.
 	// Absent ⇒ unpriced ($0). Example: [pricing] then claudecode = 15.0.
