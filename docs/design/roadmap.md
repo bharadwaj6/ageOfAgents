@@ -190,7 +190,7 @@ GitHub: milestone **v0.1 — measured & adoptable**. Resume at the lowest-number
 are met.
 
 **P0 — the baseline that unblocks everything**
-- [x] **#4** Run SWE-bench Lite at scale — reproducible (pinned models + image digests), pass@1 / pass@k,
+- [ ] **#4** Run SWE-bench Lite at scale — reproducible (pinned models + image digests), pass@1 / pass@k,
       cost-per-solve, tokens-per-solve, MAST histogram → README. *The whole ballgame.*
 
 **P1 — cost & safety (real-money table stakes)** — *done (PRs #20, #23, #22)*
@@ -253,8 +253,12 @@ each merge) pays off only past single-file Lite work — folded into #13 / futur
 
 **Last status:** P1 + P2 shipped (#5–#15); the observability & adoption cluster shipped and merged
 (#33–#37, PRs #38–#41 + the live-streaming follow-up) — `aoa` is now OpenTelemetry-native (post-hoc
-**and** live), documented for adoption; P3 (#16–#18) deferred with explicit reopen gates. P0 #4
-is now complete — the at-scale SWE-bench Lite run achieved a 50% pass rate on a 20-instance subset using the `grok` backend. This single empirical artifact successfully converts the project from "measured architecture" to "measured tool."
+**and** live), documented for adoption; P3 (#16–#18) deferred with explicit reopen gates. **Only P0 #4
+remains** — the at-scale SWE-bench Lite run. The
+harness is fully ready and now **cost-capped + OTel-instrumented**: `scripts/eval_swebench.sh` (and the
+Docker variant) accept `BACKEND=grok`, `LIMIT`, and `MAX_COST` / `PRICE_FILE` / `OTEL` so a 20-instance,
+budget-bounded, traced run is one command (needs a Grok key + the Lite dataset). That single empirical
+artifact is what converts the project from "measured architecture" to "measured tool."
 
 ---
 

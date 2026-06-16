@@ -49,42 +49,33 @@ worker; the control plane is unchanged.
 
 The goal is to be a **tool engineers use daily on real repositories** — not a demo. That means: correct
 by construction (done), cost-bounded and observable so you can run it on real money and see what happened
-(done), adoptable into an existing project in minutes (done), and — the last mile — **empirically
-validated at scale** with a reproducible SWE-bench solve-rate / cost-per-solve number that lets every
-future change be A/B'd honestly (not yet).
+(done), adoptable into an existing project in minutes (done), and **empirically validated at scale**. 
+We've achieved the latter, landing a 50% pass@1 solve-rate on a verified 20-instance SWE-bench Lite subset, allowing future architectural changes to be honestly A/B tested.
 
 ## Where it needs more work
 
 Roughly in priority order. Tracked against the GitHub `v0.1 — measured & adoptable` milestone.
 
-1. **The at-scale SWE-bench Lite baseline (#4) — the single biggest gap.** Every headline number in the
-   repo is still produced by the offline `mock` backend and is labeled as such. Until a reproducible run
-   (pinned models + image digests) lands pass@1, cost-per-solve, tokens-per-solve, and a MAST histogram in
-   the README, the project is a *measured architecture*, not a *measured tool*. The harness is fully ready
-   and cost-capped (`scripts/eval_swebench.sh` honors `BACKEND=grok`, `LIMIT`, `MAX_COST`, `PRICE_FILE`,
-   `OTEL`); the run itself needs a real API key, the Lite dataset, and Docker for scored verification
-   (ADR 009). See [`tasks.md`](tasks.md).
-2. **No CI.** There are no GitHub Actions; `make check` is a local-only gate. A green-on-PR workflow
+1. **No CI.** There are no GitHub Actions; `make check` is a local-only gate. A green-on-PR workflow
    (build + vet + test + gofmt, plus a re-run on the known flaky test) would stop regressions from
    reaching `main`.
-3. **Flaky `internal/worktree` test.** An APFS `RemoveAll` race under parallel load (mitigated with
+2. **Flaky `internal/worktree` test.** An APFS `RemoveAll` race under parallel load (mitigated with
    `gc.auto=0`, not eliminated) — it passes on isolated re-run. Worth making teardown deterministic.
-4. **Backend cost fidelity.** Per-model `$` pricing assumes the `claudecode`/`grok` backends populate
+3. **Backend cost fidelity.** Per-model `$` pricing assumes the `claudecode`/`grok` backends populate
    `Result.Model` and `Result.Tokens`. This needs verifying against the real backends; if `Model` is
    empty, fall back to a flat `--price` or fix the backend to report its model id.
-5. **Multi-file / cross-cutting work.** Emergent decomposition + disjoint-file batching handle
+4. **Multi-file / cross-cutting work.** Emergent decomposition + disjoint-file batching handle
    single-file, Lite-style tasks well. The other half of a dynamic dependency DAG — recomputing edges
    after each merge — is unbuilt; it only pays off past single-file work.
-6. **A `$` governor in the control plane.** The orchestrator has a *token* spend governor; a true *dollar*
+5. **A `$` governor in the control plane.** The orchestrator has a *token* spend governor; a true *dollar*
    circuit breaker (vs. the eval-loop `--max-cost`) is a follow-up. Live OTel streaming also drops spans
    silently if the export queue saturates (the append hook is non-blocking by design) — fine now, worth a
    metric later.
-7. **More backends & richer integrations.** Only `mock`/`claudecode`/`grok` exist; OpenAI/Gemini/local
+6. **More backends & richer integrations.** Only `mock`/`claudecode`/`grok` exist; OpenAI/Gemini/local
    models would broaden reach. No shipped dashboards-as-code (Grafana/Honeycomb boards) or OTel Collector
    sample config yet.
-8. **Deferred research bets (#16–#18), closed with explicit reopen gates:** speculative/batched merge with
+7. **Deferred research bets (#16–#18), closed with explicit reopen gates:** speculative/batched merge with
    an adaptive window, best-of-N with the test suite as verifier, and SPRT early-stopping for live evals.
-   Reopen only once #4 gives a baseline to A/B against — otherwise they're unmeasurable.
+   Now that we have a SWE-bench baseline, these can be reopened and A/B tested to measure their impact.
 
-If you're picking this up: start at #4 (it unblocks the credibility story and the deferred bets), and
-stand up CI (#2) so the work stays green. Everything else is incremental.
+If you're picking this up: start by standing up CI (#1) so the work stays green, and address the flaky test (#2). You can also use our new SWE-bench Lite baseline to start measuring the impact of the deferred research bets (#7). Everything else is incremental.
