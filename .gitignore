@@ -16,6 +16,9 @@ docs/design/formal/states/
 # OS
 .DS_Store
 
+# Local secrets (e.g. HONEYCOMB_API_KEY for scripts/otel_smoke.sh)
+.env
+
 # Evaluation artifacts
 aoa-*.json
 /logs/
