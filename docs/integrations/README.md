@@ -37,6 +37,7 @@ interface (`agent.Backend`, ADR 004); the control plane is identical across back
 |---------|-------|---------|
 | `mock` | nothing (offline, deterministic) | trying `aoa` out, the hermetic test suite, CI |
 | `claudecode` | the `claude` CLI authenticated; network + API cost | real coding work |
+| `anthropic` | `ANTHROPIC_API_KEY` in environment; network + API cost | real coding work natively (no node/CLI dependency) |
 | `grok` | a Grok API key in the environment; network + API cost | real coding work / benchmarking |
 
 Cost is purely a property of the backend you choose. Token/`$` accounting flows through the Event Log;
