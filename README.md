@@ -210,6 +210,7 @@ a worked config and copy-paste runbook are in [`examples/`](examples/).
 | `internal/bench` · `internal/liveeval` | Hermetic coordination benchmark + end-to-end live eval harness |
 | `internal/config` | `aoa.toml` loading |
 | `cmd/aoa` | CLI entry point |
+| `scripts/` | Helper scripts for sandboxing (gVisor injection) |
 
 ## Development
 
@@ -229,8 +230,8 @@ The `mock` Backend makes the full loop hermetic and offline in tests. Real agent
 
 ## Documentation
 
-- [`OVERVIEW.md`](OVERVIEW.md) — **what this repo does, what it aims to be, and where it needs more work**
 - [`docs/design/architecture.md`](docs/design/architecture.md) — design and research basis
+- [`docs/design/cross_repo.md`](docs/design/cross_repo.md) — architecture for atomic multi-repo merges
 - [`docs/config-reference.md`](docs/config-reference.md) — every `aoa.toml` field, defaults, when to set it
 - [`docs/integrations/`](docs/integrations/README.md) — OpenTelemetry/OTLP (Honeycomb, etc.) + agent backends
 - [`examples/`](examples/) — a copy-paste runbook for adopting your own repo
