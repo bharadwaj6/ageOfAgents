@@ -14,6 +14,14 @@ import (
 // FileName is the per-workspace config file.
 const FileName = "aoa.toml"
 
+// BackendConfig holds settings for a custom backend plugin.
+type BackendConfig struct {
+	Type      string `toml:"type"`
+	BaseURL   string `toml:"base_url"`
+	Model     string `toml:"model"`
+	APIKeyEnv string `toml:"api_key_env"`
+}
+
 // Config is the on-disk workspace configuration.
 type Config struct {
 	// Repo is the path to the integration git repository, relative to the workspace
@@ -53,6 +61,8 @@ type Config struct {
 	// *million* tokens, used to turn token counts into a $ figure in `aoa status`.
 	// Absent ⇒ unpriced ($0). Example: [pricing] then claudecode = 15.0.
 	Pricing map[string]float64 `toml:"pricing"`
+	// Backends defines custom backend plugins (e.g. openrouter via openai_compatible).
+	Backends map[string]BackendConfig `toml:"backends"`
 }
 
 // Default returns a config with sensible defaults: an offline mock Backend and

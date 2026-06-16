@@ -582,7 +582,9 @@ func cmdEval(args []string) error {
 			return err
 		}
 	}
-	backend, err := buildBackend(*backendName)
+	cfg, _ := config.Load(config.FileName)
+	cfg.Backend = *backendName // override with flag if provided
+	backend, err := buildBackend(cfg)
 	if err != nil {
 		return err
 	}
@@ -814,7 +816,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	if err != nil {
 		return nil, nil, err
 	}
-	backend, err := buildBackend(cfg.Backend)
+	backend, err := buildBackend(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -849,7 +851,17 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	return o, led, nil
 }
 
-func buildBackend(name string) (agent.Backend, error) {
+func buildBackend(cfg config.Config) (agent.Backend, error) {
+	name := cfg.Backend
+	if bCfg, ok := cfg.Backends[name]; ok {
+		switch bCfg.Type {
+		case "openai_compatible":
+			return agent.NewOpenAICompatible(name, bCfg.Model, bCfg.BaseURL, bCfg.APIKeyEnv), nil
+		default:
+			return nil, fmt.Errorf("unknown plugin type %q for backend %q", bCfg.Type, name)
+		}
+	}
+
 	switch name {
 	case "mock", "":
 		return agent.NewMock(), nil
@@ -861,7 +873,7 @@ func buildBackend(name string) (agent.Backend, error) {
 	case "openai":
 		return agent.NewOpenAI(), nil
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok|openai)", name)
+		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok|openai or a configured plugin)", name)
 	}
 }
 

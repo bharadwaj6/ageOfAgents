@@ -41,6 +41,22 @@ interface (`agent.Backend`, ADR 004); the control plane is identical across back
 | `grok` | a Grok API key in the environment; network + API cost | real coding work / benchmarking |
 | `openai` | `OPENAI_API_KEY` in environment; network + API cost | real coding work natively with OpenAI |
 
+### Custom Plugins (OpenRouter, DeepSeek, Together AI)
+
+You can define custom backends in `aoa.toml` that point to any OpenAI-compatible API using the `openai_compatible` plugin type:
+
+```toml
+backend = "my_openrouter"
+
+[backends.my_openrouter]
+type = "openai_compatible"
+base_url = "https://openrouter.ai/api/v1/chat/completions"
+model = "anthropic/claude-3.5-sonnet"
+api_key_env = "OPENROUTER_API_KEY"
+```
+
+Once defined, set the `OPENROUTER_API_KEY` in your environment, and `aoa` will route all tasks through OpenRouter natively.
+
 Cost is purely a property of the backend you choose. Token/`$` accounting flows through the Event Log;
 set `[pricing]` in `aoa.toml` (USD per million tokens, by model) to turn token counts into `$` in
 `aoa status`, `aoa eval`, and the OTel `aoa.cost_usd` metric. See the
