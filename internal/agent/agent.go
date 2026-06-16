@@ -41,9 +41,9 @@ type Subtask struct {
 // edits the worktree (an implementation) or returns Subtasks (a decomposition),
 // not both.
 type Result struct {
-	Trace    string    // short reasoning trace for the audit log
-	Summary  string    // one-line summary of the change
-	Subtasks []Subtask // non-empty => decompose this Task into children
+	Trace             string    // short reasoning trace for the audit log
+	Summary           string    // one-line summary of the change
+	Subtasks          []Subtask // non-empty => decompose this Task into children
 	Tokens            int       // LLM tokens this work consumed; 0 when unknown (e.g. mock)
 	Model             string    // best-effort model identifier, for per-model cost; "" when unknown
 	Invalidated       bool      // if true, the worker determined the ticket's assumptions are invalid

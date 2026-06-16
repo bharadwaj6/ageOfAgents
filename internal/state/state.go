@@ -450,7 +450,6 @@ func (s *State) Apply(e api.Event) error {
 			t.LastActivity = e.Timestamp
 		}
 
-
 	default:
 		return fmt.Errorf("state: unknown event type %q (seq %d)", e.Type, e.Seq)
 	}
