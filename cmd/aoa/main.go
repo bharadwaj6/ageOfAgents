@@ -854,8 +854,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	return o, led, nil
 }
 
-func buildBackend(cfg config.Config) (agent.Backend, error) {
-	name := cfg.Backend
+func buildBackendSingle(name string, cfg config.Config) (agent.Backend, error) {
 	if bCfg, ok := cfg.Backends[name]; ok {
 		switch bCfg.Type {
 		case "openai_compatible":
@@ -878,6 +877,25 @@ func buildBackend(cfg config.Config) (agent.Backend, error) {
 	default:
 		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok|openai or a configured plugin)", name)
 	}
+}
+
+func buildBackend(cfg config.Config) (agent.Backend, error) {
+	primary, err := buildBackendSingle(cfg.Backend, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfg.FallbackBackends) == 0 {
+		return primary, nil
+	}
+	backends := []agent.Backend{primary}
+	for _, fb := range cfg.FallbackBackends {
+		b, err := buildBackendSingle(fb, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("invalid fallback backend %q: %w", fb, err)
+		}
+		backends = append(backends, b)
+	}
+	return agent.NewFallbackBackend(backends...), nil
 }
 
 // --- presentation ---------------------------------------------------------

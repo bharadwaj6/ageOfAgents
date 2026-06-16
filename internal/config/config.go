@@ -69,6 +69,9 @@ type Config struct {
 	Pricing map[string]float64 `toml:"pricing"`
 	// Backends defines custom backend plugins (e.g. openrouter via openai_compatible).
 	Backends map[string]BackendConfig `toml:"backends"`
+	// FallbackBackends specifies an ordered list of backend IDs to try if the
+	// primary Backend fails (e.g., rate limits or API errors).
+	FallbackBackends []string `toml:"fallback_backends"`
 }
 
 // Default returns a config with sensible defaults: an offline mock Backend and
