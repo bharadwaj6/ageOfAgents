@@ -25,6 +25,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/mergequeue"
 	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
 	"github.com/bharadwaj6/ageOfAgents/internal/orchestrator"
+	"github.com/bharadwaj6/ageOfAgents/internal/otel"
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/internal/verify"
 	"github.com/bharadwaj6/ageOfAgents/internal/worktree"
@@ -59,6 +60,8 @@ func main() {
 		err = cmdEval(args)
 	case "diagnose":
 		err = cmdDiagnose(args)
+	case "otel":
+		err = cmdOtel(args)
 	case "approve":
 		err = cmdApprove(args, true)
 	case "reject":
@@ -90,6 +93,7 @@ Usage:
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
   aoa eval   --tasks F [--backend B]      Run end-to-end tasks on real repos (mock|claudecode|grok)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
+  aoa otel export [--path DIR]            Replay the Event Log to OTLP traces + metrics
   aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
   aoa reject  [--path DIR] <ticket-id>    Reject a parked proposal (require_approval)
 `)
@@ -314,6 +318,7 @@ func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	path := fs.String("path", ".", "workspace root")
 	once := fs.Bool("once", false, "run a single reconcile pass instead of looping")
+	otelExport := fs.Bool("otel", false, "after the run, replay the Event Log to OTLP (needs OTEL_EXPORTER_OTLP_ENDPOINT)")
 	_ = fs.Parse(args)
 
 	ws, err := workspaceAt(*path)
@@ -333,8 +338,61 @@ func cmdRun(args []string) error {
 		return err
 	}
 	cfg, _ := config.Load(ws.configPath)
+	if *otelExport {
+		if err := exportOTel(ws, led, cfg); err != nil {
+			return err
+		}
+	}
 	_, err = printStatus(led, cfg.Pricing)
 	return err
+}
+
+// exportOTel replays the workspace Event Log into OTLP traces + metrics. It is a
+// no-op (with a stderr hint) when no OTLP endpoint is configured, so `--otel` on
+// an offline run never fails. The whole projection lives in internal/otel.
+func exportOTel(ws workspace, led *ledger.Ledger, cfg config.Config) error {
+	if !otel.Enabled() {
+		fmt.Fprintln(os.Stderr, "note: --otel set but OTEL_EXPORTER_OTLP_ENDPOINT is unset; skipping export")
+		return nil
+	}
+	events, err := led.Read()
+	if err != nil {
+		return err
+	}
+	if err := otel.Export(context.Background(), events, metrics.Compute(events), diagnose.Classify(events), cfg.Pricing); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "exported traces + metrics via OTLP")
+	return nil
+}
+
+// cmdOtel replays a finished run's Event Log to an OTLP backend on demand —
+// the same projection `aoa run --otel` does, but as a standalone step you can
+// run against any existing workspace (e.g. after a bench/eval).
+func cmdOtel(args []string) error {
+	sub := "export"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	if sub != "export" {
+		return fmt.Errorf("unknown otel subcommand %q (want: export)", sub)
+	}
+	fs := flag.NewFlagSet("otel", flag.ExitOnError)
+	path := fs.String("path", ".", "workspace root")
+	_ = fs.Parse(args)
+	if !otel.Enabled() {
+		return fmt.Errorf("no OTLP endpoint configured — set OTEL_EXPORTER_OTLP_ENDPOINT (see docs/integrations/honeycomb.md)")
+	}
+	ws, err := workspaceAt(*path)
+	if err != nil {
+		return err
+	}
+	led, err := ledger.Open(ws.ledgerPath)
+	if err != nil {
+		return err
+	}
+	cfg, _ := config.Load(ws.configPath)
+	return exportOTel(ws, led, cfg)
 }
 
 func cmdStatus(args []string) error {
