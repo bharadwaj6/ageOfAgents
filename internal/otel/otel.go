@@ -85,6 +85,12 @@ func Export(ctx context.Context, events []api.Event, m metrics.Metrics, d diagno
 	)
 }
 
+// ExportTask is Export with a per-task service.name, so each eval instance (e.g.
+// a SWE-bench instance_id) shows up as its own service/trace in the backend.
+func ExportTask(ctx context.Context, events []api.Event, m metrics.Metrics, d diagnose.Report, price map[string]float64, service string) error {
+	return Export(ctx, events, m, d, price, attribute.String("service.name", service))
+}
+
 // ticketAgg collects one ticket's goal, title, and its events in append order.
 type ticketAgg struct {
 	goalID string
