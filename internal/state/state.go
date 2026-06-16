@@ -4,6 +4,7 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -110,8 +111,8 @@ type Ticket struct {
 type State struct {
 	Goals       map[string]*Goal
 	Tickets     map[string]*Ticket
-	ticketOrder []string          // creation order, for deterministic iteration
-	keyToTicket map[string]string // idempotency key -> ticket ID (dedupe)
+	TicketOrder []string          `json:"ticket_order"`  // creation order, for deterministic iteration
+	KeyToTicket map[string]string `json:"key_to_ticket"` // idempotency key -> ticket ID (dedupe)
 	LastSeq     int
 }
 
@@ -120,7 +121,7 @@ func New() *State {
 	return &State{
 		Goals:       map[string]*Goal{},
 		Tickets:     map[string]*Ticket{},
-		keyToTicket: map[string]string{},
+		KeyToTicket: map[string]string{},
 	}
 }
 
@@ -138,6 +139,14 @@ func Fold(events []api.Event) (*State, error) {
 // Apply folds a single event into the state.
 func (s *State) Apply(e api.Event) error {
 	switch e.Type {
+	case api.StateSnapshot:
+		var p api.StateSnapshotPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(p.State, s); err != nil {
+			return fmt.Errorf("decode state snapshot: %w", err)
+		}
 	case api.GoalSubmitted:
 		var p api.GoalSubmittedPayload
 		if err := e.DecodePayload(&p); err != nil {
@@ -152,10 +161,10 @@ func (s *State) Apply(e api.Event) error {
 		}
 		// Idempotency: a duplicate logical ticket is a no-op (ADR 001).
 		if p.IdempotencyKey != "" {
-			if _, seen := s.keyToTicket[p.IdempotencyKey]; seen {
+			if _, seen := s.KeyToTicket[p.IdempotencyKey]; seen {
 				break
 			}
-			s.keyToTicket[p.IdempotencyKey] = p.TicketID
+			s.KeyToTicket[p.IdempotencyKey] = p.TicketID
 		}
 		if _, exists := s.Tickets[p.TicketID]; exists {
 			break
@@ -170,7 +179,7 @@ func (s *State) Apply(e api.Event) error {
 			Status:         StatusPending,
 			LastActivity:   e.Timestamp,
 		}
-		s.ticketOrder = append(s.ticketOrder, p.TicketID)
+		s.TicketOrder = append(s.TicketOrder, p.TicketID)
 
 	case api.TicketDecomposed:
 		var p api.TicketDecomposedPayload
@@ -418,8 +427,8 @@ func (s *State) Apply(e api.Event) error {
 
 // orderedTickets returns tickets in creation order.
 func (s *State) orderedTickets() []*Ticket {
-	out := make([]*Ticket, 0, len(s.ticketOrder))
-	for _, id := range s.ticketOrder {
+	out := make([]*Ticket, 0, len(s.TicketOrder))
+	for _, id := range s.TicketOrder {
 		if t := s.Tickets[id]; t != nil {
 			out = append(out, t)
 		}
@@ -514,7 +523,7 @@ func (s *State) Blocked() []*Ticket {
 // ticket is adopted rather than re-created (which state.Apply would dedupe to a
 // no-op, leaving the parent waiting on a ticket that never appears).
 func (s *State) TicketForKey(key string) (string, bool) {
-	id, ok := s.keyToTicket[key]
+	id, ok := s.KeyToTicket[key]
 	return id, ok
 }
 

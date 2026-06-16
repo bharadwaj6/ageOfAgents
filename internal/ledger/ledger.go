@@ -89,6 +89,30 @@ func (l *Ledger) Append(e api.Event) (api.Event, error) {
 	return e, nil
 }
 
+// Compact replaces the current ledger with a single snapshot event, truncating
+// the log. The caller must set the snapshot's Seq, which becomes the new baseline.
+func (l *Ledger) Compact(snapshot api.Event) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	line, err := json.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
+
+	tmpPath := l.path + ".tmp"
+	if err := os.WriteFile(tmpPath, append(line, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write compacted ledger: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, l.path); err != nil {
+		return fmt.Errorf("rename compacted ledger: %w", err)
+	}
+
+	l.nextSeq = snapshot.Seq + 1
+	return nil
+}
+
 // Read returns all events in append order. A missing file yields no events; a
 // torn/partial trailing line (from a crash mid-Append) is tolerated and skipped.
 func (l *Ledger) Read() ([]api.Event, error) {
