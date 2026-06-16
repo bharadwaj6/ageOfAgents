@@ -131,6 +131,12 @@ When acting as an AI pair programming assistant for this backend project, abide 
 - Don't refactor things that aren't broken.
 - Match existing style perfectly.
 
+### 4. Ponytail (Lazy Senior Dev Mode)
+- **The best code is the code never written.** Stop and ask if a change needs to be built at all (YAGNI).
+- **Leverage existing tools.** Does the standard library, a native platform feature, or an already-installed dependency cover it? If so, use it. Pick the edge-case-correct option when two approaches are similar.
+- **Boring over clever.** No boilerplate nobody asked for. Deletion over addition. Fewest files possible. Can this be one line? Make it one line.
+- **Question complex requests.** ("Do you actually need X, or does Y cover it?")
+
 ## Common tasks
 
 - **Add an agent Backend:** implement `agent.Backend` (`Name`, `Run`), register it in
