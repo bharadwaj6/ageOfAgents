@@ -91,7 +91,8 @@ Usage:
   aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
-  aoa eval   --tasks F [--backend B]      Run end-to-end tasks on real repos (mock|claudecode|grok)
+  aoa eval   --tasks F [--backend B] [--price-file F] [--max-cost $] [--otel]
+                                          Run end-to-end tasks on real repos (mock|claudecode|grok)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
   aoa otel export [--path DIR]            Replay the Event Log to OTLP traces + metrics
   aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
@@ -536,7 +537,10 @@ func cmdEval(args []string) error {
 	tasksPath := fs.String("tasks", "", "path to a TOML task file")
 	backendName := fs.String("backend", "mock", "agent backend: mock|claudecode")
 	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
-	price := fs.Float64("price", 0, "USD per million tokens, for the $/solve column (0 = unpriced)")
+	price := fs.Float64("price", 0, "flat USD per million tokens for the $ column (0 = unpriced)")
+	priceFile := fs.String("price-file", "", "TOML [pricing] file (model -> USD/Mtok) for per-model cost")
+	maxCost := fs.Float64("max-cost", 0, "stop launching tasks once cumulative $ crosses this ceiling (0 = no cap)")
+	otelExport := fs.Bool("otel", false, "export each task's Event Log to OTLP (needs OTEL_EXPORTER_OTLP_ENDPOINT)")
 	_ = fs.Parse(args)
 
 	if *tasksPath == "" {
@@ -545,6 +549,12 @@ func cmdEval(args []string) error {
 	tasks, err := liveeval.LoadTasks(*tasksPath)
 	if err != nil {
 		return err
+	}
+	var priceMap map[string]float64
+	if *priceFile != "" {
+		if priceMap, err = config.LoadPricing(*priceFile); err != nil {
+			return err
+		}
 	}
 	backend, err := buildBackend(*backendName)
 	if err != nil {
@@ -556,14 +566,35 @@ func cmdEval(args []string) error {
 	}
 	defer os.RemoveAll(base)
 
+	ctx := context.Background()
 	reports := make([]liveeval.Report, 0, len(tasks))
+	var spent float64
+	skipped := 0
 	for i, t := range tasks {
+		// Cost ceiling is checked *between* tasks: finish what's running, then stop
+		// launching once cumulative spend crosses --max-cost.
+		if *maxCost > 0 && spent >= *maxCost {
+			skipped = len(tasks) - i
+			fmt.Fprintf(os.Stderr, "max-cost $%.4f reached after $%.4f; skipping %d remaining task(s)\n", *maxCost, spent, skipped)
+			break
+		}
 		dir := filepath.Join(base, fmt.Sprintf("%02d-%s", i, t.Name))
-		rep, err := liveeval.Run(context.Background(), backend, dir, t)
+		rep, err := liveeval.Run(ctx, backend, dir, t)
 		if err != nil {
 			return fmt.Errorf("%s: %w", t.Name, err)
 		}
 		reports = append(reports, rep)
+		spent += evalCost(rep.Metrics, priceMap, *price)
+
+		if *otelExport && otel.Enabled() {
+			if led, lerr := ledger.Open(filepath.Join(dir, "events.jsonl")); lerr == nil {
+				if evs, rerr := led.Read(); rerr == nil {
+					if eerr := otel.ExportTask(ctx, evs, rep.Metrics, rep.MAST, priceMap, t.Name); eerr != nil {
+						fmt.Fprintf(os.Stderr, "otel export %s: %v\n", t.Name, eerr)
+					}
+				}
+			}
+		}
 	}
 
 	if *asJSON {
@@ -571,24 +602,45 @@ func cmdEval(args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(reports)
 	}
-	printEvalTable(reports, *price)
+	printEvalTable(reports, priceMap, *price, skipped)
 	return nil
 }
 
-// printEvalTable renders evaluation reports as a markdown table. pricePerMTok is
-// USD per million tokens for the run's model; 0 leaves the $ column at $0.0000.
-func printEvalTable(reports []liveeval.Report, pricePerMTok float64) {
+// evalCost prices one task's run: per-model when a price map is given, else a
+// flat rate over total tokens. An unpriced run reports $0.
+func evalCost(m metrics.Metrics, priceMap map[string]float64, flat float64) float64 {
+	if len(priceMap) > 0 {
+		return metrics.USD(m.TokensByModel, priceMap)
+	}
+	return float64(m.TokensTotal) / 1e6 * flat
+}
+
+// printEvalTable renders evaluation reports as a markdown table with a per-task $
+// column and an aggregate footer (tokens, $, solve rate, tasks run vs skipped).
+func printEvalTable(reports []liveeval.Report, priceMap map[string]float64, flat float64, skipped int) {
 	fmt.Println("| task | backend | success | merged | tokens | $ | MAST | violations |")
 	fmt.Println("|------|---------|:-------:|-------:|-------:|--:|-----:|-----------:|")
+	var totTokens, solved int
+	var totCost float64
 	for _, r := range reports {
 		ok := "no"
 		if r.Success {
 			ok = "yes"
+			solved++
 		}
-		cost := float64(r.Metrics.TokensTotal) / 1e6 * pricePerMTok
+		cost := evalCost(r.Metrics, priceMap, flat)
+		totTokens += r.Metrics.TokensTotal
+		totCost += cost
 		fmt.Printf("| %s | %s | %s | %d | %d | $%.4f | %d | %d |\n",
 			r.Task, r.Backend, ok, r.Metrics.Merged, r.Metrics.TokensTotal, cost, r.MAST.Total(), len(r.Violations))
 	}
+	ran := len(reports)
+	total := ran + skipped
+	fmt.Printf("\ntotal: solved=%d/%d  tokens=%d  cost=$%.4f  (ran %d/%d", solved, ran, totTokens, totCost, ran, total)
+	if skipped > 0 {
+		fmt.Printf(", skipped %d by --max-cost", skipped)
+	}
+	fmt.Println(")")
 }
 
 // cmdApprove records a human decision on a proposal parked by the approval gate

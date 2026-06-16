@@ -79,6 +79,19 @@ func Load(path string) (Config, error) {
 	return c.withDefaults(), nil
 }
 
+// LoadPricing reads a standalone TOML file holding a [pricing] table (the same
+// shape as Config.Pricing: model id -> USD per million tokens). Used by
+// `aoa eval --price-file` so a multi-model run can be costed per model.
+func LoadPricing(path string) (map[string]float64, error) {
+	var f struct {
+		Pricing map[string]float64 `toml:"pricing"`
+	}
+	if _, err := toml.DecodeFile(path, &f); err != nil {
+		return nil, fmt.Errorf("load pricing %s: %w", path, err)
+	}
+	return f.Pricing, nil
+}
+
 // Save writes the config as TOML to path.
 func (c Config) Save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
