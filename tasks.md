@@ -32,7 +32,7 @@ Honeycomb has **zero** special-casing. See ADR 012.
 | #36 | Adoption docs + examples | ✅ Done — PR #41 merged |
 | (n/a) | #4 harness: cost/OTel/grok passthrough | ✅ Done — PR #42 merged |
 | (n/a) | gitignore `.env` | ✅ Done — PR #43 merged |
-| **#37** | **Live per-append OTel streaming** | ⏸ **Deferred follow-up — open** |
+| #37 | Live per-append OTel streaming | ✅ Done — `aoa run --otel-live` |
 | **#4** | **Run SWE-bench Lite at scale (baseline → README)** | 🔲 **Open — user-driven live run** |
 
 All work is on `main`. No open PRs. `make check` is green (one flaky test — see Gotchas).
@@ -131,11 +131,19 @@ price in `examples/sample-aoa.toml` (`grok = 5.0`) matches real pricing before t
 `Result.Tokens` (check `internal/agent/grok.go`). If `Model` is `""`, per-model pricing via
 `--price-file` won't match; fall back to a flat `--price` or fix the backend to report its model id.
 
-### ⏸ #37 — Live per-append OTel streaming (deferred)
-Open as a follow-up. Stream each appended `api.Event` to a live span as it happens (a ledger/orchestrator
-seam) so traces appear **during** `aoa run`, not just post-hoc. Must stay off-by-default and never
-networked in the hermetic suite. Reuse the span model in `internal/otel`. Only build if live traces are
-actually wanted — post-hoc replay already covers benchmarks/CI.
+### ✅ #37 — Live per-append OTel streaming (DONE)
+`internal/otel/live.go` (`Live`) streams the goal → ticket → attempt tree as events are appended:
+- **Seam:** `ledger.SetAppendHook(fn)` calls `fn(event)` under the append lock, in sequence order
+  (fast/non-blocking by contract — span bookkeeping only; the SDK BatchSpanProcessor exports async).
+- **CLI:** `aoa run --otel-live`. It `Seed`s the existing log (opening backdated spans for in-flight
+  goals/tickets), registers `Observe` as the hook for the run, then `Shutdown` closes open spans + flushes.
+- **One state machine, two modes:** `observe(e, live)` — `Seed` replays history with backdated
+  timestamps (finished work opens+closes; in-flight stays open); `Observe` streams new events at
+  wall-clock now. Same span shape as the post-hoc `Export`.
+- **Off by default:** `NewLive` returns `(nil, nil)` unless `Enabled()`; all methods are nil-safe no-ops.
+  `internal/otel/live_test.go` asserts the streamed `goal/ticket/attempt` tree (in-process OTLP receiver)
+  and the disabled no-op path.
+- `--otel` (post-hoc) and `--otel-live` are independent; use whichever fits.
 
 ---
 

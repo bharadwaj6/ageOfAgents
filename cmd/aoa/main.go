@@ -86,7 +86,7 @@ Usage:
   aoa init   [--path DIR] [--repo PATH]   Scaffold a workspace + integration repo
   aoa goal   [--path DIR] "objective"     Submit a goal
   aoa amend  [--path DIR] <goal-id> "..."  Append steering guidance to a goal mid-run
-  aoa run    [--path DIR] [--once]        Run the reconciler (loop by default)
+  aoa run    [--path DIR] [--once] [--otel | --otel-live]  Run the reconciler (loop by default)
   aoa status [--path DIR] [--watch]       Show goals and tickets (--watch to live-refresh)
   aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
@@ -320,6 +320,7 @@ func cmdRun(args []string) error {
 	path := fs.String("path", ".", "workspace root")
 	once := fs.Bool("once", false, "run a single reconcile pass instead of looping")
 	otelExport := fs.Bool("otel", false, "after the run, replay the Event Log to OTLP (needs OTEL_EXPORTER_OTLP_ENDPOINT)")
+	otelLive := fs.Bool("otel-live", false, "stream spans to OTLP live as events happen (instead of one post-hoc export)")
 	_ = fs.Parse(args)
 
 	ws, err := workspaceAt(*path)
@@ -331,13 +332,38 @@ func cmdRun(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	if *once {
-		if err := o.ReconcileOnce(ctx); err != nil {
+
+	// Live streaming: open spans for any in-flight work, then have the ledger feed
+	// each new event to the emitter as it's appended (off unless an endpoint is set).
+	var live *otel.Live
+	if *otelLive {
+		if !otel.Enabled() {
+			fmt.Fprintln(os.Stderr, "note: --otel-live set but OTEL_EXPORTER_OTLP_ENDPOINT is unset; skipping")
+		} else if live, err = otel.NewLive(ctx); err != nil {
 			return err
+		} else {
+			if seed, rerr := led.Read(); rerr == nil {
+				live.Seed(seed)
+			}
+			led.SetAppendHook(live.Observe)
 		}
-	} else if err := o.Run(ctx); err != nil {
+	}
+
+	if *once {
+		err = o.ReconcileOnce(ctx)
+	} else {
+		err = o.Run(ctx)
+	}
+	if live != nil {
+		led.SetAppendHook(nil)
+		if serr := live.Shutdown(ctx); serr != nil && err == nil {
+			err = serr
+		}
+	}
+	if err != nil {
 		return err
 	}
+
 	cfg, _ := config.Load(ws.configPath)
 	if *otelExport {
 		if err := exportOTel(ws, led, cfg); err != nil {

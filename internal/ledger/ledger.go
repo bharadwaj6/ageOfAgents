@@ -19,9 +19,21 @@ import (
 
 // Ledger is a concurrency-safe append-only event log backed by a JSONL file.
 type Ledger struct {
-	mu      sync.Mutex
-	path    string
-	nextSeq int
+	mu       sync.Mutex
+	path     string
+	nextSeq  int
+	onAppend func(api.Event) // optional; called under the lock in append order
+}
+
+// SetAppendHook registers fn to be called with each event right after it is
+// durably appended, in sequence order (it runs under the ledger lock, so it must
+// be fast and non-blocking — e.g. enqueue, don't do I/O). Used to stream events
+// to a live observer such as the OTel exporter; pass nil to clear. The hook is
+// purely observational and never affects the log.
+func (l *Ledger) SetAppendHook(fn func(api.Event)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.onAppend = fn
 }
 
 // Open opens (or creates) the ledger at path, creating parent directories as
@@ -71,6 +83,9 @@ func (l *Ledger) Append(e api.Event) (api.Event, error) {
 	}
 
 	l.nextSeq++
+	if l.onAppend != nil {
+		l.onAppend(e) // under the lock ⇒ delivered in sequence order
+	}
 	return e, nil
 }
 
