@@ -231,7 +231,9 @@ are met.
 - [x] **#35** Cost-sensitive eval — `aoa eval --price-file` (per-model $), `--max-cost` (ceiling, halts
       between tasks), per-task $ + footer, `--otel` (each task its own trace). *Unblocks a cost-capped #4.*
 - [x] **#36** Real-world adoption docs — config reference, integrations index, worked `examples/`.
-- [ ] **#37** Live per-append OTel streaming — *deferred follow-up* (post-hoc replay shipped first).
+- [x] **#37** Live per-append OTel streaming — `internal/otel.Live` streams the goal → ticket → attempt
+      tree as events are appended (ledger append hook + `aoa run --otel-live`); seeds in-flight work from
+      the existing log, off by default. Post-hoc `--otel` still available.
 
 **P3 — deferred (closed as not-planned; reopen when the gate is met)**
 - [x] **#16** Speculative/batched merge with an adaptive window — *closed.* #13 shipped the instrumentation
@@ -250,8 +252,9 @@ largely already shipped as emergent decomposition (ADR 006/007); its remaining h
 each merge) pays off only past single-file Lite work — folded into #13 / future multi-file work.
 
 **Last status:** P1 + P2 shipped (#5–#15); the observability & adoption cluster shipped and merged
-(#33–#36, PRs #38–#41) — `aoa` is now OpenTelemetry-native and documented for adoption; P3 (#16–#18) and
-#37 deferred with explicit reopen gates. **Only P0 #4 remains** — the at-scale SWE-bench Lite run. The
+(#33–#37, PRs #38–#41 + the live-streaming follow-up) — `aoa` is now OpenTelemetry-native (post-hoc
+**and** live), documented for adoption; P3 (#16–#18) deferred with explicit reopen gates. **Only P0 #4
+remains** — the at-scale SWE-bench Lite run. The
 harness is fully ready and now **cost-capped + OTel-instrumented**: `scripts/eval_swebench.sh` (and the
 Docker variant) accept `BACKEND=grok`, `LIMIT`, and `MAX_COST` / `PRICE_FILE` / `OTEL` so a 20-instance,
 budget-bounded, traced run is one command (needs a Grok key + the Lite dataset). That single empirical

@@ -14,11 +14,14 @@ entirely through the standard OTel environment variables, so any OTLP backend wo
 ```sh
 export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"   # your Collector / vendor endpoint
 export OTEL_SERVICE_NAME="aoa"
-aoa run --otel        # reconcile, then export
+aoa run --otel        # reconcile, then export (post-hoc)
+aoa run --otel-live   # stream spans as events happen, during the run
 aoa otel export       # or export an existing workspace's log on demand
 ```
 
-With no endpoint set, `--otel` is a no-op and `aoa otel export` exits with a clear message.
+`--otel` exports once after the run; `--otel-live` streams the goal → ticket → attempt tree as it
+unfolds (it also backfills spans for any work already in flight). With no endpoint set, both are no-ops
+and `aoa otel export` exits with a clear message.
 
 | Backend | How |
 |---------|-----|

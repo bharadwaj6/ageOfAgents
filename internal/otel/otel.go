@@ -41,6 +41,21 @@ func Enabled() bool {
 		os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") != ""
 }
 
+// newResource builds the OTLP resource: service.name defaults to "aoa" but is
+// overridden by OTEL_SERVICE_NAME (via WithFromEnv) and then by any extra
+// attributes the caller passes (e.g. a per-eval-task service name).
+func newResource(ctx context.Context, extra ...attribute.KeyValue) (*resource.Resource, error) {
+	res, err := resource.New(ctx,
+		resource.WithAttributes(attribute.String("service.name", "aoa")),
+		resource.WithFromEnv(),
+		resource.WithAttributes(extra...),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("otel resource: %w", err)
+	}
+	return res, nil
+}
+
 // Export ships the event history as OTLP traces (a goal → ticket → attempt span
 // tree, with each event riding as a span event) and the computed views as OTLP
 // metrics, then flushes and shuts the exporters down. price (USD per million
@@ -52,13 +67,9 @@ func Export(ctx context.Context, events []api.Event, m metrics.Metrics, d diagno
 		return nil
 	}
 
-	res, err := resource.New(ctx,
-		resource.WithAttributes(attribute.String("service.name", "aoa")), // default; OTEL_SERVICE_NAME overrides
-		resource.WithFromEnv(),
-		resource.WithAttributes(extra...), // caller (e.g. per eval task) wins
-	)
+	res, err := newResource(ctx, extra...)
 	if err != nil {
-		return fmt.Errorf("otel resource: %w", err)
+		return err
 	}
 
 	texp, err := otlptracehttp.New(ctx) // reads OTEL_EXPORTER_OTLP_* from env
