@@ -49,6 +49,9 @@ type Config struct {
 	// spend governor stops dispatching its remaining work (circuit breaker).
 	// 0 = unlimited (default).
 	MaxTokensPerGoal int `toml:"max_tokens_per_goal"`
+	// MaxUsdPerGoal caps the dollar amount a single Goal may spend.
+	// Requires [pricing] to be set. 0 = unlimited (default).
+	MaxUsdPerGoal float64 `toml:"max_usd_per_goal"`
 	// RetryBackoff is the base wait before re-dispatching a failed ticket, as a
 	// duration string (e.g. "2s"); the wait grows exponentially per attempt.
 	// Empty or "0s" = retry immediately (default).

@@ -842,6 +842,8 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		WorktreeBase:       ws.worktreeBase,
 		RequireApproval:    cfg.RequireApproval,
 		MaxTokensPerGoal:   cfg.MaxTokensPerGoal,
+		MaxUsdPerGoal:      cfg.MaxUsdPerGoal,
+		Pricing:            cfg.Pricing,
 		RetryBackoff:       backoff,
 		CrashLoopThreshold: cfg.CrashLoopThreshold,
 	}

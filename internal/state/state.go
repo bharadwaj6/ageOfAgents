@@ -35,9 +35,10 @@ func (s TicketStatus) IsTerminal() bool {
 type Goal struct {
 	ID             string
 	Text           string
-	Amendments     []string // steering guidance appended mid-run (GoalAmended)
-	TokensSpent    int      // LLM tokens charged to this Goal's tickets (spend governor)
-	BudgetExceeded bool     // the per-Goal token budget tripped; no more work is dispatched
+	Amendments     []string       // steering guidance appended mid-run (GoalAmended)
+	TokensSpent    int            // LLM tokens charged to this Goal's tickets (spend governor)
+	TokensByModel  map[string]int // LLM tokens charged to this Goal, broken down by model
+	BudgetExceeded bool           // the per-Goal token/USD budget tripped; no more work is dispatched
 }
 
 // EffectiveText is the Goal's text plus any mid-run amendments, as handed to a
@@ -55,6 +56,21 @@ func (g *Goal) EffectiveText() string {
 		b.WriteString(a)
 	}
 	return b.String()
+}
+
+// CostUSD computes the total USD cost of the Goal based on the provided pricing map
+// (which maps model ID to USD per million tokens).
+func (g *Goal) CostUSD(pricing map[string]float64) float64 {
+	if len(pricing) == 0 {
+		return 0
+	}
+	var total float64
+	for model, tokens := range g.TokensByModel {
+		if rate, ok := pricing[model]; ok {
+			total += (float64(tokens) / 1_000_000.0) * rate
+		}
+	}
+	return total
 }
 
 // Ticket is a unit of work in the task graph.
@@ -116,7 +132,7 @@ func (s *State) Apply(e api.Event) error {
 		if err := e.DecodePayload(&p); err != nil {
 			return err
 		}
-		s.Goals[p.GoalID] = &Goal{ID: p.GoalID, Text: p.Text}
+		s.Goals[p.GoalID] = &Goal{ID: p.GoalID, Text: p.Text, TokensByModel: map[string]int{}}
 
 	case api.TicketCreated:
 		var p api.TicketCreatedPayload
@@ -157,6 +173,9 @@ func (s *State) Apply(e api.Event) error {
 			t.LastActivity = e.Timestamp
 			if g := s.Goals[t.GoalID]; g != nil {
 				g.TokensSpent += p.Tokens
+				if p.Model != "" {
+					g.TokensByModel[p.Model] += p.Tokens
+				}
 			}
 		}
 
@@ -213,6 +232,9 @@ func (s *State) Apply(e api.Event) error {
 			t.LastActivity = e.Timestamp
 			if g := s.Goals[t.GoalID]; g != nil {
 				g.TokensSpent += p.Tokens
+				if p.Model != "" {
+					g.TokensByModel[p.Model] += p.Tokens
+				}
 			}
 		}
 
