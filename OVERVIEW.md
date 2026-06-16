@@ -56,26 +56,17 @@ We've achieved the latter, landing a 50% pass@1 solve-rate on a verified 20-inst
 
 Roughly in priority order. Tracked against the GitHub `v0.1 — measured & adoptable` milestone.
 
-1. **No CI.** There are no GitHub Actions; `make check` is a local-only gate. A green-on-PR workflow
-   (build + vet + test + gofmt, plus a re-run on the known flaky test) would stop regressions from
-   reaching `main`.
-2. **Flaky `internal/worktree` test.** An APFS `RemoveAll` race under parallel load (mitigated with
-   `gc.auto=0`, not eliminated) — it passes on isolated re-run. Worth making teardown deterministic.
-3. **Backend cost fidelity.** Per-model `$` pricing assumes the `claudecode`/`grok` backends populate
-   `Result.Model` and `Result.Tokens`. This needs verifying against the real backends; if `Model` is
-   empty, fall back to a flat `--price` or fix the backend to report its model id.
-4. **Multi-file / cross-cutting work.** Emergent decomposition + disjoint-file batching handle
+1. **Multi-file / cross-cutting work.** Emergent decomposition + disjoint-file batching handle
    single-file, Lite-style tasks well. The other half of a dynamic dependency DAG — recomputing edges
    after each merge — is unbuilt; it only pays off past single-file work.
-5. **A `$` governor in the control plane.** The orchestrator has a *token* spend governor; a true *dollar*
+2. **A `$` governor in the control plane.** The orchestrator has a *token* spend governor; a true *dollar*
    circuit breaker (vs. the eval-loop `--max-cost`) is a follow-up. Live OTel streaming also drops spans
    silently if the export queue saturates (the append hook is non-blocking by design) — fine now, worth a
    metric later.
-6. **More backends & richer integrations.** Only `mock`/`claudecode`/`grok` exist; OpenAI/Gemini/local
-   models would broaden reach. No shipped dashboards-as-code (Grafana/Honeycomb boards) or OTel Collector
-   sample config yet.
-7. **Deferred research bets (#16–#18), closed with explicit reopen gates:** speculative/batched merge with
+3. **More backends & richer integrations.** We have `mock`, `claudecode`, `anthropic`, and `grok`; OpenAI/Gemini/local
+   models would broaden reach. No shipped dashboards-as-code (Grafana/Honeycomb boards) yet.
+4. **Deferred research bets (#16–#18), closed with explicit reopen gates:** speculative/batched merge with
    an adaptive window, best-of-N with the test suite as verifier, and SPRT early-stopping for live evals.
    Now that we have a SWE-bench baseline, these can be reopened and A/B tested to measure their impact.
 
-If you're picking this up: start by standing up CI (#1) so the work stays green, and address the flaky test (#2). You can also use our new SWE-bench Lite baseline to start measuring the impact of the deferred research bets (#7). Everything else is incremental.
+If you're picking this up: you can use our new SWE-bench Lite baseline to start measuring the impact of the deferred research bets (#4). Everything else is incremental.
