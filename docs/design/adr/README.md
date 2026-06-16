@@ -16,4 +16,5 @@ corpus under `docs/` (`claude.md`, `gemini.md`, `grok.md`, `perplexity.md`, `res
 | [009](009-live-evaluation-out-of-hermetic-suite.md) | Backend-agnostic live evaluation harness, opt-in and outside the hermetic suite |
 | [010](010-semantic-idempotency.md) | Semantic idempotency via worker-supplied keys (identity, not output) |
 | [011](011-debate-markets-as-offline-tools.md) | Debate/voting/markets rejected as a live control plane, not universally |
+| [012](012-observability-as-replay-projection.md) | Observability is a replay projection to OTLP (OpenTelemetry), off by default |
 
