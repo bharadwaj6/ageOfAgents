@@ -155,15 +155,15 @@ a worked config and copy-paste runbook are in [`examples/`](examples/).
 |---------|--------------|
 | `aoa init [--repo \| --adopt PATH]` | Scaffold a demo, or adopt your own repo (Gate auto-detected) |
 | `aoa goal "…"` | Submit a Goal |
-| `aoa run [--once]` | Run the Scheduler (loops to completion; `--once` for a single pass) |
-| `aoa status` | Goals, Task states, per-ticket tokens, run cost, and a "needs human" handoff for failures |
+| `aoa run [--once] [--otel\|--otel-live]` | Run the Scheduler (loops to completion; `--once` for a single pass) |
+| `aoa status [--watch]` | Goals, Task states, per-ticket tokens, run cost, and a "needs human" handoff for failures |
+| `aoa amend <goal> "…"` | Append steering guidance to a Goal mid-run (future dispatches pick it up; ADR — `GoalAmended`) |
 | `aoa approve \| reject <ticket>` | Decide a proposal parked by the approval gate (ADR 008) |
-| `aoa feed [--type T]` | Print the event stream |
-| `aoa events tail [--count N] \| replay` | Inspect the Event Log |
+| `aoa events tail [--count N] \| replay` (`aoa feed` = deprecated alias) | Inspect the Event Log |
 | `aoa diagnose [--json]` | MAST-style failure-mode histogram for a run |
 | `aoa eval --tasks T [--price-file F] [--max-cost $] [--otel]` | Run end-to-end eval tasks; per-task success, tokens, `$` (with a cost ceiling), MAST |
 | `aoa bench [--json]` | The hermetic coordination benchmark |
-| `aoa otel export` · `aoa run --otel` | Replay the Event Log to OTLP traces + metrics (any OpenTelemetry backend) |
+| `aoa otel export` · `aoa run --otel[-live]` | Replay the Event Log to OTLP traces + metrics — post-hoc, or `--otel-live` to stream live (any OpenTelemetry backend) |
 
 ## Project Layout
 
@@ -173,10 +173,13 @@ a worked config and copy-paste runbook are in [`examples/`](examples/).
 | `internal/ledger` | Append-only JSONL Event Log |
 | `internal/state` | Replays events into current state (Task readiness, dependencies) |
 | `internal/orchestrator` | The Scheduler — the single control loop |
-| `internal/agent` | Backend interface + `mock` / `claudecode` implementations |
+| `internal/agent` | Backend interface + `mock` / `claudecode` / `grok` implementations |
 | `internal/worktree` | Git worktree management for isolated Worker sandboxes |
 | `internal/verify` | The Gate — runs your verification commands |
 | `internal/mergequeue` | The Merge Queue — verify then merge into `main` |
+| `internal/metrics` · `internal/diagnose` | Replay projections: run metrics + the MAST failure-mode histogram |
+| `internal/otel` | Replay projection to OpenTelemetry (OTLP traces + metrics), off by default (ADR 012) |
+| `internal/bench` · `internal/liveeval` | Hermetic coordination benchmark + end-to-end live eval harness |
 | `internal/config` | `aoa.toml` loading |
 | `cmd/aoa` | CLI entry point |
 
@@ -198,7 +201,11 @@ The `mock` Backend makes the full loop hermetic and offline in tests. Real agent
 
 ## Documentation
 
+- [`OVERVIEW.md`](OVERVIEW.md) — **what this repo does, what it aims to be, and where it needs more work**
 - [`docs/design/architecture.md`](docs/design/architecture.md) — design and research basis
+- [`docs/config-reference.md`](docs/config-reference.md) — every `aoa.toml` field, defaults, when to set it
+- [`docs/integrations/`](docs/integrations/README.md) — OpenTelemetry/OTLP (Honeycomb, etc.) + agent backends
+- [`examples/`](examples/) — a copy-paste runbook for adopting your own repo
 - [`docs/design/getting_started.md`](docs/design/getting_started.md) — step-by-step tutorial
 - [`docs/design/live_eval.md`](docs/design/live_eval.md) — running aoa with a real agent (smoke test + SWE-bench)
 - [`docs/design/adr/`](docs/design/adr/) — architecture decision records
