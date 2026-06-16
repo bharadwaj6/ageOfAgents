@@ -1,0 +1,50 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "AOA Metrics Dashboard (Placeholder)",
+      "type": "text",
+      "options": {
+        "content": "# Age of Agents Observability\n\nThis dashboard is a placeholder. Configure a Prometheus datasource in Grafana to visualize the OTLP metrics emitted by AOA for Token Spend, Queue Depth, and MAST failures."
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "schemaVersion": 30,
+  "style": "dark",
+  "tags": [],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "AOA Control Plane",
+  "uid": "aoa-control-plane",
+  "version": 1
+}
