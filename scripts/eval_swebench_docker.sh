@@ -57,7 +57,12 @@ uv run python scripts/swebench_to_tasks.py \
 
 echo ""
 echo "=== Running aoa eval (backend=$BACKEND, inference mode) ==="
-./aoa eval --tasks "$TASKS" --backend "$BACKEND" --json | tee "$AOA_REPORT"
+# Optional cost/OTel knobs (see eval_swebench.sh header): MAX_COST, PRICE_FILE, OTEL.
+EVAL_ARGS=(--tasks "$TASKS" --backend "$BACKEND" --json)
+[ -n "${PRICE_FILE:-}" ] && EVAL_ARGS+=(--price-file "$PRICE_FILE")
+[ -n "${MAX_COST:-}" ]   && EVAL_ARGS+=(--max-cost "$MAX_COST")
+[ -n "${OTEL:-}" ]       && EVAL_ARGS+=(--otel)
+./aoa eval "${EVAL_ARGS[@]}" | tee "$AOA_REPORT"
 
 # ── Phase 2: extract patches ───────────────────────────────────────────────────
 echo ""
