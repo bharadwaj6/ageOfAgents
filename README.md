@@ -59,23 +59,17 @@ by construction (done), cost-bounded and observable so you can run it on real mo
 We've achieved the latter, landing a 50% pass@1 solve-rate on a verified 20-instance SWE-bench Lite subset, allowing future architectural changes to be honestly A/B tested.
 
 
-## Where it needs more work
+## Roadmap
 
-Roughly in priority order. Tracked against the GitHub `v0.1 — measured & adoptable` milestone.
+We've achieved the `v0.1` milestone, bringing dynamic DAG re-evaluation, multi-model fallbacks, log compaction, Docker sandboxing, and native GitHub Actions CI integration.
 
-1. **Multi-file / cross-cutting work.** Emergent decomposition + disjoint-file batching handle
-   single-file, Lite-style tasks well. The other half of a dynamic dependency DAG — recomputing edges
-   after each merge — is unbuilt; it only pays off past single-file work.
-2. **A `$` governor in the control plane.** The orchestrator has a *token* spend governor; a true *dollar*
-   circuit breaker (vs. the eval-loop `--max-cost`) is a follow-up. Live OTel streaming also drops spans
-   silently if the export queue saturates (the append hook is non-blocking by design) — fine now, worth a
-   metric later.
-3. **More backends & richer integrations.** We have `mock`, `claudecode`, `grok`, and `openai`. The `[backends]` plugin architecture natively supports anything OpenAI-compatible (like OpenRouter, DeepSeek, or vLLM). No shipped dashboards-as-code (Grafana/Honeycomb boards) or OTel Collector sample config yet.
-4. **Deferred research bets (#16–#18), closed with explicit reopen gates:** speculative/batched merge with
-   an adaptive window, best-of-N with the test suite as verifier, and SPRT early-stopping for live evals.
-   Now that we have a SWE-bench baseline, these can be reopened and A/B tested to measure their impact.
+Looking forward, the high-level roadmap and long-term items include:
 
-If you're picking this up: you can use our new SWE-bench Lite baseline to start measuring the impact of the deferred research bets (#4). Everything else is incremental.
+1. **Firecracker MicroVM Sandboxing:** We currently support Docker for sandboxing the `Verifier` gate. A future implementation will support Firecracker for stronger multi-tenant isolation and lower overhead, running the verification and agent execution in secure microVMs.
+2. **Persistent Server Mode Enhancements:** We have an initial `aoa serve` implementation for GitHub webhooks. This will be expanded into a robust persistent server mode with a dashboard UI to inspect the Event Log, view active task graphs, and manage the `aoa` orchestrator remotely.
+3. **A `$` Governor in the Control Plane:** The orchestrator currently has a *token* spend governor and a circuit breaker for eval loops. A true cross-run *dollar* circuit breaker is a planned follow-up.
+4. **Cross-Repo Dependency Management:** Currently, `aoa` handles tasks within a single repository workspace. Future enhancements will allow the orchestrator to manage goals spanning multiple repositories, orchestrating atomic merges across microservices.
+5. **Deferred Research Bets:** Speculative/batched merge with an adaptive window, best-of-N with the test suite as verifier, and SPRT early-stopping for live evals. These will be A/B tested against our SWE-bench baseline to measure their impact.
 
 ## Core Concepts
 
