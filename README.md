@@ -44,6 +44,39 @@ boring distributed-systems core, with proofs attached:
 > (the harness is ready; see [`docs/design/live_eval.md`](docs/design/live_eval.md)). Until then, every
 > number in this repo comes from the hermetic `mock` backend and is labeled as such.
 
+## What it aims to be
+
+The thesis: **verification, not intelligence, is the scaling constraint for agentic coding.** Most agent
+frameworks chase orchestration cleverness (role hierarchies, debate, consensus) — exactly the part that
+better models erode. `aoa` bets the opposite way: keep scheduling, state, merge, and done-ness as plain
+deterministic Go gated on objective signals (your build, your tests, the compiler), and let the LLM only
+ever emit a *candidate diff* that the Gate, not the agent, decides on. Better models then only sharpen the
+worker; the control plane is unchanged.
+
+The goal is to be a **tool engineers use daily on real repositories** — not a demo. That means: correct
+by construction (done), cost-bounded and observable so you can run it on real money and see what happened
+(done), adoptable into an existing project in minutes (done), and **empirically validated at scale**. 
+We've achieved the latter, landing a 50% pass@1 solve-rate on a verified 20-instance SWE-bench Lite subset, allowing future architectural changes to be honestly A/B tested.
+
+
+## Where it needs more work
+
+Roughly in priority order. Tracked against the GitHub `v0.1 — measured & adoptable` milestone.
+
+1. **Multi-file / cross-cutting work.** Emergent decomposition + disjoint-file batching handle
+   single-file, Lite-style tasks well. The other half of a dynamic dependency DAG — recomputing edges
+   after each merge — is unbuilt; it only pays off past single-file work.
+2. **A `$` governor in the control plane.** The orchestrator has a *token* spend governor; a true *dollar*
+   circuit breaker (vs. the eval-loop `--max-cost`) is a follow-up. Live OTel streaming also drops spans
+   silently if the export queue saturates (the append hook is non-blocking by design) — fine now, worth a
+   metric later.
+3. **More backends & richer integrations.** We have `mock`, `claudecode`, `grok`, and `openai`. The `[backends]` plugin architecture natively supports anything OpenAI-compatible (like OpenRouter, DeepSeek, or vLLM). No shipped dashboards-as-code (Grafana/Honeycomb boards) or OTel Collector sample config yet.
+4. **Deferred research bets (#16–#18), closed with explicit reopen gates:** speculative/batched merge with
+   an adaptive window, best-of-N with the test suite as verifier, and SPRT early-stopping for live evals.
+   Now that we have a SWE-bench baseline, these can be reopened and A/B tested to measure their impact.
+
+If you're picking this up: you can use our new SWE-bench Lite baseline to start measuring the impact of the deferred research bets (#4). Everything else is incremental.
+
 ## Core Concepts
 
 | Concept | What it is |
