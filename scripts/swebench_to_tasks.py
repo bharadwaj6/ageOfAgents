@@ -72,11 +72,19 @@ def prepare_repo(workdir, instance_id, repo, base_commit):
     `master`/detached HEADs, so we point a `main` branch at the base commit and
     check it out — making aoa's assumptions hold without touching aoa.
     """
+    cache_dir = os.path.expanduser("~/.cache/aoa/swebench_repos")
+    os.makedirs(cache_dir, exist_ok=True)
+    repo_safe = repo.replace("/", "__")
+    cache_path = os.path.join(cache_dir, repo_safe)
+
+    if not os.path.isdir(os.path.join(cache_path, ".git")):
+        git("clone", "--quiet", f"https://github.com/{repo}.git", cache_path)
+
     dest = os.path.join(workdir, instance_id)
     if not os.path.isdir(os.path.join(dest, ".git")):
-        git("clone", "--quiet", f"https://github.com/{repo}.git", dest)
+        git("clone", "--quiet", "--local", cache_path, dest)
     git("-C", dest, "checkout", "--quiet", base_commit)
-    git("-C", dest, "checkout", "-B", "main")  # main == base_commit, checked out
+    git("-C", dest, "checkout", "-B", "main")
     return dest
 
 

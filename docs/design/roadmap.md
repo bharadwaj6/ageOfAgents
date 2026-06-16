@@ -222,6 +222,17 @@ are met.
       pending #11).
 - [x] **#15** README/positioning reframe ("Bors for AI agents, with the receipts").
 
+**Observability & adoption (OTel-native + real-world usability)** — *done (PRs #38, #39, #40, #41)*
+- [x] **#33** OpenTelemetry-native observability via replay-to-OTel — `internal/otel` projects the Event
+      Log into OTLP traces (goal → ticket → attempt spans) + metrics (`aoa.*`, incl. MAST + `cost_usd`),
+      off by default, vendor-agnostic (`aoa otel export` / `aoa run --otel`). ADR 012.
+- [x] **#34** Honeycomb integration — `scripts/otel_smoke.sh` + `docs/integrations/honeycomb.md`; proven
+      through standard OTLP env vars, no vendor code.
+- [x] **#35** Cost-sensitive eval — `aoa eval --price-file` (per-model $), `--max-cost` (ceiling, halts
+      between tasks), per-task $ + footer, `--otel` (each task its own trace). *Unblocks a cost-capped #4.*
+- [x] **#36** Real-world adoption docs — config reference, integrations index, worked `examples/`.
+- [ ] **#37** Live per-append OTel streaming — *deferred follow-up* (post-hoc replay shipped first).
+
 **P3 — deferred (closed as not-planned; reopen when the gate is met)**
 - [x] **#16** Speculative/batched merge with an adaptive window — *closed.* #13 shipped the instrumentation
       (`merge_queue_wait_*`) + the cheap disjoint-batcher. **Reopen when** `merge_queue_wait_mean` climbs
@@ -238,10 +249,13 @@ tests* (the chaos harness + TLA+ spec + hermetic `mock` already do this). CAID's
 largely already shipped as emergent decomposition (ADR 006/007); its remaining half (recompute edges after
 each merge) pays off only past single-file Lite work — folded into #13 / future multi-file work.
 
-**Last status:** P1 + P2 shipped and merged (#5–#15, ten PRs); P3 (#16–#18) closed as deferred with
-explicit reopen gates. **Only P0 #4 remains** — the at-scale SWE-bench Lite run (needs API budget; the
-harness, cost columns, and adopt path are all ready). That single empirical artifact is what converts the
-project from "measured architecture" to "measured tool."
+**Last status:** P1 + P2 shipped (#5–#15); the observability & adoption cluster shipped and merged
+(#33–#36, PRs #38–#41) — `aoa` is now OpenTelemetry-native and documented for adoption; P3 (#16–#18) and
+#37 deferred with explicit reopen gates. **Only P0 #4 remains** — the at-scale SWE-bench Lite run. The
+harness is fully ready and now **cost-capped + OTel-instrumented**: `scripts/eval_swebench.sh` (and the
+Docker variant) accept `BACKEND=grok`, `LIMIT`, and `MAX_COST` / `PRICE_FILE` / `OTEL` so a 20-instance,
+budget-bounded, traced run is one command (needs a Grok key + the Lite dataset). That single empirical
+artifact is what converts the project from "measured architecture" to "measured tool."
 
 ---
 
