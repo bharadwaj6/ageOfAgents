@@ -30,19 +30,21 @@ import (
 
 // Options configures an Orchestrator. Zero values fall back to sane defaults.
 type Options struct {
-	Concurrency        int           // max Workers in flight (Concurrency Limit); default 4
-	MaxAttempts        int           // attempts per Task before failing; default 2
-	Conventions        string        // injected into every agent prompt (Conventions)
-	WorktreeBase       string        // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
-	StallTimeout       time.Duration // no-progress timeout for the Stall Detector; default 2m
-	MaxPasses          int           // safety bound on Scheduler passes in Run; default 1000
-	MaxGraphDepth      int           // max emergent decomposition depth (graph governor); default 5
-	MaxTicketsPerGoal  int           // max tickets a single Goal may spawn (graph governor); default 64
-	MaxFanOut          int           // max NEW children one decomposition may emit (graph governor); default 8
-	MaxTokensPerGoal   int           // per-Goal token budget; the spend governor stops a Goal past it; 0 = unlimited
-	RequireApproval    bool          // park each verified proposal for human approval before merge (ADR 008)
-	RetryBackoff       time.Duration // base wait before re-dispatching a failed ticket (exponential per attempt); 0 = off
-	CrashLoopThreshold int           // N identical-reason verify failures in a row → give up even under MaxAttempts; default 3
+	Concurrency        int                // max Workers in flight (Concurrency Limit); default 4
+	MaxAttempts        int                // attempts per Task before failing; default 2
+	Conventions        string             // injected into every agent prompt (Conventions)
+	WorktreeBase       string             // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
+	StallTimeout       time.Duration      // no-progress timeout for the Stall Detector; default 2m
+	MaxPasses          int                // safety bound on Scheduler passes in Run; default 1000
+	MaxGraphDepth      int                // max emergent decomposition depth (graph governor); default 5
+	MaxTicketsPerGoal  int                // max tickets a single Goal may spawn (graph governor); default 64
+	MaxFanOut          int                // max NEW children one decomposition may emit (graph governor); default 8
+	MaxTokensPerGoal   int                // per-Goal token budget; the spend governor stops a Goal past it; 0 = unlimited
+	MaxUsdPerGoal      float64            // per-Goal USD budget; 0 = unlimited
+	Pricing            map[string]float64 // maps model ID to USD per million tokens
+	RequireApproval    bool               // park each verified proposal for human approval before merge (ADR 008)
+	RetryBackoff       time.Duration      // base wait before re-dispatching a failed ticket (exponential per attempt); 0 = off
+	CrashLoopThreshold int                // N identical-reason verify failures in a row → give up even under MaxAttempts; default 3
 	Now                func() time.Time
 	Sleep              func(time.Duration) // injectable for tests; default time.Sleep
 }
@@ -158,9 +160,9 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		}
 	}
 
-	// 1b. Spend governor: stop Goals that have exhausted their token budget
+	// 1b. Spend governor: stop Goals that have exhausted their token or USD budget
 	// before dispatching any more work (circuit breaker).
-	if o.opt.MaxTokensPerGoal > 0 {
+	if o.opt.MaxTokensPerGoal > 0 || o.opt.MaxUsdPerGoal > 0 {
 		if s, err = o.loadState(); err != nil {
 			return err
 		}
@@ -497,14 +499,28 @@ func childID(parentID, local string) string { return parentID + "/" + local }
 // breaker bounds the *next* wave, which is the right granularity for a governor.
 func (o *Orchestrator) enforceBudgets(s *state.State) error {
 	for _, g := range sortedGoals(s) {
-		if g.TokensSpent < o.opt.MaxTokensPerGoal {
+		tokenExceeded := o.opt.MaxTokensPerGoal > 0 && g.TokensSpent >= o.opt.MaxTokensPerGoal
+		usdExceeded := o.opt.MaxUsdPerGoal > 0 && g.CostUSD(o.opt.Pricing) >= o.opt.MaxUsdPerGoal
+
+		if !tokenExceeded && !usdExceeded {
 			continue
 		}
 		if !g.BudgetExceeded {
-			if err := o.emit(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{
-				GoalID: g.ID, SpentTokens: g.TokensSpent, Limit: o.opt.MaxTokensPerGoal,
-			}); err != nil {
-				return err
+			if tokenExceeded {
+				if err := o.emit(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{
+					GoalID: g.ID, SpentTokens: g.TokensSpent, Limit: o.opt.MaxTokensPerGoal,
+				}); err != nil {
+					return err
+				}
+			} else if usdExceeded {
+				// We reuse GoalBudgetExceeded with an implied USD limit reason since we don't have
+				// a specific API event for USD limit. We'll set limit to 0 and rely on Reason if we had one.
+				// Wait, GoalBudgetExceededPayload doesn't have CostUSD. Let's just emit it with SpentTokens to log it.
+				if err := o.emit(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{
+					GoalID: g.ID, SpentTokens: g.TokensSpent, Limit: 0, // Using 0 to distinguish USD trip if needed
+				}); err != nil {
+					return err
+				}
 			}
 		}
 		var doomed []*state.Ticket
