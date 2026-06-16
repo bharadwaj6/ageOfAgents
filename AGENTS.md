@@ -42,7 +42,11 @@ User-facing docs use plain names; the Go code uses more specific identifiers. He
 5. **Agents coordinate through the Shared Log, not messages.** Extend the Task Graph by emitting
    `TicketCreated`; do not add agent-to-agent messaging. (ADR 006)
 6. **Keep it small and portable.** One static binary, one config file, git only. Adding a third-party
-   dependency or a required external service needs a strong justification (and probably an ADR).
+   dependency or a required external service needs a strong justification (and probably an ADR). The one
+   sanctioned dependency cluster is the OpenTelemetry SDK (ADR 012) — and it stays **isolated in
+   `internal/otel` and opt-in**: the binary still needs zero external services to run, and the hermetic
+   suite never networks. New observability = extend the replay projection in `internal/otel`, never
+   instrument the control loop.
 
 ## Build, test, run
 
@@ -83,10 +87,13 @@ suite never makes network calls. Always keep it that way: tests must pass with n
 | `internal/ledger` | Append-only JSONL Event Log | Keep `Append` concurrency-safe |
 | `internal/state` | Replay events → state, Task Graph readiness | Pure functions only; no I/O |
 | `internal/orchestrator` | The Scheduler (single control loop) | Keep dispatch decoupled from the Merge Queue |
-| `internal/agent` | `Backend` interface + `mock`/`claudecode` | New Backends implement `Backend`; keep `mock` deterministic |
+| `internal/agent` | `Backend` interface + `mock`/`claudecode`/`grok` | New Backends implement `Backend`; keep `mock` deterministic |
 | `internal/worktree` | Git repo + isolated worktrees | All git calls use the config-independent identity helper |
 | `internal/verify` | The Gate (objective verification) | Pure command runner; no orchestration logic |
-| `internal/mergequeue` | Verify → merge → rollback | Must leave `main` green and linearizable |
+| `internal/mergequeue` | Verify → merge → rollback (+ disjoint-file batching) | Must leave `main` green and linearizable |
+| `internal/metrics`, `internal/diagnose` | Replay projections: run metrics + MAST failure-mode histogram | Pure functions of the event log; no instrumentation |
+| `internal/otel` | Replay projection to OpenTelemetry (OTLP traces+metrics) | Off by default; never in the hot path; never networks in tests (ADR 012) |
+| `internal/bench`, `internal/liveeval` | Hermetic coordination benchmark + live eval harness | `liveeval` is networked only with a networked Backend (ADR 009) |
 | `internal/config` | `aoa.toml` loading | Add a field → set a default in `Default()` |
 | `cmd/aoa` | Tiny stdlib CLI | No CLI framework dependency |
 
@@ -98,7 +105,10 @@ suite never makes network calls. Always keep it that way: tests must pass with n
 - **Errors:** wrap with context (`fmt.Errorf("...: %w", err)`); surface errors, don't swallow them.
 - **Commits:** Conventional Commits, subject ≤72 chars. Do **not** put AI model names in commit
   subjects/bodies (the `Co-Authored-By` trailer is the only AI attribution).
-- **Worktree/branch:** this branch (`fresh-start`) lives in a git worktree; the workspace root stays on `main`.
+- **Worktree/branch:** `main` is protected and a global post-checkout hook reverts the workspace root to
+  `main`, so do feature work in a **`git worktree`** off `main`, commit there, push the branch, open a PR
+  (one PR per increment). Rebase-merge. If a stacked PR conflicts after its base merges, rebase it onto
+  `origin/main` (the base commit is auto-skipped) and force-push.
 
 ## Common tasks
 
@@ -107,3 +117,6 @@ suite never makes network calls. Always keep it that way: tests must pass with n
 - **Add a lifecycle event:** add the constant + payload in `pkg/api/events.go`, handle it in
   `internal/state/state.go:Apply`, emit it from `internal/orchestrator`, and cover it with a test.
 - **Change the Gate:** edit `verify` in `aoa.toml`; the Merge Queue verifies the post-merge state.
+- **Add observability (metric/span):** extend the replay projection in `internal/otel` (and
+  `internal/metrics` for a new number) — never add a span/metric call into the orchestrator or ledger.
+  Keep it behind `Enabled()` so offline runs and tests stay silent.

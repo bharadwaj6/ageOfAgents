@@ -127,13 +127,21 @@ actual → act (dispatch ready Tasks under the Concurrency Limit; run Stall Dete
 | `internal/agent` | `Backend` interface (AI-provider abstraction) + `mock` and `claudecode` Backends. |
 | `internal/worktree` | Git worktree provisioning / cleanup for isolated Worker sandboxes. |
 | `internal/verify` | Run configured Gate commands; capture pass/fail + output. |
-| `internal/mergequeue` | Serialize Proposals → verify → merge to `main` or reject; emit events. |
-| `internal/config` | One TOML config: repo path, Gate commands, concurrency, Backend, Conventions. |
-| `cmd/aoa` | Tiny standard-library CLI (no framework): `init`, `goal`, `run`, `status`, `feed`, `events`. |
+| `internal/mergequeue` | Serialize Proposals → verify → merge to `main` or reject; emit events. Batches disjoint-file Proposals into one Gate run. |
+| `internal/metrics`, `internal/diagnose` | Pure replay projections: run metrics + the MAST/deterministic failure-mode histogram. |
+| `internal/otel` | Replay projection to OpenTelemetry (OTLP traces + metrics), post-hoc or live; off by default (ADR 012). |
+| `internal/bench`, `internal/liveeval` | Hermetic coordination benchmark; backend-agnostic end-to-end eval harness (ADR 009). |
+| `internal/config` | One TOML config: repo path, Gate commands, concurrency, Backend, governors, pricing, Conventions. |
+| `cmd/aoa` | Tiny standard-library CLI (no framework): `init`, `goal`, `amend`, `run`, `status`, `events`, `diagnose`, `eval`, `bench`, `otel`, `approve`/`reject`. |
 
 The **`agent.Backend`** interface is the only seam to the AI. Business logic never calls a provider SDK
 directly. A deterministic **`mock`** Backend lets the entire loop run offline in `go test`; the
-**`claudecode`** Backend drives a real agent as a subprocess in the Task's worktree.
+**`claudecode`** and **`grok`** Backends drive a real agent as a subprocess in the Task's worktree.
+
+**Observability is a projection, not instrumentation.** `metrics`, `diagnose`, and `otel` all derive
+their output by replaying the Event Log — the same discipline as `state.Fold`. Nothing in the control
+loop emits a metric or span; `internal/otel` turns a finished (or streaming) log into OTLP and is inert
+unless an OTLP endpoint is configured, so the offline guarantee holds (ADR 012).
 
 ## 5. Two scalability refinements
 
@@ -143,18 +151,21 @@ directly. A deterministic **`mock`** Backend lets the entire loop run offline in
    (emergent decomposition) — coordination via the Shared Log, no central coordinator.
 2. **The Merge Queue is not a global barrier.** It serializes only *writes to `main`* (required for
    linearizability/correctness); it does **not** block Worker dispatch — Workers keep claiming ready
-   Tasks while the queue drains. *Future optimization (not in the MVP):* verify/merge non-conflicting
-   Proposals (disjoint file sets) in parallel batches.
+   Tasks while the queue drains. It also batches **disjoint-file** Proposals into a single Gate run (with
+   a serial fallback when the sets overlap, or when an approval gate / shadow set is in play), cutting
+   redundant verification without weakening linearizability.
 
 ## 6. Events
 
 A single envelope `{seq, type, ts, actor, payload}` over an append-only JSONL log. The event set is
 deliberately small:
 
-`GoalSubmitted` · `TicketCreated` · `TicketReady` · `TicketClaimed` · `WorkStarted` · `Heartbeat` ·
-`ProposalSubmitted` · `VerificationPassed` · `VerificationFailed` · `Merged` · `TicketFailed` ·
+`GoalSubmitted` · `TicketCreated` · `TicketDecomposed` · `TicketReady` · `TicketClaimed` · `WorkStarted` ·
+`Heartbeat` · `ProposalSubmitted` · `VerificationPassed` · `VerificationFailed` · `Merged` · `TicketFailed` ·
 `WorkerStalled` · `WorkerRestarted`. The optional human-in-the-loop approval gate (ADR 008) adds
-`ApprovalRequested` · `ApprovalGranted` · `ApprovalDenied`.
+`ApprovalRequested` · `ApprovalGranted` · `ApprovalDenied`. Cost/safety and steering add
+`GoalBudgetExceeded` (spend governor), `RegressionEscaped` (the Gate's measured blind spot), and
+`GoalAmended` (mid-run steering). Every metric, trace, and diagnosis is derived from this one stream.
 
 State (Tasks, dependency readiness, Worker status, the Merge Queue) is derived by replaying this stream;
 there is no separate mutable store to keep consistent.
