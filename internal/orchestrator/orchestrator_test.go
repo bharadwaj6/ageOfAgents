@@ -18,6 +18,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/verify"
 	"github.com/bharadwaj6/ageOfAgents/internal/worktree"
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
+	"github.com/stretchr/testify/require"
 )
 
 func requireGit(t *testing.T) {
@@ -46,7 +47,8 @@ func setup(t *testing.T, backend agent.Backend, gate verify.Verifier, opt Option
 	// admin files under <repo>/.git/worktrees race cleanup under parallel load.
 	// Registered after t.TempDir so it runs first (LIFO).
 	t.Cleanup(func() {
-		out, _ := exec.Command("git", "-C", repo.Dir, "worktree", "list", "--porcelain").Output()
+		out, err := exec.Command("git", "-C", repo.Dir, "worktree", "list", "--porcelain").Output()
+		require.NoError(t, err)
 		for _, line := range strings.Split(string(out), "\n") {
 			if path, ok := strings.CutPrefix(line, "worktree "); ok {
 				_ = exec.Command("git", "-C", repo.Dir, "worktree", "remove", "--force", path).Run()
@@ -67,7 +69,8 @@ func setup(t *testing.T, backend agent.Backend, gate verify.Verifier, opt Option
 
 func (h *harness) submitGoal(t *testing.T, id, text string) {
 	t.Helper()
-	ev, _ := api.NewEvent(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: id, Text: text})
+	ev, err := api.NewEvent(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: id, Text: text})
+	require.NoError(t, err)
 	if _, err := h.led.Append(ev); err != nil {
 		t.Fatalf("submit goal: %v", err)
 	}
@@ -89,7 +92,8 @@ func (h *harness) appendAt(t *testing.T, ts time.Time, typ api.EventType, payloa
 
 func (h *harness) state(t *testing.T) *state.State {
 	t.Helper()
-	events, _ := h.led.Read()
+	events, err := h.led.Read()
+	require.NoError(t, err)
 	s, err := state.Fold(events)
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
@@ -265,12 +269,15 @@ func TestDetectStalled(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-10 * time.Minute)
 
-	claim, _ := api.NewEvent(api.TicketClaimed, "o", api.TicketClaimedPayload{TicketID: "t1", Worker: "w"})
+	claim, err := api.NewEvent(api.TicketClaimed, "o", api.TicketClaimedPayload{TicketID: "t1", Worker: "w"})
+	require.NoError(t, err)
 	claim.Seq = 3
 	claim.Timestamp = old
-	created, _ := api.NewEvent(api.TicketCreated, "o", api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k"})
+	created, err := api.NewEvent(api.TicketCreated, "o", api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k"})
+	require.NoError(t, err)
 	created.Seq = 1
-	ready, _ := api.NewEvent(api.TicketReady, "o", api.TicketReadyPayload{TicketID: "t1"})
+	ready, err := api.NewEvent(api.TicketReady, "o", api.TicketReadyPayload{TicketID: "t1"})
+	require.NoError(t, err)
 	ready.Seq = 2
 
 	s, err := state.Fold([]api.Event{created, ready, claim})
@@ -327,7 +334,8 @@ func TestSpendGovernorStopsOverBudgetGoal(t *testing.T) {
 		}
 	}
 	// The trip is recorded exactly once (idempotent breaker).
-	events, _ := h.led.Read()
+	events, err := h.led.Read()
+	require.NoError(t, err)
 	trips := 0
 	for _, e := range events {
 		if e.Type == api.GoalBudgetExceeded {
@@ -457,7 +465,8 @@ func TestCrashLoopGivesUpEarly(t *testing.T) {
 		t.Errorf("Attempts = %d, want 3 (crash loop tripped before MaxAttempts=5)", tk.Attempts)
 	}
 
-	events, _ := h.led.Read()
+	events, err := h.led.Read()
+	require.NoError(t, err)
 	verifFails := 0
 	failReason := ""
 	for _, e := range events {
@@ -548,7 +557,8 @@ func TestBatchMergePathEngagesAndStaysCorrect(t *testing.T) {
 			t.Fatalf("child %s = %+v, want merged", id, tk)
 		}
 	}
-	events, _ := h.led.Read()
+	events, err := h.led.Read()
+	require.NoError(t, err)
 	if d := metrics.Compute(events).MergeQueueMaxDepth; d < 2 {
 		t.Errorf("MergeQueueMaxDepth = %d, want >= 2 (backend+frontend queue together)", d)
 	}
@@ -627,7 +637,8 @@ func TestRegressionEscapeOnCoupledMultiFileChange(t *testing.T) {
 		}
 	}
 	// But the broader Shadow set caught the stale-API regression the Gate missed.
-	events, _ := h.led.Read()
+	events, err := h.led.Read()
+	require.NoError(t, err)
 	m := metrics.Compute(events)
 	if m.RegressionEscapes < 1 || m.RegressionEscapeRate == 0 {
 		t.Errorf("expected a regression escape; got escapes=%d rate=%v", m.RegressionEscapes, m.RegressionEscapeRate)

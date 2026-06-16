@@ -15,6 +15,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/diagnose"
 	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
+	"github.com/stretchr/testify/require"
 )
 
 // stream is a tiny event-log builder with a monotonic clock, mirroring the one
@@ -84,7 +85,8 @@ func TestExportEmitsSpanTree(t *testing.T) {
 		gotMetric bool
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		switch r.URL.Path {
 		case "/v1/traces":
 			var req coltrace.ExportTraceServiceRequest

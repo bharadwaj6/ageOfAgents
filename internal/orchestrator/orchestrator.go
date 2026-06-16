@@ -856,6 +856,8 @@ func detectStalled(s *state.State, now time.Time, timeout time.Duration) []*stat
 // ShortID returns 8 hex chars of random entropy, suitable for branch suffixes and goal IDs.
 func ShortID() string {
 	var b [4]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(fmt.Errorf("crypto/rand failed: %w", err))
+	}
 	return hex.EncodeToString(b[:])
 }

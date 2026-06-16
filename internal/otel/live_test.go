@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewLiveNilWhenDisabled(t *testing.T) {
@@ -36,7 +37,8 @@ func TestLiveStreamsSpanTree(t *testing.T) {
 		names []string
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		if r.URL.Path == "/v1/traces" {
 			var req coltrace.ExportTraceServiceRequest
 			if proto.Unmarshal(body, &req) == nil {
@@ -74,7 +76,8 @@ func TestLiveStreamsSpanTree(t *testing.T) {
 		{api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "t1", Tokens: 10, Model: "grok"}},
 		{api.Merged, api.MergedPayload{TicketID: "t1"}},
 	} {
-		ev, _ := api.NewEvent(e.typ, "test", e.pl)
+		ev, err := api.NewEvent(e.typ, "test", e.pl)
+		require.NoError(t, err)
 		live.Observe(ev)
 	}
 	if err := live.Shutdown(context.Background()); err != nil {

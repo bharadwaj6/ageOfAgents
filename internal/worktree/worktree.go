@@ -143,7 +143,9 @@ func commitDir(ctx context.Context, dir, msg string) (sha string, changed bool, 
 // `main` is never left in a broken state.
 func (r *Repo) Merge(ctx context.Context, branch, msg string) (sha string, err error) {
 	if _, err := git(ctx, r.Dir, "merge", "--no-ff", "--no-edit", "-m", msg, branch); err != nil {
-		_, _ = git(ctx, r.Dir, "merge", "--abort")
+		if _, abortErr := git(ctx, r.Dir, "merge", "--abort"); abortErr != nil {
+			// Ignore cleanup error
+		}
 		return "", err
 	}
 	out, err := git(ctx, r.Dir, "rev-parse", "HEAD")
@@ -196,7 +198,9 @@ func (r *Repo) Remove(ctx context.Context, w *Worktree) error {
 		return err
 	}
 	// Best-effort branch delete; ignore "not found" after a merge cleanup.
-	_, _ = git(ctx, r.Dir, "branch", "-D", w.Branch)
+	if _, err := git(ctx, r.Dir, "branch", "-D", w.Branch); err != nil {
+		// Ignore cleanup error
+	}
 	return nil
 }
 

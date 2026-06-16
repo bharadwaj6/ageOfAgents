@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
+	"github.com/stretchr/testify/require"
 )
 
 // seq builds a sequenced event stream for the checkers.
@@ -118,9 +119,10 @@ func TestApprovalGateFlagsMergeWithoutGrant(t *testing.T) {
 }
 
 func TestMonotonicGaplessSeqFlagsGap(t *testing.T) {
-	e1, _ := api.NewEvent(api.Heartbeat, "x", api.HeartbeatPayload{})
-	e1.Seq = 1
-	e2, _ := api.NewEvent(api.Heartbeat, "x", api.HeartbeatPayload{})
+	e1, err := api.NewEvent(api.Heartbeat, "x", api.HeartbeatPayload{})
+	require.NoError(t, err)
+	e2, err := api.NewEvent(api.Heartbeat, "x", api.HeartbeatPayload{})
+	require.NoError(t, err)
 	e2.Seq = 3 // gap
 	if vs := MonotonicGaplessSeq([]api.Event{e1, e2}); len(vs) == 0 {
 		t.Error("expected a violation for a sequence gap")

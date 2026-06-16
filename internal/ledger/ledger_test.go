@@ -18,6 +18,13 @@ func mustEvent(t *testing.T, typ api.EventType, payload any) api.Event {
 	return e
 }
 
+func mustAppend(t *testing.T, l *Ledger, e api.Event) {
+	t.Helper()
+	if _, err := l.Append(e); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+}
+
 func TestAppendAssignsMonotonicSeq(t *testing.T) {
 	l, err := Open(filepath.Join(t.TempDir(), "events.jsonl"))
 	if err != nil {
@@ -39,8 +46,8 @@ func TestReadReturnsEventsInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	_, _ = l.Append(mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "do it"}))
-	_, _ = l.Append(mustEvent(t, api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "k1"}))
+	mustAppend(t, l, mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "do it"}))
+	mustAppend(t, l, mustEvent(t, api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "k1"}))
 
 	events, err := l.Read()
 	if err != nil {
@@ -67,8 +74,8 @@ func TestReopenResumesSequence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	_, _ = l1.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
-	_, _ = l1.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+	mustAppend(t, l1, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+	mustAppend(t, l1, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
 
 	l2, err := Open(path)
 	if err != nil {
@@ -98,13 +105,16 @@ func TestReadMissingFileIsEmpty(t *testing.T) {
 }
 
 func TestReplayStopsOnError(t *testing.T) {
-	l, _ := Open(filepath.Join(t.TempDir(), "events.jsonl"))
-	_, _ = l.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
-	_, _ = l.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "b"}))
+	l, err := Open(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	mustAppend(t, l, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+	mustAppend(t, l, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "b"}))
 
 	count := 0
 	sentinel := errSentinel{}
-	err := l.Replay(func(api.Event) error {
+	err = l.Replay(func(api.Event) error {
 		count++
 		return sentinel
 	})
@@ -121,14 +131,17 @@ type errSentinel struct{}
 func (errSentinel) Error() string { return "sentinel" }
 
 func TestConcurrentAppendsUniqueSeq(t *testing.T) {
-	l, _ := Open(filepath.Join(t.TempDir(), "events.jsonl"))
+	l, err := Open(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
 	const n = 50
 	var wg sync.WaitGroup
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			_, _ = l.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+			mustAppend(t, l, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
 		}()
 	}
 	wg.Wait()
@@ -155,14 +168,17 @@ func TestConcurrentAppendsUniqueSeq(t *testing.T) {
 // from interleaved writes.
 func TestConcurrentAppendsGaplessAndParseable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
-	l, _ := Open(path)
+	l, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
 	const n = 300
 	var wg sync.WaitGroup
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			defer wg.Done()
-			_, _ = l.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "w", TicketID: "t"}))
+			mustAppend(t, l, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "w", TicketID: "t"}))
 		}(i)
 	}
 	wg.Wait()
@@ -195,9 +211,12 @@ func TestConcurrentAppendsGaplessAndParseable(t *testing.T) {
 // reopening must repair the file so the next Append produces a clean log.
 func TestReadToleratesTornTrailingLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
-	l, _ := Open(path)
-	_, _ = l.Append(mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "x"}))
-	_, _ = l.Append(mustEvent(t, api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "k"}))
+	l, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	mustAppend(t, l, mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "x"}))
+	mustAppend(t, l, mustEvent(t, api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "k"}))
 
 	// Append a torn line, as a crash would leave it.
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)

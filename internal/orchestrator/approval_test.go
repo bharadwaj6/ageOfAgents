@@ -11,6 +11,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/internal/verify"
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
+	"github.com/stretchr/testify/require"
 )
 
 func (h *harness) appendApproval(t *testing.T, typ api.EventType, payload any) {
@@ -26,7 +27,8 @@ func (h *harness) appendApproval(t *testing.T, typ api.EventType, payload any) {
 
 func (h *harness) checkInvariants(t *testing.T) {
 	t.Helper()
-	events, _ := h.led.Read()
+	events, err := h.led.Read()
+	require.NoError(t, err)
 	if vs := invariant.Check(events); len(vs) != 0 {
 		t.Fatalf("invariant violations: %v", vs)
 	}

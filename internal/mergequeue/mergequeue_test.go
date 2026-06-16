@@ -9,6 +9,7 @@ import (
 
 	"github.com/bharadwaj6/ageOfAgents/internal/verify"
 	"github.com/bharadwaj6/ageOfAgents/internal/worktree"
+	"github.com/stretchr/testify/require"
 )
 
 func requireGit(t *testing.T) {
@@ -66,8 +67,10 @@ func TestProcessRollsBackWhenVerifierFails(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
-	preHead, _ := repo.Head(ctx)
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
+	preHead, err := repo.Head(ctx)
+	require.NoError(t, err)
 	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
 
 	q := New(repo, verify.Verifier{Commands: []verify.Command{{"false"}}})
@@ -81,7 +84,8 @@ func TestProcessRollsBackWhenVerifierFails(t *testing.T) {
 	if out.Reason == "" {
 		t.Error("expected a failure reason")
 	}
-	postHead, _ := repo.Head(ctx)
+	postHead, err := repo.Head(ctx)
+	require.NoError(t, err)
 	if postHead != preHead {
 		t.Errorf("main should be rolled back: pre=%s post=%s", preHead, postHead)
 	}
@@ -94,8 +98,10 @@ func TestDryRunVerifiesWithoutWritingToMain(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
-	preHead, _ := repo.Head(ctx)
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
+	preHead, err := repo.Head(ctx)
+	require.NoError(t, err)
 	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
 
 	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
@@ -109,7 +115,8 @@ func TestDryRunVerifiesWithoutWritingToMain(t *testing.T) {
 	if out.Merged {
 		t.Error("a dry run must never report Merged")
 	}
-	postHead, _ := repo.Head(ctx)
+	postHead, err := repo.Head(ctx)
+	require.NoError(t, err)
 	if postHead != preHead {
 		t.Errorf("main must be unchanged after a dry run: pre=%s post=%s", preHead, postHead)
 	}
@@ -122,8 +129,10 @@ func TestDryRunReportsUnverifiedWhenGateFails(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
-	preHead, _ := repo.Head(ctx)
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
+	preHead, err := repo.Head(ctx)
+	require.NoError(t, err)
 	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
 
 	q := New(repo, verify.Verifier{Commands: []verify.Command{{"false"}}})
@@ -134,7 +143,8 @@ func TestDryRunReportsUnverifiedWhenGateFails(t *testing.T) {
 	if out.Verified || out.Merged {
 		t.Fatalf("failing gate should not verify or merge, got %+v", out)
 	}
-	postHead, _ := repo.Head(ctx)
+	postHead, err := repo.Head(ctx)
+	require.NoError(t, err)
 	if postHead != preHead {
 		t.Errorf("main must be unchanged after a failed dry run: pre=%s post=%s", preHead, postHead)
 	}
@@ -144,7 +154,8 @@ func TestProcessRecordsRegressionEscape(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
 	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
 
 	// Gate passes; the broader Shadow set fails. The merge is kept (the Gate is
@@ -170,12 +181,14 @@ func TestProcessNoEscapeWhenShadowPasses(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
 	p := proposeFile(t, repo, base, "t1", "feature.txt", "hi\n")
 
 	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
 	q.Shadow = verify.Verifier{Commands: []verify.Command{{"true"}}}
-	out, _ := q.Process(ctx, p)
+	out, err := q.Process(ctx, p)
+	require.NoError(t, err)
 	if !out.Merged || out.RegressionEscaped {
 		t.Fatalf("shadow passes → merged with no escape; got %+v", out)
 	}
@@ -185,7 +198,8 @@ func TestProcessBatchMergesDisjointTogether(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
 
 	// Three proposals touching disjoint files — all should merge in one batch.
 	a := proposeFile(t, repo, base, "a", "a.txt", "A\n")
@@ -213,7 +227,8 @@ func TestProcessBatchSerializesOverlapping(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
 
 	// Two proposals both create dup.txt (overlapping files) → they cannot batch.
 	// Processed serially: the first lands; the second textually conflicts and is
@@ -235,7 +250,8 @@ func TestProcessBatchSerializesOverlapping(t *testing.T) {
 	if merged != 1 {
 		t.Fatalf("overlapping proposals: want exactly 1 merged, got %d (%+v)", merged, outs)
 	}
-	got, _ := os.ReadFile(filepath.Join(repo.Dir, "dup.txt"))
+	got, err := os.ReadFile(filepath.Join(repo.Dir, "dup.txt"))
+	require.NoError(t, err)
 	if string(got) != "from-a\n" {
 		t.Errorf("main dup.txt = %q, want a's content (first wins)", got)
 	}
@@ -245,7 +261,8 @@ func TestProcessBatchGateFailureIsolatesCulprit(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
 
 	// Gate fails when a "BAD" marker file exists. a is clean, b is poison; their
 	// files are disjoint so they batch, the union fails the Gate → rollback →
@@ -277,7 +294,8 @@ func TestProcessRejectsOnMergeConflict(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()
 	base := t.TempDir()
-	repo, _ := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
 
 	// Two proposals editing the same file from the same base → second conflicts.
 	a := proposeFile(t, repo, base, "a", "README.md", "version A\n")
@@ -285,10 +303,12 @@ func TestProcessRejectsOnMergeConflict(t *testing.T) {
 
 	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
 
-	if out, _ := q.Process(ctx, a); !out.Merged {
+	out, err := q.Process(ctx, a)
+	require.NoError(t, err)
+	if !out.Merged {
 		t.Fatalf("first proposal should merge, got %+v", out)
 	}
-	out, err := q.Process(ctx, b)
+	out, err = q.Process(ctx, b)
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
@@ -299,7 +319,8 @@ func TestProcessRejectsOnMergeConflict(t *testing.T) {
 		t.Error("expected conflict reason")
 	}
 	// main remains coherent (A's content).
-	got, _ := os.ReadFile(filepath.Join(repo.Dir, "README.md"))
+	got, err := os.ReadFile(filepath.Join(repo.Dir, "README.md"))
+	require.NoError(t, err)
 	if string(got) != "version A\n" {
 		t.Errorf("main README = %q, want A", got)
 	}

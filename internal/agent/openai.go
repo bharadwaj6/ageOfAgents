@@ -163,8 +163,11 @@ func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 			return Result{}, err
 		}
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			return Result{}, fmt.Errorf("read response body: %w", err)
+		}
 
 		if resp.StatusCode != 200 {
 			return Result{}, fmt.Errorf("openai api error: status %d: %s", resp.StatusCode, string(body))
@@ -233,7 +236,16 @@ func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 				})
 				break
 			} else if tc.Function.Name == "bash" {
-				cmdStr, _ := args["command"].(string)
+				cmdStr, ok := args["command"].(string)
+				if !ok {
+					messages = append(messages, openAIMessage{
+						Role:       "tool",
+						ToolCallID: tc.ID,
+						Name:       tc.Function.Name,
+						Content:    "Error: missing or invalid 'command' argument",
+					})
+					continue
+				}
 				trace.WriteString(fmt.Sprintf("\n[tool: bash] %s\n", cmdStr))
 
 				cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)

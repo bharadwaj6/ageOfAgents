@@ -13,6 +13,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/internal/worktree"
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
+	"github.com/stretchr/testify/require"
 )
 
 // TestEndToEnd exercises the real CLI entry points (init → goal → run) against a
@@ -208,9 +209,12 @@ func TestAdoptedRepoRunsOnFeatureBranch(t *testing.T) {
 	if branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD")); branch != "feature" {
 		t.Errorf("repo branch = %q, want feature", branch)
 	}
-	led, _ := ledger.Open(filepath.Join(ws, ".aoa", "events.jsonl"))
-	events, _ := led.Read()
-	s, _ := state.Fold(events)
+	led, err := ledger.Open(filepath.Join(ws, ".aoa", "events.jsonl"))
+	require.NoError(t, err)
+	events, err := led.Read()
+	require.NoError(t, err)
+	s, err := state.Fold(events)
+	require.NoError(t, err)
 	merged := 0
 	for _, tk := range s.Tickets {
 		if tk.Status == state.StatusMerged {

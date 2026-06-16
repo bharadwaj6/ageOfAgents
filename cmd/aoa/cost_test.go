@@ -8,6 +8,7 @@ import (
 
 	"github.com/bharadwaj6/ageOfAgents/internal/liveeval"
 	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEvalCost(t *testing.T) {
@@ -58,6 +59,7 @@ func captureStdout(t *testing.T, fn func()) string {
 	defer func() { os.Stdout = orig }()
 	fn()
 	w.Close()
-	b, _ := io.ReadAll(r)
+	b, err := io.ReadAll(r)
+	require.NoError(t, err)
 	return string(b)
 }
