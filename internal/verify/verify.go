@@ -18,6 +18,7 @@ func (c Command) String() string { return strings.Join(c, " ") }
 // Verifier is an ordered set of commands forming the gate.
 type Verifier struct {
 	Commands []Command
+	Sandbox  string
 }
 
 // Result reports the outcome of running the gate.
@@ -35,8 +36,17 @@ func (v Verifier) Run(ctx context.Context, dir string) Result {
 		if len(c) == 0 {
 			continue
 		}
-		cmd := exec.CommandContext(ctx, c[0], c[1:]...)
-		cmd.Dir = dir
+		var cmd *exec.Cmd
+		if v.Sandbox == "docker" {
+			// Mount dir into the container and execute the command.
+			// Using golang:1.22 as the default sandbox image for Go projects.
+			args := []string{"run", "--rm", "-v", dir + ":/workspace", "-w", "/workspace", "golang:1.22"}
+			args = append(args, c...)
+			cmd = exec.CommandContext(ctx, "docker", args...)
+		} else {
+			cmd = exec.CommandContext(ctx, c[0], c[1:]...)
+			cmd.Dir = dir
+		}
 		b, err := cmd.CombinedOutput()
 		out.Write(b)
 		if err != nil {
