@@ -97,18 +97,39 @@ suite never makes network calls. Always keep it that way: tests must pass with n
 | `internal/config` | `aoa.toml` loading | Add a field → set a default in `Default()` |
 | `cmd/aoa` | Tiny stdlib CLI | No CLI framework dependency |
 
-## Conventions
+## Conventions & Go Best Practices
 
 - **Go style:** standard `gofmt`; doc comment on every exported symbol and package; table-driven tests.
-- **TDD:** every change ships with a test. Mock external processes; use `t.TempDir()` for I/O. Tests must
-  run offline.
-- **Errors:** wrap with context (`fmt.Errorf("...: %w", err)`); surface errors, don't swallow them.
-- **Commits:** Conventional Commits, subject ≤72 chars. Do **not** put AI model names in commit
-  subjects/bodies (the `Co-Authored-By` trailer is the only AI attribution).
-- **Worktree/branch:** `main` is protected and a global post-checkout hook reverts the workspace root to
-  `main`, so do feature work in a **`git worktree`** off `main`, commit there, push the branch, open a PR
-  (one PR per increment). Rebase-merge. If a stacked PR conflicts after its base merges, rebase it onto
-  `origin/main` (the base commit is auto-skipped) and force-push.
+- **TDD:** every change ships with a test. Mock external processes; use `t.TempDir()` for I/O. Tests must run offline.
+- **Naming:** Short for short-lived vars (`i, n, err, ok`). No stuttering (`user.UserID` → `user.ID`). Acronyms should be consistent (`userID`, `httpClient`). Interfaces end in `-er` (`Reader`, `Writer`).
+- **Interfaces:** Accept interfaces, return concrete types. Define interfaces at the call site, not the implementation.
+- **Errors:** Always handle errors explicitly — never assign to `_`. Wrap with context (`fmt.Errorf("context: %w", err)`). Use `errors.Is()` / `errors.As()` for checking. Use custom error types for structured errors. Surface errors, don't swallow them.
+- **Commits:** Conventional Commits, subject ≤72 chars. Do **not** put AI model names in commit subjects/bodies (the `Co-Authored-By` trailer is the only AI attribution).
+- **Worktree/branch:** `main` is protected and a global post-checkout hook reverts the workspace root to `main`, so do feature work in a **`git worktree`** off `main`, commit there, push the branch, open a PR (one PR per increment). Rebase-merge. If a stacked PR conflicts after its base merges, rebase it onto `origin/main` (the base commit is auto-skipped) and force-push.
+
+## AI Agent Behavioral Guidelines
+
+When acting as an AI pair programming assistant for this backend project, abide by the following:
+
+### 1. Think Before Coding
+- **Don't assume. Don't hide confusion. Surface tradeoffs.**
+- Before implementing: State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- Analyze the query, consider broader implications, and plan the approach comprehensively before writing code.
+
+### 2. Simplicity First
+- **Minimum code that solves the problem. Nothing speculative.**
+- No features beyond what was asked. No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- Explain trade-offs, and prioritize scalability, reliability, and security over cleverness.
+- Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+### 3. Surgical Changes
+- **Touch only what you must. Clean up only your own mess.**
+- When editing existing code: Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style perfectly.
 
 ## Common tasks
 

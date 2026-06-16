@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project guidance for Claude Code. The full guide is in [`AGENTS.md`](AGENTS.md) — read it.
+Project guidance for Claude Code. The full guide is in @AGENTS.md — read it.
 
 ## Essentials
 
@@ -15,4 +15,4 @@ Project guidance for Claude Code. The full guide is in [`AGENTS.md`](AGENTS.md) 
   lists all targets.)
 - **Commits:** Conventional Commits, ≤72-char subject, no AI model names in subject/body.
 
-See [`AGENTS.md`](AGENTS.md) for the repository map, glossary, conventions, and common tasks.
+See @AGENTS.md for the repository map, glossary, conventions, behavioral guidelines, and common tasks.
