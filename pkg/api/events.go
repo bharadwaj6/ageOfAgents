@@ -66,6 +66,13 @@ const (
 	// StateSnapshot: a compaction event containing the full derived state.
 	// Used to bootstrap state without replaying the entire history.
 	StateSnapshot EventType = "StateSnapshot"
+	// TicketInvalidated: a worker detected that a ticket's upstream dependencies or
+	// assumptions have changed, making its current state invalid. The DAG should
+	// re-evaluate its readiness.
+	TicketInvalidated EventType = "TicketInvalidated"
+	// TicketAmended: a worker updated a ticket's parameters or instructions dynamically,
+	// usually because of discoveries during execution.
+	TicketAmended EventType = "TicketAmended"
 )
 
 // Event is the append-only log envelope. Seq is assigned by the ledger on
@@ -275,4 +282,19 @@ type RegressionEscapedPayload struct {
 // StateSnapshotPayload accompanies [StateSnapshot].
 type StateSnapshotPayload struct {
 	State json.RawMessage `json:"state"`
+}
+
+// TicketInvalidatedPayload accompanies [TicketInvalidated].
+type TicketInvalidatedPayload struct {
+	TicketID string `json:"ticket_id"`
+	Worker   string `json:"worker,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// TicketAmendedPayload accompanies [TicketAmended].
+type TicketAmendedPayload struct {
+	TicketID string `json:"ticket_id"`
+	Worker   string `json:"worker,omitempty"`
+	Title    string `json:"title,omitempty"` // New title if amended
+	Guidance string `json:"guidance,omitempty"`
 }
