@@ -14,14 +14,35 @@ import (
 )
 
 type OpenAI struct {
-	Model string
+	name      string
+	Model     string
+	BaseURL   string
+	APIKeyEnv string
 }
 
 func NewOpenAI() *OpenAI {
-	return &OpenAI{Model: "gpt-4o"}
+	return &OpenAI{
+		name:      "openai",
+		Model:     "gpt-4o",
+		BaseURL:   "https://api.openai.com/v1/chat/completions",
+		APIKeyEnv: "OPENAI_API_KEY",
+	}
 }
 
-func (o *OpenAI) Name() string { return "openai" }
+func NewOpenAICompatible(name, model, baseURL, apiKeyEnv string) *OpenAI {
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1/chat/completions"
+	}
+	if apiKeyEnv == "" {
+		apiKeyEnv = "OPENAI_API_KEY"
+	}
+	if model == "" {
+		model = "gpt-4o"
+	}
+	return &OpenAI{name: name, Model: model, BaseURL: baseURL, APIKeyEnv: apiKeyEnv}
+}
+
+func (o *OpenAI) Name() string { return o.name }
 
 type openAIMessage struct {
 	Role       string     `json:"role"`
@@ -61,9 +82,9 @@ type openAIResponse struct {
 }
 
 func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
+	apiKey := os.Getenv(o.APIKeyEnv)
 	if apiKey == "" {
-		return Result{}, fmt.Errorf("OPENAI_API_KEY is required")
+		return Result{}, fmt.Errorf("%s is required", o.APIKeyEnv)
 	}
 
 	systemPrompt := "You are an autonomous AI coding agent. You can execute bash commands in the workspace using the 'bash' tool. Work iteratively to implement the task or output a decomposition. When finished, use the 'finish' tool."
@@ -130,7 +151,7 @@ func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 			return Result{}, err
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(b))
+		req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL, bytes.NewReader(b))
 		if err != nil {
 			return Result{}, err
 		}

@@ -119,6 +119,7 @@ By default, the `mock` Backend runs everything offline — no API keys, no cost.
 
 Edit `aoa.toml` in your workspace:
 
+```toml
 backend = "openai"
 ```
 
