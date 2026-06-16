@@ -71,7 +71,9 @@ Everything is recorded in the Event Log. State is rebuilt by replaying it — cr
 
 ## Quick Start
 
-### 1. Build the CLI
+### 1. Install the CLI
+
+Download the latest binary for your OS from the [GitHub Releases](https://github.com/bharadwaj6/ageOfAgents/releases) page, or build it yourself:
 
 ```bash
 git clone https://github.com/bharadwaj6/ageOfAgents.git
@@ -118,16 +120,16 @@ By default, the `mock` Backend runs everything offline — no API keys, no cost.
 Edit `aoa.toml` in your workspace:
 
 ```toml
-backend = "claudecode"
+backend = "anthropic"
 ```
 
-Then run `./aoa run` again. The Scheduler will dispatch Tasks to a real coding agent.
+Set the `ANTHROPIC_API_KEY` environment variable, then run `./aoa run` again. The Scheduler will dispatch Tasks to a real coding agent natively without requiring external CLIs. You can also use `backend = "claudecode"` or `grok` if you prefer their respective CLI tools.
 
 ## Configuration (`aoa.toml`)
 
 ```toml
 repo                = "./demo"          # git repository for agents to work on
-backend             = "mock"            # "mock" (offline) | "claudecode" | "grok"
+backend             = "mock"            # "mock" (offline) | "anthropic" | "claudecode" | "grok"
 concurrency         = 4                 # max Workers running at once
 max_attempts        = 2                 # retries before a Task fails
 conventions_file    = "CONVENTIONS.md"  # coding rules injected into every agent prompt
