@@ -33,6 +33,9 @@ type Config struct {
 	Concurrency int `toml:"concurrency"`
 	// MaxAttempts is how many times a Task is retried before failing.
 	MaxAttempts int `toml:"max_attempts"`
+	// BestOfN is the number of concurrent attempts dispatched for a task (parallel generation).
+	// Default 1.
+	BestOfN int `toml:"best_of_n"`
 	// ConventionsFile, if set, is read and injected into every agent prompt.
 	ConventionsFile string `toml:"conventions_file"`
 	// Verify is the ordered Gate: each entry is an argv.
@@ -76,6 +79,7 @@ func Default() Config {
 		Backend:     "mock",
 		Concurrency: 4,
 		MaxAttempts: 2,
+		BestOfN:     1,
 		Verify: [][]string{
 			{"go", "build", "./..."},
 			{"go", "test", "./..."},
@@ -134,6 +138,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxAttempts <= 0 {
 		c.MaxAttempts = d.MaxAttempts
+	}
+	if c.BestOfN <= 0 {
+		c.BestOfN = d.BestOfN
 	}
 	if c.Verify == nil {
 		c.Verify = d.Verify

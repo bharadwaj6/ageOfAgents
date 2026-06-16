@@ -153,8 +153,8 @@ func TestActiveCountBackpressure(t *testing.T) {
 	if got := s.ActiveCount(); got != 1 {
 		t.Errorf("ActiveCount = %d, want 1", got)
 	}
-	if got := len(s.ReadyTickets()); got != 1 {
-		t.Errorf("ReadyTickets = %d, want 1 (t2 still ready)", got)
+	if got := len(s.ReadyTickets()); got != 2 {
+		t.Errorf("ReadyTickets = %d, want 2 (t1 is claimed but can accept parallel workers, t2 is ready)", got)
 	}
 }
 

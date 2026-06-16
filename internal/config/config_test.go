@@ -13,6 +13,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		Backend:         "claudecode",
 		Concurrency:     8,
 		MaxAttempts:     3,
+		BestOfN:         1,
 		ConventionsFile: "CONVENTIONS.md",
 		Verify:          [][]string{{"go", "build", "./..."}, {"go", "test", "./..."}},
 	}

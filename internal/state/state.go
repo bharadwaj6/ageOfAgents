@@ -11,6 +11,16 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
 )
 
+func removeWorker(workers []string, worker string) []string {
+	var out []string
+	for _, w := range workers {
+		if w != worker {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
 // TicketStatus is the lifecycle stage of a ticket.
 type TicketStatus string
 
@@ -82,9 +92,10 @@ type Ticket struct {
 	Children       []string // set when the ticket is decomposed into child tickets
 	IdempotencyKey string
 	Status         TicketStatus
-	Worker         string
-	Attempts       int
-	Branch         string
+	Worker         string   // ID of the worker that currently or most recently held it
+	ActiveWorkers  []string // IDs of all currently active workers for this ticket (Best-of-N)
+	Attempts       int      // how many dispatches have been attempted
+	Branch         string   // for StatusProposed: git branch with the candidate
 	Commit         string
 	Trace          string
 	Depth          int  // decomposition depth; tickets seeded from a goal are 0
@@ -169,6 +180,7 @@ func (s *State) Apply(e api.Event) error {
 		// The parent's work has moved to its children; mark it terminal.
 		if t := s.Tickets[p.TicketID]; t != nil {
 			t.Status = StatusDecomposed
+			t.ActiveWorkers = nil
 			t.Children = p.Children
 			t.LastActivity = e.Timestamp
 			if g := s.Goals[t.GoalID]; g != nil {
@@ -196,6 +208,7 @@ func (s *State) Apply(e api.Event) error {
 		if t := s.Tickets[p.TicketID]; t != nil {
 			t.Status = StatusClaimed
 			t.Worker = p.Worker
+			t.ActiveWorkers = append(t.ActiveWorkers, p.Worker)
 			t.Attempts++
 			t.LastActivity = e.Timestamp
 		}
@@ -225,17 +238,21 @@ func (s *State) Apply(e api.Event) error {
 			return err
 		}
 		if t := s.Tickets[p.TicketID]; t != nil {
-			t.Status = StatusProposed
-			t.Branch = p.Branch
-			t.Commit = p.Commit
-			t.Trace = p.Trace
-			t.LastActivity = e.Timestamp
-			if g := s.Goals[t.GoalID]; g != nil {
-				g.TokensSpent += p.Tokens
-				if p.Model != "" {
-					g.TokensByModel[p.Model] += p.Tokens
+			t.ActiveWorkers = removeWorker(t.ActiveWorkers, p.Worker)
+			if t.Status == StatusPending || t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
+				t.Status = StatusProposed
+				t.Worker = p.Worker // lock the ticket to the worker who proposed it
+				t.Branch = p.Branch
+				t.Commit = p.Commit
+				t.Trace = p.Trace
+				if g := s.Goals[t.GoalID]; g != nil {
+					g.TokensSpent += p.Tokens
+					if p.Model != "" {
+						g.TokensByModel[p.Model] += p.Tokens
+					}
 				}
 			}
+			t.LastActivity = e.Timestamp
 		}
 
 	case api.VerificationPassed:
@@ -250,6 +267,20 @@ func (s *State) Apply(e api.Event) error {
 		// Send the ticket back to Ready for another attempt; the reconciler
 		// caps attempts and emits TicketFailed when exhausted.
 		if t := s.Tickets[p.TicketID]; t != nil {
+			t.ActiveWorkers = removeWorker(t.ActiveWorkers, p.Worker)
+			if t.Status == StatusProposed && t.Worker == p.Worker {
+				if len(t.ActiveWorkers) > 0 {
+					t.Status = StatusRunning
+				} else {
+					t.Status = StatusReady
+				}
+			} else if t.Status == StatusPending || t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
+				if len(t.ActiveWorkers) == 0 {
+					t.Status = StatusReady
+				} else {
+					t.Status = StatusRunning
+				}
+			}
 			// Track the consecutive identical-reason failure streak so the
 			// reconciler can detect a crash loop (same failure, no progress).
 			if p.Reason != "" && p.Reason == t.LastFailReason {
@@ -258,7 +289,6 @@ func (s *State) Apply(e api.Event) error {
 				t.LastFailReason = p.Reason
 				t.SameFailCount = 1
 			}
-			t.Status = StatusReady
 			t.Worker = ""
 			t.Branch, t.Commit, t.Trace = "", "", ""
 			t.LastActivity = e.Timestamp
@@ -271,6 +301,7 @@ func (s *State) Apply(e api.Event) error {
 		}
 		if t := s.Tickets[p.TicketID]; t != nil {
 			t.Status = StatusMerged
+			t.ActiveWorkers = nil
 			t.Commit = p.Commit
 			t.LastActivity = e.Timestamp
 		}
@@ -281,7 +312,17 @@ func (s *State) Apply(e api.Event) error {
 			return err
 		}
 		if t := s.Tickets[p.TicketID]; t != nil {
-			t.Status = StatusFailed
+			t.ActiveWorkers = removeWorker(t.ActiveWorkers, p.Worker)
+			// A terminal failure overrides running states and the proposal from this worker
+			if (t.Status == StatusProposed && t.Worker == p.Worker) ||
+				t.Status == StatusPending || t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
+				// If there are other active workers, we shouldn't fail the ticket entirely yet
+				if len(t.ActiveWorkers) == 0 {
+					t.Status = StatusFailed
+				} else {
+					t.Status = StatusRunning
+				}
+			}
 			t.LastActivity = e.Timestamp
 			if p.Reason != "" {
 				t.LastFailReason = p.Reason
@@ -355,7 +396,11 @@ func (s *State) Apply(e api.Event) error {
 			return err
 		}
 		if t := s.Tickets[p.TicketID]; t != nil {
-			t.Status = StatusReady
+			t.ActiveWorkers = removeWorker(t.ActiveWorkers, p.Worker)
+			// Only mark the ticket as ready if it hasn't progressed past running
+			if len(t.ActiveWorkers) == 0 && (t.Status == StatusPending || t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning) {
+				t.Status = StatusReady
+			}
 			t.Worker = ""
 			t.Branch, t.Commit, t.Trace = "", "", ""
 			t.LastActivity = e.Timestamp
@@ -534,10 +579,11 @@ func (s *State) NewlyReady() []*Ticket {
 }
 
 // ReadyTickets returns tickets ready to dispatch, in creation order.
+// This includes tickets already claimed/running if they have fewer than BestOfN active workers.
 func (s *State) ReadyTickets() []*Ticket {
 	var out []*Ticket
 	for _, t := range s.orderedTickets() {
-		if t.Status == StatusReady {
+		if t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
 			out = append(out, t)
 		}
 	}
@@ -568,14 +614,12 @@ func (s *State) AwaitingApproval() []*Ticket {
 	return out
 }
 
-// ActiveCount returns the number of tickets occupying a worker slot
-// (claimed or running). Used by the concurrency governor as backpressure.
+// ActiveCount returns the number of active worker attempts (Best-of-N).
+// Used by the concurrency governor as backpressure.
 func (s *State) ActiveCount() int {
 	n := 0
 	for _, t := range s.Tickets {
-		if t.Status == StatusClaimed || t.Status == StatusRunning {
-			n++
-		}
+		n += len(t.ActiveWorkers)
 	}
 	return n
 }
