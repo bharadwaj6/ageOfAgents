@@ -44,8 +44,12 @@ type Result struct {
 	Trace    string    // short reasoning trace for the audit log
 	Summary  string    // one-line summary of the change
 	Subtasks []Subtask // non-empty => decompose this Task into children
-	Tokens   int       // LLM tokens this work consumed; 0 when unknown (e.g. mock)
-	Model    string    // best-effort model identifier, for per-model cost; "" when unknown
+	Tokens            int       // LLM tokens this work consumed; 0 when unknown (e.g. mock)
+	Model             string    // best-effort model identifier, for per-model cost; "" when unknown
+	Invalidated       bool      // if true, the worker determined the ticket's assumptions are invalid
+	InvalidatedReason string    // reason for invalidating the ticket
+	AmendedTitle      string    // if set, updates the ticket's title
+	AmendedGuidance   string    // if set, appends steering guidance to the ticket
 }
 
 // Backend executes coding work for a single task. Implementations must be safe

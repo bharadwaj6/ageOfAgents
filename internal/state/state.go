@@ -99,8 +99,9 @@ type Ticket struct {
 	Branch         string   // for StatusProposed: git branch with the candidate
 	Commit         string
 	Trace          string
-	Depth          int  // decomposition depth; tickets seeded from a goal are 0
-	Approved       bool // a human approved the parked proposal (ADR 008)
+	Depth          int      // decomposition depth; tickets seeded from a goal are 0
+	Amendments     []string // steering guidance dynamically added to the ticket
+	Approved       bool     // a human approved the parked proposal (ADR 008)
 	LastActivity   time.Time
 	LastFailReason string // reason of the most recent verification failure (crash-loop detection)
 	SameFailCount  int    // consecutive verification failures sharing LastFailReason
@@ -414,6 +415,41 @@ func (s *State) Apply(e api.Event) error {
 			t.Branch, t.Commit, t.Trace = "", "", ""
 			t.LastActivity = e.Timestamp
 		}
+	case api.TicketInvalidated:
+		var p api.TicketInvalidatedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if t := s.Tickets[p.TicketID]; t != nil {
+			t.ActiveWorkers = removeWorker(t.ActiveWorkers, p.Worker)
+			// Reset the ticket so the DAG can re-evaluate its readiness.
+			// It may be blocked if upstream assumptions have changed.
+			if t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
+				t.Status = StatusPending
+			}
+			t.Worker = ""
+			t.Branch, t.Commit, t.Trace = "", "", ""
+			t.LastActivity = e.Timestamp
+			if p.Reason != "" {
+				t.LastFailReason = "invalidated: " + p.Reason
+			}
+		}
+
+	case api.TicketAmended:
+		var p api.TicketAmendedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if t := s.Tickets[p.TicketID]; t != nil {
+			if p.Title != "" {
+				t.Title = p.Title
+			}
+			if p.Guidance != "" {
+				t.Amendments = append(t.Amendments, p.Guidance)
+			}
+			t.LastActivity = e.Timestamp
+		}
+
 
 	default:
 		return fmt.Errorf("state: unknown event type %q (seq %d)", e.Type, e.Seq)

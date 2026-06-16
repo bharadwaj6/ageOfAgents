@@ -319,6 +319,27 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		return
 	}
 
+	if res.AmendedTitle != "" || res.AmendedGuidance != "" {
+		if err := o.emit(api.TicketAmended, api.TicketAmendedPayload{
+			TicketID: j.ticketID,
+			Worker:   worker,
+			Title:    res.AmendedTitle,
+			Guidance: res.AmendedGuidance,
+		}); err != nil {
+			return
+		}
+	}
+
+	if res.Invalidated {
+		o.cleanupWorktree(ctx, j.ticketID)
+		_ = o.emit(api.TicketInvalidated, api.TicketInvalidatedPayload{
+			TicketID: j.ticketID,
+			Worker:   worker,
+			Reason:   res.InvalidatedReason,
+		})
+		return
+	}
+
 	// Emergent decomposition: the worker split this ticket into children rather
 	// than editing code. Extend the graph via the Shared Log; nothing to commit.
 	if len(res.Subtasks) > 0 {
