@@ -33,6 +33,10 @@ boring distributed-systems core, with proofs attached:
   shadow test set would reject) and a per-run **MAST** failure-mode histogram (`aoa diagnose`).
 - **Cost-aware and bounded:** token/`$` accounting per ticket and per goal, a per-goal **spend governor**
   (circuit breaker), and retry **backoff + crash-loop** detection so a runaway loop can't burn your budget.
+- **OpenTelemetry-native, vendor-agnostic:** every run replays into OTLP **traces** (goal → ticket →
+  attempt spans) and **metrics** — point it at Honeycomb, Grafana Tempo, Datadog, or any OTLP backend via
+  the standard env vars (`aoa run --otel`). Off by default; observability is just another replay
+  projection of the log, not hot-path instrumentation (ADR 012). See [`docs/integrations/`](docs/integrations/README.md).
 - **Adoptable and recoverable:** point it at your own repo on any branch (`aoa init --adopt`); on a
   terminal failure it preserves the agent's worktree and hands it back to you (`aoa status`).
 
@@ -142,6 +146,9 @@ regression_verify = []                  # optional broader set; measures the reg
 # claudecode = 15.0
 ```
 
+Every field, with defaults and when to set it, is in the [configuration reference](docs/config-reference.md);
+a worked config and copy-paste runbook are in [`examples/`](examples/).
+
 ## Commands
 
 | Command | What it does |
@@ -154,8 +161,9 @@ regression_verify = []                  # optional broader set; measures the reg
 | `aoa feed [--type T]` | Print the event stream |
 | `aoa events tail [--count N] \| replay` | Inspect the Event Log |
 | `aoa diagnose [--json]` | MAST-style failure-mode histogram for a run |
-| `aoa eval --tasks T [--price N]` | Run end-to-end eval tasks; reports success, tokens, `$`, MAST |
+| `aoa eval --tasks T [--price-file F] [--max-cost $] [--otel]` | Run end-to-end eval tasks; per-task success, tokens, `$` (with a cost ceiling), MAST |
 | `aoa bench [--json]` | The hermetic coordination benchmark |
+| `aoa otel export` · `aoa run --otel` | Replay the Event Log to OTLP traces + metrics (any OpenTelemetry backend) |
 
 ## Project Layout
 

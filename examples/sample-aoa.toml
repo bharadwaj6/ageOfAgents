@@ -1,0 +1,29 @@
+# A worked aoa.toml for adopting a real repo. See docs/config-reference.md for
+# every field. Unset governors are off, so this behaves like the defaults until
+# you opt in. The [pricing] table also works as `aoa eval --price-file`.
+
+repo             = "/path/to/your-repo"   # or "./repo"; `aoa init --adopt` fills this in
+backend          = "claudecode"           # "mock" (offline) | "claudecode" | "grok"
+concurrency      = 4
+max_attempts     = 2
+conventions_file = "CONVENTIONS.md"        # injected into every agent prompt
+
+# The Gate — nothing merges unless every command passes (ADR 002).
+verify = [
+  ["go", "build", "./..."],
+  ["go", "test", "./..."],
+]
+
+# Optional broader set run post-merge; never blocks, measures the regression-escape rate.
+regression_verify = []
+
+# Cost & safety governors (all optional; defaults shown are the "off" values).
+max_tokens_per_goal  = 0       # per-goal token ceiling; 0 = unlimited
+retry_backoff        = "0s"    # wait before re-dispatching a failed task
+crash_loop_threshold = 3       # give up after N identical failures
+
+# USD per *million* tokens, by model id. Powers the $ columns and the OTel
+# aoa.cost_usd metric. Absent => unpriced.
+[pricing]
+claudecode = 15.0
+grok       = 5.0
