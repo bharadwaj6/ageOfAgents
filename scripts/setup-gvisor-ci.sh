@@ -29,6 +29,10 @@ cat <<EOF | sudo tee /etc/docker/daemon.json
 EOF
 
 echo "Restarting Docker..."
-sudo systemctl restart docker
+if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl restart docker
+else
+    echo "systemctl not found; skipping docker daemon restart. Please restart the docker daemon manually or via your init system."
+fi
 
 echo "gVisor setup complete! You can now use '--runtime=runsc' with docker run."

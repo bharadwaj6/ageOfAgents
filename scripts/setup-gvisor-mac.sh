@@ -31,7 +31,7 @@ services:
       - /:/host
     command: >
       sh -c "
-        apk add --no-cache curl tar &&
+        apk add --no-cache curl tar jq &&
         mkdir -p /var/lib/docker/volumes/gvisor/bin &&
         cd /var/lib/docker/volumes/gvisor/bin &&
         echo 'Downloading gVisor binaries...' &&
@@ -45,12 +45,11 @@ services:
         echo 'Updating Docker daemon.json...' &&
         mkdir -p /host/etc/docker &&
         if [ ! -f /host/etc/docker/daemon.json ]; then
-          echo '{}' > /host/etc/docker/daemon.json
+          echo '{}' > /host/etc/docker/daemon.json;
         fi &&
-        # Use a simple sed to inject or manually ensure it's added.
-        # Alternatively, use jq if installed.
-        echo 'Please manually ensure /etc/docker/daemon.json has:' &&
-        echo '{ \"runtimes\": { \"runsc\": { \"path\": \"/var/lib/docker/volumes/gvisor/bin/runsc\" } } }'
+        jq '.runtimes.runsc.path = "/var/lib/docker/volumes/gvisor/bin/runsc"' /host/etc/docker/daemon.json > /host/etc/docker/daemon.json.tmp &&
+        mv /host/etc/docker/daemon.json.tmp /host/etc/docker/daemon.json &&
+        echo 'daemon.json updated successfully!'
       "
 EOF
 
