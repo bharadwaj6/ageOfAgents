@@ -58,6 +58,8 @@ func main() {
 		err = cmdEvents(args)
 	case "bench":
 		err = cmdBench(args)
+	case "serve":
+		err = cmdServe(args)
 	case "eval":
 		err = cmdEval(args)
 	case "diagnose":
@@ -94,6 +96,7 @@ Usage:
   aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
+  aoa serve  [--path DIR] [--port N]      Run a GitHub webhook server
   aoa eval   --tasks F [--backend B] [--price-file F] [--max-cost $] [--otel]
                                           Run end-to-end tasks on real repos (mock|claudecode|grok)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run

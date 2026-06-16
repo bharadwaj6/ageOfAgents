@@ -1,0 +1,40 @@
+name: "Age of Agents Run"
+description: "Run the aoa orchestrator as a GitHub Action"
+inputs:
+  path:
+    description: "Workspace path"
+    required: false
+    default: "."
+  goal:
+    description: "Goal to submit (optional)"
+    required: false
+    default: ""
+  otel:
+    description: "Enable OpenTelemetry export"
+    required: false
+    default: "false"
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+    
+    - name: Install aoa
+      shell: bash
+      run: go install github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest
+
+    - name: Submit Goal
+      if: ${{ inputs.goal != '' }}
+      shell: bash
+      run: aoa goal --path ${{ inputs.path }} "${{ inputs.goal }}"
+    
+    - name: Run Orchestrator
+      shell: bash
+      run: |
+        if [ "${{ inputs.otel }}" == "true" ]; then
+          aoa run --path ${{ inputs.path }} --otel-live
+        else
+          aoa run --path ${{ inputs.path }}
+        fi
