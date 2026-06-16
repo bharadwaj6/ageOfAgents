@@ -292,8 +292,8 @@ func (s *State) Apply(e api.Event) error {
 		if t := s.Tickets[p.TicketID]; t != nil {
 			t.ActiveWorkers = removeWorker(t.ActiveWorkers, p.Worker)
 			// A terminal failure overrides running states and the proposal from this worker
-			if (t.Status == StatusProposed && t.Worker == p.Worker) || 
-			   t.Status == StatusPending || t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
+			if (t.Status == StatusProposed && t.Worker == p.Worker) ||
+				t.Status == StatusPending || t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
 				// If there are other active workers, we shouldn't fail the ticket entirely yet
 				if len(t.ActiveWorkers) == 0 {
 					t.Status = StatusFailed
