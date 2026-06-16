@@ -63,6 +63,9 @@ const (
 	// dispatches (and retries) carry the amended context; running workers are not
 	// preempted. Feeds the stale_spec_drift diagnose signal.
 	GoalAmended EventType = "GoalAmended"
+	// StateSnapshot: a compaction event containing the full derived state.
+	// Used to bootstrap state without replaying the entire history.
+	StateSnapshot EventType = "StateSnapshot"
 )
 
 // Event is the append-only log envelope. Seq is assigned by the ledger on
@@ -267,4 +270,9 @@ type RegressionEscapedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker,omitempty"`
 	Reason   string `json:"reason,omitempty"`
+}
+
+// StateSnapshotPayload accompanies [StateSnapshot].
+type StateSnapshotPayload struct {
+	State json.RawMessage `json:"state"`
 }

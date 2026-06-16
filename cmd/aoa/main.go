@@ -48,6 +48,8 @@ func main() {
 		err = cmdAmend(args)
 	case "run":
 		err = cmdRun(args)
+	case "compact":
+		err = cmdCompact(args)
 	case "status":
 		err = cmdStatus(args)
 	case "feed":
@@ -87,6 +89,7 @@ Usage:
   aoa goal   [--path DIR] "objective"     Submit a goal
   aoa amend  [--path DIR] <goal-id> "..."  Append steering guidance to a goal mid-run
   aoa run    [--path DIR] [--once] [--otel | --otel-live]  Run the reconciler (loop by default)
+  aoa compact [--path DIR]                Compact the event log to a single state snapshot
   aoa status [--path DIR] [--watch]       Show goals and tickets (--watch to live-refresh)
   aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
@@ -116,6 +119,15 @@ func workspaceAt(path string) (workspace, error) {
 		ledgerPath:   filepath.Join(root, ".aoa", "events.jsonl"),
 		worktreeBase: filepath.Join(root, ".aoa", "worktrees"),
 	}, nil
+}
+
+func loadWorkspace(path string) (workspace, *ledger.Ledger, error) {
+	ws, err := workspaceAt(path)
+	if err != nil {
+		return ws, nil, err
+	}
+	led, err := ledger.Open(ws.ledgerPath)
+	return ws, led, err
 }
 
 func resolve(root, p string) string {
@@ -372,6 +384,55 @@ func cmdRun(args []string) error {
 	}
 	_, err = printStatus(led, cfg.Pricing)
 	return err
+}
+
+func cmdCompact(args []string) error {
+	fs := flag.NewFlagSet("compact", flag.ExitOnError)
+	path := fs.String("path", ".", "Path to the workspace")
+	fs.Parse(args)
+
+	_, led, err := loadWorkspace(*path)
+	if err != nil {
+		return err
+	}
+
+	events, err := led.Read()
+	if err != nil {
+		return fmt.Errorf("read ledger: %w", err)
+	}
+	if len(events) == 0 {
+		fmt.Println("Ledger is empty")
+		return nil
+	}
+
+	// Fast path: if the last event is already a snapshot, and there is only 1 event, we are done.
+	if len(events) == 1 && events[0].Type == api.StateSnapshot {
+		fmt.Printf("Ledger already compacted up to sequence %d\n", events[0].Seq)
+		return nil
+	}
+
+	st, err := state.Fold(events)
+	if err != nil {
+		return fmt.Errorf("fold state: %w", err)
+	}
+
+	rawState, err := json.Marshal(st)
+	if err != nil {
+		return fmt.Errorf("marshal state: %w", err)
+	}
+
+	snapEvent, err := api.NewEvent(api.StateSnapshot, "system", api.StateSnapshotPayload{State: rawState})
+	if err != nil {
+		return err
+	}
+	snapEvent.Seq = st.LastSeq
+
+	if err := led.Compact(snapEvent); err != nil {
+		return err
+	}
+
+	fmt.Printf("Compacted ledger up to sequence %d (compressed %d events -> 1)\n", st.LastSeq, len(events))
+	return nil
 }
 
 // exportOTel replays the workspace Event Log into OTLP traces + metrics. It is a
