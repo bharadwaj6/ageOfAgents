@@ -25,6 +25,7 @@ and `aoa otel export` exits with a clear message.
 
 | Backend | How |
 |---------|-----|
+| **Local Jaeger (Docker)** | Start our local sandbox: `cd examples/observability && docker-compose up -d`. Then export using `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`. View traces at [http://localhost:16686](http://localhost:16686). |
 | **[Honeycomb](honeycomb.md)** | `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io` + `OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=<key>`. One-command smoke test: `scripts/otel_smoke.sh`. |
 | **Grafana Tempo / Alloy, Datadog, Jaeger, OTel Collector** | Same env vars, point `OTEL_EXPORTER_OTLP_ENDPOINT` at the collector (`:4318` for OTLP/HTTP) and add whatever auth header it wants. A local Collector or `otel-tui` is the easiest way to eyeball output. |
 
