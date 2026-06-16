@@ -63,8 +63,9 @@ Roughly in priority order. Tracked against the GitHub `v0.1 — measured & adopt
    circuit breaker (vs. the eval-loop `--max-cost`) is a follow-up. Live OTel streaming also drops spans
    silently if the export queue saturates (the append hook is non-blocking by design) — fine now, worth a
    metric later.
-3. **More backends & richer integrations.** We have `mock`, `claudecode`, `anthropic`, and `grok`; OpenAI/Gemini/local
-   models would broaden reach. No shipped dashboards-as-code (Grafana/Honeycomb boards) yet.
+3. **More backends & richer integrations.** We have `mock`, `claudecode`, `grok`, and `openai`; Gemini/local
+   models would broaden reach. No shipped dashboards-as-code (Grafana/Honeycomb boards) or OTel Collector
+   sample config yet.
 4. **Deferred research bets (#16–#18), closed with explicit reopen gates:** speculative/batched merge with
    an adaptive window, best-of-N with the test suite as verifier, and SPRT early-stopping for live evals.
    Now that we have a SWE-bench baseline, these can be reopened and A/B tested to measure their impact.

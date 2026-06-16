@@ -39,6 +39,7 @@ interface (`agent.Backend`, ADR 004); the control plane is identical across back
 | `mock` | nothing (offline, deterministic) | trying `aoa` out, the hermetic test suite, CI |
 | `claudecode` | the `claude` CLI authenticated; network + API cost | real coding work |
 | `grok` | a Grok API key in the environment; network + API cost | real coding work / benchmarking |
+| `openai` | `OPENAI_API_KEY` in environment; network + API cost | real coding work natively with OpenAI |
 
 Cost is purely a property of the backend you choose. Token/`$` accounting flows through the Event Log;
 set `[pricing]` in `aoa.toml` (USD per million tokens, by model) to turn token counts into `$` in
