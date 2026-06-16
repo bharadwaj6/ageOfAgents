@@ -119,17 +119,15 @@ By default, the `mock` Backend runs everything offline — no API keys, no cost.
 
 Edit `aoa.toml` in your workspace:
 
-```toml
-backend = "anthropic"
+backend = "openai"
 ```
 
-Set the `ANTHROPIC_API_KEY` environment variable, then run `./aoa run` again. The Scheduler will dispatch Tasks to a real coding agent natively without requiring external CLIs. You can also use `backend = "claudecode"` or `grok` if you prefer their respective CLI tools.
-
+Set the `OPENAI_API_KEY` environment variable, then run `./aoa run` again. The Scheduler will dispatch Tasks to a real coding agent natively without requiring external CLIs. You can also use `backend = "claudecode"` or `grok`.
 ## Configuration (`aoa.toml`)
 
 ```toml
 repo                = "./demo"          # git repository for agents to work on
-backend             = "mock"            # "mock" (offline) | "anthropic" | "claudecode" | "grok"
+backend             = "mock"            # "mock" (offline) | "openai" | "claudecode" | "grok"
 concurrency         = 4                 # max Workers running at once
 max_attempts        = 2                 # retries before a Task fails
 conventions_file    = "CONVENTIONS.md"  # coding rules injected into every agent prompt

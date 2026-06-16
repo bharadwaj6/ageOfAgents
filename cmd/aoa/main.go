@@ -858,8 +858,10 @@ func buildBackend(name string) (agent.Backend, error) {
 	case "grok":
 		agent.EnsureGrokLeader()
 		return agent.NewGrok(), nil
+	case "openai":
+		return agent.NewOpenAI(), nil
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok)", name)
+		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok|openai)", name)
 	}
 }
 
