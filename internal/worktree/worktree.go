@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // DefaultBranch is the integration branch kept always-green.
@@ -178,7 +179,20 @@ func (r *Repo) ResetHard(ctx context.Context, sha string) error {
 
 // Remove tears down a worktree and deletes its branch.
 func (r *Repo) Remove(ctx context.Context, w *Worktree) error {
-	if _, err := git(ctx, r.Dir, "worktree", "remove", "--force", w.Path); err != nil {
+	var err error
+	for i := 0; i < 5; i++ {
+		_, err = git(ctx, r.Dir, "worktree", "remove", "--force", w.Path)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), "not a working tree") {
+			// Already removed by a previous iteration that partially failed
+			err = nil
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
 		return err
 	}
 	// Best-effort branch delete; ignore "not found" after a merge cleanup.
