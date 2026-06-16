@@ -32,6 +32,7 @@ import (
 type Options struct {
 	Concurrency        int           // max Workers in flight (Concurrency Limit); default 4
 	MaxAttempts        int           // attempts per Task before failing; default 2
+	BestOfN            int           // max concurrent attempts per Task (Best-of-N parallel generation); default 1
 	Conventions        string        // injected into every agent prompt (Conventions)
 	WorktreeBase       string        // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
 	StallTimeout       time.Duration // no-progress timeout for the Stall Detector; default 2m
@@ -66,6 +67,9 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 	}
 	if opt.MaxAttempts <= 0 {
 		opt.MaxAttempts = 2
+	}
+	if opt.BestOfN <= 0 {
+		opt.BestOfN = 1
 	}
 	if opt.StallTimeout <= 0 {
 		opt.StallTimeout = 2 * time.Minute
@@ -604,7 +608,8 @@ func pausedForApproval(s *state.State) bool {
 // attempts remain). t reflects state *before* this rejection, so t.SameFailCount
 // counts the prior identical failures.
 func (o *Orchestrator) rejectOrFail(ctx context.Context, t *state.Ticket, worker, reason string) error {
-	if o.opt.CrashLoopThreshold > 0 && reason != "" && reason == t.LastFailReason &&
+	isLastWorker := len(t.ActiveWorkers) <= 1
+	if isLastWorker && o.opt.CrashLoopThreshold > 0 && reason != "" && reason == t.LastFailReason &&
 		t.SameFailCount+1 >= o.opt.CrashLoopThreshold {
 		return o.emit(api.TicketFailed, api.TicketFailedPayload{
 			TicketID: t.ID, Worker: worker,
@@ -612,7 +617,7 @@ func (o *Orchestrator) rejectOrFail(ctx context.Context, t *state.Ticket, worker
 			Worktree: o.preserveWorktree(t.ID),
 		})
 	}
-	if t.Attempts >= o.opt.MaxAttempts {
+	if isLastWorker && t.Attempts >= o.opt.MaxAttempts {
 		return o.emit(api.TicketFailed, api.TicketFailedPayload{
 			TicketID: t.ID, Worker: worker, Reason: reason, Worktree: o.preserveWorktree(t.ID),
 		})
@@ -640,13 +645,19 @@ func backoffFor(base time.Duration, attempts int) time.Duration {
 // timestamped as LastActivity). Fresh tickets (no prior attempt) pass straight
 // through, so backoff only ever delays retries.
 func (o *Orchestrator) dispatchable(ready []*state.Ticket, now time.Time) []*state.Ticket {
-	if o.opt.RetryBackoff <= 0 {
-		return ready
+	best := o.opt.BestOfN
+	if best <= 0 {
+		best = 1
 	}
 	out := make([]*state.Ticket, 0, len(ready))
 	for _, t := range ready {
-		if d := backoffFor(o.opt.RetryBackoff, t.Attempts); d > 0 && now.Sub(t.LastActivity) < d {
-			continue
+		if len(t.ActiveWorkers) >= best {
+			continue // ticket is fully saturated with workers
+		}
+		if o.opt.RetryBackoff > 0 && len(t.ActiveWorkers) == 0 {
+			if d := backoffFor(o.opt.RetryBackoff, t.Attempts); d > 0 && now.Sub(t.LastActivity) < d {
+				continue
+			}
 		}
 		out = append(out, t)
 	}
@@ -663,6 +674,12 @@ func (o *Orchestrator) nextBackoffWait(s *state.State, now time.Time) (time.Dura
 	}
 	wait := time.Duration(-1)
 	for _, t := range s.ReadyTickets() {
+		if len(t.ActiveWorkers) >= o.opt.BestOfN {
+			continue
+		}
+		if len(t.ActiveWorkers) > 0 {
+			return 0, false // dispatchable immediately (parallel attempt)
+		}
 		d := backoffFor(o.opt.RetryBackoff, t.Attempts)
 		remaining := d - now.Sub(t.LastActivity)
 		if d <= 0 || remaining <= 0 {
@@ -682,7 +699,13 @@ func (o *Orchestrator) nextBackoffWait(s *state.State, now time.Time) (time.Dura
 // retry cleans up the worktree; a terminal failure preserves it for a warm
 // handoff (the human can inspect/take over the agent's attempt).
 func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, reason string) {
-	if j.attempt >= o.opt.MaxAttempts {
+	s, err := o.loadState()
+	isLastWorker := true
+	if err == nil && s.Tickets[j.ticketID] != nil {
+		isLastWorker = len(s.Tickets[j.ticketID].ActiveWorkers) <= 1
+	}
+
+	if isLastWorker && j.attempt >= o.opt.MaxAttempts {
 		_ = o.emit(api.TicketFailed, api.TicketFailedPayload{
 			TicketID: j.ticketID, Worker: worker, Reason: reason, Worktree: o.preserveWorktree(j.ticketID),
 		})

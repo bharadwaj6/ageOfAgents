@@ -838,6 +838,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	opt := orchestrator.Options{
 		Concurrency:        cfg.Concurrency,
 		MaxAttempts:        cfg.MaxAttempts,
+		BestOfN:            cfg.BestOfN,
 		Conventions:        conventions,
 		WorktreeBase:       ws.worktreeBase,
 		RequireApproval:    cfg.RequireApproval,

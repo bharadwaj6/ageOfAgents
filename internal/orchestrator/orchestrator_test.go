@@ -411,7 +411,7 @@ func TestBackoffDelaysRedispatch(t *testing.T) {
 	h.appendAt(t, t0, api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "g1:impl"})
 	h.appendAt(t, t0, api.TicketReady, api.TicketReadyPayload{TicketID: "t1"})
 	h.appendAt(t, t0, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w"})
-	h.appendAt(t, t0, api.VerificationFailed, api.VerificationFailedPayload{TicketID: "t1", Reason: "boom"})
+	h.appendAt(t, t0, api.VerificationFailed, api.VerificationFailedPayload{TicketID: "t1", Worker: "w", Reason: "boom"})
 
 	// Within the 1m backoff window: ReconcileOnce must not dispatch.
 	clock = t0.Add(30 * time.Second)
