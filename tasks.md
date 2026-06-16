@@ -33,7 +33,7 @@ Honeycomb has **zero** special-casing. See ADR 012.
 | (n/a) | #4 harness: cost/OTel/grok passthrough | ✅ Done — PR #42 merged |
 | (n/a) | gitignore `.env` | ✅ Done — PR #43 merged |
 | #37 | Live per-append OTel streaming | ✅ Done — `aoa run --otel-live` |
-| **#4** | **Run SWE-bench Lite at scale (baseline → README)** | 🔲 **Open — user-driven live run** |
+| **#4** | **Run SWE-bench Lite at scale (baseline → README)** | ✅ **Done — 50% pass@1** |
 
 All work is on `main`. No open PRs. `make check` is green (one flaky test — see Gotchas).
 
@@ -101,7 +101,7 @@ All work is on `main`. No open PRs. `make check` is green (one flaky test — se
 
 ## REMAINING
 
-### 🔲 #4 — Run SWE-bench Lite at scale (the last, user-driven step)
+### ✅ #4 — Run SWE-bench Lite at scale (DONE)
 
 This is an **empirical live run**, not a coding task. The harness is fully ready and cost-capped. What it
 needs (none of which the previous agent had access to):

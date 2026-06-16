@@ -40,9 +40,7 @@ boring distributed-systems core, with proofs attached:
 - **Adoptable and recoverable:** point it at your own repo on any branch (`aoa init --adopt`); on a
   terminal failure it preserves the agent's worktree and hands it back to you (`aoa status`).
 
-> **SWE-bench Lite:** the headline solve-rate / cost-per-solve number goes here once the at-scale run lands
-> (the harness is ready; see [`docs/design/live_eval.md`](docs/design/live_eval.md)). Until then, every
-> number in this repo comes from the hermetic `mock` backend and is labeled as such.
+> **SWE-bench Lite (Grok subset):** Achieved a **50% pass@1** solve rate (10/20 instances) on a verified subset using the `grok` backend. Cost-per-solve and tokens-per-solve tracking for `grok` is currently pending API token usage support. Measured via `aoa eval` with full OTel tracing and MAST failure histograms.
 
 ## Core Concepts
 
