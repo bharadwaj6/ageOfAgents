@@ -98,6 +98,10 @@ func TestRemoveWorktree(t *testing.T) {
 	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
 		t.Error("worktree dir should be gone")
 	}
+	// The now-empty base dir should be cleaned up too, not left as an empty shell.
+	if _, err := os.Stat(filepath.Dir(wt.Path)); !os.IsNotExist(err) {
+		t.Error("empty worktree base dir should be removed")
+	}
 }
 
 func TestSanitizeBranch(t *testing.T) {

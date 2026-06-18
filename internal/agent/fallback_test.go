@@ -29,7 +29,9 @@ func TestFallbackBackend_Success(t *testing.T) {
 
 	fb := agent.NewFallbackBackend(b1, b2, b3)
 
-	res, err := fb.Run(context.Background(), agent.Task{TicketID: "t-1", Title: "some title"})
+	// Worktree must be a temp dir: the Mock backend writes a marker file there,
+	// and an empty Worktree would leak it into the package source tree.
+	res, err := fb.Run(context.Background(), agent.Task{TicketID: "t-1", Title: "some title", Worktree: t.TempDir()})
 	if err != nil {
 		t.Fatalf("expected success from fallback, got error: %v", err)
 	}

@@ -94,6 +94,14 @@ func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 // "main" lets aoa adopt an existing repo on any branch (master, a feature
 // branch, …); for a scaffolded repo HEAD is main, so behavior is unchanged.
 func (r *Repo) AddWorktree(ctx context.Context, dest, branch string) (*Worktree, error) {
+	// Normalize to absolute: MkdirAll resolves against the process CWD while
+	// `git worktree add` resolves against the repo dir, so a relative dest would
+	// create the directory in two different places (scattering worktrees wherever
+	// aoa was launched). Pinning it absolute keeps both consistent.
+	dest, err := filepath.Abs(dest)
+	if err != nil {
+		return nil, fmt.Errorf("resolve worktree path: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return nil, fmt.Errorf("create worktree parent: %w", err)
 	}
@@ -201,6 +209,10 @@ func (r *Repo) Remove(ctx context.Context, w *Worktree) error {
 	if _, err := git(ctx, r.Dir, "branch", "-D", w.Branch); err != nil {
 		// Ignore cleanup error
 	}
+	// Best-effort removal of the now-empty worktree base dir, so a run does not
+	// leave behind empty `aoa-worktrees`/`wt` shells. os.Remove only succeeds on an
+	// empty dir, so a base still holding sibling worktrees is left untouched.
+	_ = os.Remove(filepath.Dir(w.Path))
 	return nil
 }
 

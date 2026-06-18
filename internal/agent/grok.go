@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -24,7 +23,12 @@ func EnsureGrokLeader() {
 	ensureGrokLeader.Do(func() {
 		cmd := exec.Command("grok", "leader", "list")
 		if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "(Reachable)") {
-			_ = exec.Command("grok", "agent", "leader").Start()
+			// Spawn a detached leader daemon. It outlives this process by design
+			// (the CLI needs a persistent leader); surface a spawn failure rather
+			// than swallow it, so a missing/broken `grok` binary is visible.
+			if startErr := exec.Command("grok", "agent", "leader").Start(); startErr != nil {
+				fmt.Fprintf(os.Stderr, "grok: could not start leader daemon: %v\n", startErr)
+			}
 		}
 	})
 }
@@ -71,7 +75,9 @@ func (g *Grok) Run(ctx context.Context, task Task) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("grok: %w", err)
 	}
-	_ = os.WriteFile(filepath.Join(task.Worktree, "grok_transcript.log"), []byte(out), 0o644)
+	// The transcript is returned in Result.Trace (and persisted to the Event Log);
+	// we deliberately do not drop a grok_transcript.log into the worktree, where the
+	// orchestrator's `git add -A` would commit the agent's scratch into the proposal.
 
 	tokens, model := parseUsage(out)
 	if model == "" {
