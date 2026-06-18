@@ -13,6 +13,7 @@ var (
 	_ Backend = (*Mock)(nil)
 	_ Backend = (*ClaudeCode)(nil)
 	_ Backend = (*Grok)(nil)
+	_ Backend = (*Anthropic)(nil)
 )
 
 func TestMockWritesPlannedFiles(t *testing.T) {

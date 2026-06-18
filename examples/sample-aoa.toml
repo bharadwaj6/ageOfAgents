@@ -3,7 +3,7 @@
 # you opt in. The [pricing] table also works as `aoa eval --price-file`.
 
 repo             = "/path/to/your-repo"   # or "./repo"; `aoa init --adopt` fills this in
-backend          = "claudecode"           # "mock" (offline) | "claudecode" | "grok"
+backend          = "claudecode"           # "mock" (offline) | "claudecode" | "grok" | "openai" | "anthropic"
 concurrency      = 4
 max_attempts     = 2
 conventions_file = "CONVENTIONS.md"        # injected into every agent prompt

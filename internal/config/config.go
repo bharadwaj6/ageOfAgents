@@ -27,7 +27,8 @@ type Config struct {
 	// Repo is the path to the integration git repository, relative to the workspace
 	// root (the directory containing aoa.toml) or absolute.
 	Repo string `toml:"repo"`
-	// Backend selects the agent Backend: "mock" or "claudecode".
+	// Backend selects the agent Backend: "mock", "claudecode", "grok", "openai",
+	// "anthropic", or a custom plugin defined in Backends.
 	Backend string `toml:"backend"`
 	// Concurrency caps the number of Workers in flight (the Concurrency Limit).
 	Concurrency int `toml:"concurrency"`

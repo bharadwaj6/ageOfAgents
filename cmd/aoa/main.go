@@ -940,8 +940,10 @@ func buildBackendSingle(name string, cfg config.Config) (agent.Backend, error) {
 		return agent.NewGrok(), nil
 	case "openai":
 		return agent.NewOpenAI(), nil
+	case "anthropic":
+		return agent.NewAnthropic(), nil
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok|openai or a configured plugin)", name)
+		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok|openai|anthropic or a configured plugin)", name)
 	}
 }
 
