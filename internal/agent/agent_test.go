@@ -191,6 +191,30 @@ func TestGrokInvokesInWorktree(t *testing.T) {
 	}
 }
 
+func TestGrokLeavesNoScratchInWorktree(t *testing.T) {
+	// The agent's transcript is carried in Result.Trace (and the Event Log); it must
+	// not be dropped into the worktree, where the orchestrator's `git add -A` would
+	// commit it into the proposal.
+	wt := t.TempDir()
+	g := &Grok{run: func(context.Context, string, string, ...string) (string, error) {
+		return "agent output", nil
+	}}
+	if _, err := g.Run(context.Background(), Task{TicketID: "t1", Title: "x", Worktree: wt}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	entries, err := os.ReadDir(wt)
+	if err != nil {
+		t.Fatalf("read worktree: %v", err)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("grok wrote scratch into the worktree: %v", names)
+	}
+}
+
 func TestNewGrokAllowsEdits(t *testing.T) {
 	// Like claudecode, headless `grok -p` declines to write files without a
 	// permission flag; grok uses bypassPermissions to let the agent edit its
