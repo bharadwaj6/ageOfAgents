@@ -40,6 +40,7 @@ interface (`agent.Backend`, ADR 004); the control plane is identical across back
 | `claudecode` | the `claude` CLI authenticated; network + API cost | real coding work |
 | `grok` | a Grok API key in the environment; network + API cost | real coding work / benchmarking |
 | `openai` | `OPENAI_API_KEY` in environment; network + API cost | real coding work natively with OpenAI |
+| `anthropic` | `ANTHROPIC_API_KEY` in environment; network + API cost | real coding work natively with Claude (no CLI) |
 
 ### Custom Plugins (OpenRouter, DeepSeek, Together AI)
 
