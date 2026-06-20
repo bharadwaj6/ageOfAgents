@@ -98,6 +98,7 @@ type Ticket struct {
 	Attempts       int      // how many dispatches have been attempted
 	Branch         string   // for StatusProposed: git branch with the candidate
 	Commit         string
+	Summary        string // one-line description of the merged/proposed change, shared with dependents
 	Trace          string
 	Depth          int      // decomposition depth; tickets seeded from a goal are 0
 	Amendments     []string // steering guidance dynamically added to the ticket
@@ -255,6 +256,7 @@ func (s *State) Apply(e api.Event) error {
 				t.Worker = p.Worker // lock the ticket to the worker who proposed it
 				t.Branch = p.Branch
 				t.Commit = p.Commit
+				t.Summary = p.Summary
 				t.Trace = p.Trace
 				if g := s.Goals[t.GoalID]; g != nil {
 					g.TokensSpent += p.Tokens
@@ -302,7 +304,7 @@ func (s *State) Apply(e api.Event) error {
 			}
 			t.LastFailOutput = p.Output
 			t.Worker = ""
-			t.Branch, t.Commit, t.Trace = "", "", ""
+			t.Branch, t.Commit, t.Summary, t.Trace = "", "", "", ""
 			t.LastActivity = e.Timestamp
 		}
 

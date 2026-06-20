@@ -162,6 +162,11 @@ func BuildPrompt(task Task) string {
 	if task.Goal != "" {
 		fmt.Fprintf(&b, "Overall goal: %s\n\n", task.Goal)
 	}
+	if task.DepContext != "" {
+		b.WriteString("Completed dependencies you can build on:\n")
+		b.WriteString(task.DepContext)
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "Task: %s\n\n", task.Title)
 	if task.Attempt > 1 && task.LastFailure != "" {
 		fmt.Fprintf(&b, "This is attempt %d. Your previous attempt failed the verification Gate "+

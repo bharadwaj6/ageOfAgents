@@ -71,7 +71,15 @@ re-deriving the same wrong diff.
 
 ## 2. Richer shared-log context pack — *realize the blackboard the design already promises*
 
-**Priority: P1 · Leverage: high · Effort: medium**
+**Priority: P1 · Leverage: high · Effort: medium · Status: shipped (dependencies)**
+
+> Implemented (first slice): each dispatch now carries a deterministic context pack of the ticket's
+> already-merged **dependencies** — title, the worker's one-line `Summary`, and the short merge commit —
+> read from the Shared Log via `dependencyContext` and injected by `BuildPrompt`. This required plumbing
+> the previously-dropped `Result.Summary` through `ProposalSubmitted` onto ticket state. No new ADR: it
+> *delivers* ADR 006 rather than deciding anything new. Sibling/graph status was deliberately left out
+> (YAGNI — merged dependencies are the high-signal blackboard read; siblings add noise). The rationale
+> below is retained for context.
 
 **The need.** Before touching code, an engineer reads the surrounding code, the tickets it depends on,
 and what already landed. ADR 006 says agents "coordinate through shared state, not messaging" — but today

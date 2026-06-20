@@ -19,6 +19,7 @@ type Task struct {
 	Conventions string // project Conventions, injected as shared coding rules
 	Attempt     int    // 1-based attempt number; >1 means a prior attempt failed the Gate
 	LastFailure string // verifier output from the prior attempt, empty on the first try
+	DepContext  string // summaries of already-merged dependencies, read from the Shared Log (ADR 006)
 }
 
 // Subtask is a child unit of work a Backend proposes when it decides a Task is

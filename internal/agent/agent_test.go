@@ -139,6 +139,19 @@ func TestBuildPromptIncludesPriorFailure(t *testing.T) {
 	}
 }
 
+func TestBuildPromptIncludesDependencyContext(t *testing.T) {
+	p := BuildPrompt(Task{Title: "T", DepContext: "- define shared User type (commit abc123)\n"})
+	for _, want := range []string{"Completed dependencies", "define shared User type"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt missing %q:\n%s", want, p)
+		}
+	}
+	// No dependency context => no dependencies section.
+	if strings.Contains(BuildPrompt(Task{Title: "T"}), "Completed dependencies") {
+		t.Error("prompt should omit the dependencies section when there is no context")
+	}
+}
+
 func TestTailLinesKeepsBoundedTail(t *testing.T) {
 	if got := tailLines("short", 100); got != "short" {
 		t.Errorf("tailLines(short) = %q, want unchanged", got)
