@@ -202,6 +202,7 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 				goalText: goalText(s, t),
 				depth:    t.Depth,
 				attempt:  t.Attempts + 1, // this dispatch is the next attempt
+				lastFail: t.LastFailOutput,
 			}
 			wg.Add(1)
 			go func() {
@@ -281,6 +282,7 @@ type dispatchJob struct {
 	goalText string
 	depth    int
 	attempt  int
+	lastFail string // verifier output from the prior attempt; empty on the first try
 }
 
 // dispatch runs one ticket attempt: claim -> worktree -> agent -> commit ->
@@ -313,6 +315,8 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		Goal:        j.goalText,
 		Worktree:    dest,
 		Conventions: o.opt.Conventions,
+		Attempt:     j.attempt,
+		LastFailure: j.lastFail,
 	})
 	if err != nil {
 		o.failAttempt(ctx, j, worker, fmt.Sprintf("agent: %v", err))
@@ -575,10 +579,10 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 	if o.opt.RequireApproval && !t.Approved {
 		out, err := o.mq.DryRun(ctx, mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch})
 		if err != nil {
-			return o.rejectOrFail(ctx, t, t.Worker, fmt.Sprintf("merge queue: %v", err))
+			return o.rejectOrFail(ctx, t, t.Worker, fmt.Sprintf("merge queue: %v", err), "")
 		}
 		if !out.Verified {
-			return o.rejectOrFail(ctx, t, t.Worker, out.Reason)
+			return o.rejectOrFail(ctx, t, t.Worker, out.Reason, out.Output)
 		}
 		// Candidate passed the Gate. Record the pass and park for approval; keep
 		// the worktree alive so the real merge can reuse the branch.
@@ -591,7 +595,7 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 	out, err := o.mq.Process(ctx, mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch})
 	if err != nil {
 		// Infrastructure failure: treat as a failed attempt.
-		return o.rejectOrFail(ctx, t, t.Worker, fmt.Sprintf("merge queue: %v", err))
+		return o.rejectOrFail(ctx, t, t.Worker, fmt.Sprintf("merge queue: %v", err), "")
 	}
 	return o.applyMergeOutcome(ctx, t, out)
 }
@@ -618,7 +622,7 @@ func (o *Orchestrator) applyMergeOutcome(ctx context.Context, t *state.Ticket, o
 		o.cleanupWorktree(ctx, t.ID)
 		return nil
 	}
-	return o.rejectOrFail(ctx, t, t.Worker, out.Reason)
+	return o.rejectOrFail(ctx, t, t.Worker, out.Reason, out.Output)
 }
 
 // pausedForApproval reports whether the run has no actionable work left and is
@@ -644,7 +648,7 @@ func pausedForApproval(s *state.State) bool {
 // won't help, so it gives up early instead of burning more tokens (even when
 // attempts remain). t reflects state *before* this rejection, so t.SameFailCount
 // counts the prior identical failures.
-func (o *Orchestrator) rejectOrFail(ctx context.Context, t *state.Ticket, worker, reason string) error {
+func (o *Orchestrator) rejectOrFail(ctx context.Context, t *state.Ticket, worker, reason, output string) error {
 	isLastWorker := len(t.ActiveWorkers) <= 1
 	if isLastWorker && o.opt.CrashLoopThreshold > 0 && reason != "" && reason == t.LastFailReason &&
 		t.SameFailCount+1 >= o.opt.CrashLoopThreshold {
@@ -660,7 +664,7 @@ func (o *Orchestrator) rejectOrFail(ctx context.Context, t *state.Ticket, worker
 		})
 	}
 	o.cleanupWorktree(ctx, t.ID)
-	return o.emit(api.VerificationFailed, api.VerificationFailedPayload{TicketID: t.ID, Worker: worker, Reason: reason})
+	return o.emit(api.VerificationFailed, api.VerificationFailedPayload{TicketID: t.ID, Worker: worker, Reason: reason, Output: output})
 }
 
 // backoffFor returns how long a ticket must wait before its next attempt:

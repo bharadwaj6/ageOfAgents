@@ -26,7 +26,11 @@ Ratings: **leverage** = expected impact on success/quality; **effort** = rough i
 
 ## 1. Verification feedback loop — *the failing-build iteration every engineer relies on*
 
-**Priority: P0 · Leverage: high · Effort: small**
+**Priority: P0 · Leverage: high · Effort: small · Status: shipped**
+
+> Implemented: the Gate's combined output now flows through `VerificationFailed` → ticket
+> `LastFailOutput` → `agent.Task.{Attempt,LastFailure}` → the retry prompt (tail-bounded). The
+> design rationale below is retained for context.
 
 **The need.** A human engineer fixes code by reading the build/test error and trying again. `aoa`
 currently throws that signal away. When a proposal fails the Gate, `rejectOrFail`
