@@ -187,6 +187,7 @@ type ProposalSubmittedPayload struct {
 	Worker   string `json:"worker"`
 	Branch   string `json:"branch"`
 	Commit   string `json:"commit"`
+	Summary  string `json:"summary,omitempty"` // one-line description of the change, for dependents' context
 	Trace    string `json:"trace,omitempty"`
 	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the work consumed (0 when unknown)
 	Model    string `json:"model,omitempty"`  // model that produced the change, for per-model cost

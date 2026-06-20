@@ -561,6 +561,64 @@ func TestVerificationFailureFeedsNextAttempt(t *testing.T) {
 	}
 }
 
+func TestDependencyContext(t *testing.T) {
+	s := state.New()
+	s.Tickets["dep1"] = &state.Ticket{ID: "dep1", Title: "define types", Summary: "added User and Order structs", Commit: "abcdef0123456789", Status: state.StatusMerged}
+	s.Tickets["dep2"] = &state.Ticket{ID: "dep2", Title: "work in progress", Status: state.StatusRunning}
+
+	got := dependencyContext(s, &state.Ticket{ID: "t", DependsOn: []string{"dep1", "dep2", "missing"}})
+	if !strings.Contains(got, "define types: added User and Order structs") {
+		t.Errorf("merged dependency summary missing:\n%s", got)
+	}
+	if !strings.Contains(got, "abcdef012345") || strings.Contains(got, "abcdef0123456789") {
+		t.Errorf("commit should be abbreviated to 12 chars:\n%s", got)
+	}
+	if strings.Contains(got, "work in progress") {
+		t.Errorf("non-merged dependency should be omitted:\n%s", got)
+	}
+	if c := dependencyContext(s, &state.Ticket{ID: "root"}); c != "" {
+		t.Errorf("a ticket with no dependencies should get empty context, got %q", c)
+	}
+}
+
+func TestDependencyContextReachesDependent(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{
+		Decompose: map[string][]agent.Subtask{
+			"Implement: build app": {
+				{LocalID: "types", Title: "define shared User type", IdempotencyKey: "g1:types"},
+				{LocalID: "api", Title: "implement the API", DependsOn: []string{"types"}, IdempotencyKey: "g1:api"},
+			},
+		},
+	}
+	rec := &taskRecorder{inner: mock}
+	o, h := setup(t, rec, pass, Options{Concurrency: 4})
+	h.submitGoal(t, "g1", "build app")
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, id := range []string{"g1-impl/types", "g1-impl/api"} {
+		if tk := h.state(t).Tickets[id]; tk == nil || tk.Status != state.StatusMerged {
+			t.Fatalf("child %s = %+v, want merged", id, tk)
+		}
+	}
+
+	var apiCtx string
+	found := false
+	for _, task := range rec.seen() {
+		if task.Title == "implement the API" {
+			apiCtx, found = task.DepContext, true
+		}
+	}
+	if !found {
+		t.Fatal("no dispatch recorded for the dependent (API) child")
+	}
+	if !strings.Contains(apiCtx, "define shared User type") {
+		t.Errorf("dependent's DepContext = %q, want it to carry the merged dependency from the Shared Log", apiCtx)
+	}
+}
+
 func TestGoalAmendmentReachesNextDispatch(t *testing.T) {
 	gate := verify.Verifier{Commands: []verify.Command{{"true"}}}
 	rec := &recordBackend{inner: agent.NewMock()}

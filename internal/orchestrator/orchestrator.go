@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -203,6 +204,7 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 				depth:    t.Depth,
 				attempt:  t.Attempts + 1, // this dispatch is the next attempt
 				lastFail: t.LastFailOutput,
+				depCtx:   dependencyContext(s, t),
 			}
 			wg.Add(1)
 			go func() {
@@ -283,6 +285,7 @@ type dispatchJob struct {
 	depth    int
 	attempt  int
 	lastFail string // verifier output from the prior attempt; empty on the first try
+	depCtx   string // summaries of merged dependencies (blackboard read, ADR 006)
 }
 
 // dispatch runs one ticket attempt: claim -> worktree -> agent -> commit ->
@@ -317,6 +320,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		Conventions: o.opt.Conventions,
 		Attempt:     j.attempt,
 		LastFailure: j.lastFail,
+		DepContext:  j.depCtx,
 	})
 	if err != nil {
 		o.failAttempt(ctx, j, worker, fmt.Sprintf("agent: %v", err))
@@ -363,7 +367,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	}
 
 	_ = o.emit(api.ProposalSubmitted, api.ProposalSubmittedPayload{
-		TicketID: j.ticketID, Worker: worker, Branch: branch, Commit: sha, Trace: res.Trace, Tokens: res.Tokens, Model: res.Model,
+		TicketID: j.ticketID, Worker: worker, Branch: branch, Commit: sha, Summary: res.Summary, Trace: res.Trace, Tokens: res.Tokens, Model: res.Model,
 	})
 }
 
@@ -839,6 +843,40 @@ func goalText(s *state.State, t *state.Ticket) string {
 		return g.EffectiveText() // includes any mid-run amendments (GoalAmended)
 	}
 	return ""
+}
+
+// dependencyContext summarizes a ticket's already-merged dependencies so the
+// agent can build on what they produced — the blackboard read promised by
+// ADR 006, assembled deterministically from the Shared Log rather than via
+// agent-to-agent messaging. For each merged dependency it lists the title, the
+// worker's one-line summary, and the short merge commit. It returns "" when the
+// ticket has no merged dependencies (e.g. a root ticket).
+func dependencyContext(s *state.State, t *state.Ticket) string {
+	var b strings.Builder
+	for _, dep := range t.DependsOn {
+		d := s.Tickets[dep]
+		if d == nil || d.Status != state.StatusMerged {
+			continue
+		}
+		fmt.Fprintf(&b, "- %s", d.Title)
+		if d.Summary != "" && d.Summary != d.Title {
+			fmt.Fprintf(&b, ": %s", d.Summary)
+		}
+		if d.Commit != "" {
+			fmt.Fprintf(&b, " (commit %s)", shortCommit(d.Commit))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// shortCommit abbreviates a git SHA for human-readable context, leaving already
+// short identifiers untouched.
+func shortCommit(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // detectStalled returns claimed/running Tasks whose last activity predates the
