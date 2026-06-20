@@ -260,6 +260,13 @@ Docker variant) accept `BACKEND=grok`, `LIMIT`, and `MAX_COST` / `PRICE_FILE` / 
 budget-bounded, traced run is one command (needs a Grok key + the Lite dataset). That single empirical
 artifact is what converts the project from "measured architecture" to "measured tool."
 
+## Proposed next bets
+
+Beyond Phase E, a prioritized set of quality- and coordination-focused proposals lives in
+[`improvements.md`](improvements.md) (verification feedback loop, richer shared-log context pack,
+flaky-test detection, blind-spot closure & post-merge safety). Those are *proposals*, not committed
+work — promote an item here when it is scheduled.
+
 ---
 
 ## Verification (end-to-end)
