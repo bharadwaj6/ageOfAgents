@@ -123,6 +123,36 @@ func TestBuildPromptIncludesContext(t *testing.T) {
 	}
 }
 
+func TestBuildPromptIncludesPriorFailure(t *testing.T) {
+	// A first attempt carries no failure context.
+	first := BuildPrompt(Task{Title: "T", Attempt: 1})
+	if strings.Contains(first, "previous attempt") {
+		t.Errorf("first attempt should not mention a previous failure:\n%s", first)
+	}
+
+	// A retry surfaces the prior gate output so the agent can fix the cause.
+	retry := BuildPrompt(Task{Title: "T", Attempt: 2, LastFailure: "FAIL: TestThing\nundefined: foo"})
+	for _, want := range []string{"attempt 2", "undefined: foo", "Previous Gate output"} {
+		if !strings.Contains(retry, want) {
+			t.Errorf("retry prompt missing %q:\n%s", want, retry)
+		}
+	}
+}
+
+func TestTailLinesKeepsBoundedTail(t *testing.T) {
+	if got := tailLines("short", 100); got != "short" {
+		t.Errorf("tailLines(short) = %q, want unchanged", got)
+	}
+	big := strings.Repeat("a\n", 5000) // far longer than maxFailureChars
+	got := tailLines(big, maxFailureChars)
+	if len(got) > maxFailureChars+len("[...truncated...]\n") {
+		t.Errorf("tailLines length = %d, want <= bound", len(got))
+	}
+	if !strings.HasPrefix(got, "[...truncated...]") {
+		t.Errorf("truncated output should be marked, got prefix %q", got[:20])
+	}
+}
+
 func TestClaudeCodeParsesSubtaskDecomposition(t *testing.T) {
 	out := "I'll decompose this.\n\n```" + subtaskFence + "\n" +
 		`[{"local_id":"types","title":"shared types","depends_on":[],"idempotency_key":"g:types"},` +

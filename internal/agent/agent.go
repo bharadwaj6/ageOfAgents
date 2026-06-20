@@ -17,6 +17,8 @@ type Task struct {
 	Goal        string // the parent Goal text, for context
 	Worktree    string // absolute path to the isolated git worktree to edit
 	Conventions string // project Conventions, injected as shared coding rules
+	Attempt     int    // 1-based attempt number; >1 means a prior attempt failed the Gate
+	LastFailure string // verifier output from the prior attempt, empty on the first try
 }
 
 // Subtask is a child unit of work a Backend proposes when it decides a Task is

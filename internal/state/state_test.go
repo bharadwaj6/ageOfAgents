@@ -122,7 +122,7 @@ func TestVerificationFailedRetriesTicket(t *testing.T) {
 		add(api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}).
 		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
 		add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "t1", Worker: "w1", Commit: "c1"}).
-		add(api.VerificationFailed, api.VerificationFailedPayload{TicketID: "t1", Worker: "w1", Reason: "tests failed"}).
+		add(api.VerificationFailed, api.VerificationFailedPayload{TicketID: "t1", Worker: "w1", Reason: "tests failed", Output: "FAIL: TestThing\n--- expected 1 got 2"}).
 		fold()
 
 	tk := s.Tickets["t1"]
@@ -131,6 +131,9 @@ func TestVerificationFailedRetriesTicket(t *testing.T) {
 	}
 	if tk.Worker != "" || tk.Commit != "" {
 		t.Errorf("proposal fields should be cleared, got worker=%q commit=%q", tk.Worker, tk.Commit)
+	}
+	if tk.LastFailOutput != "FAIL: TestThing\n--- expected 1 got 2" {
+		t.Errorf("LastFailOutput = %q, want the verifier output projected for the retry prompt", tk.LastFailOutput)
 	}
 	if s.Settled() {
 		t.Error("should not be settled while a ticket is ready")

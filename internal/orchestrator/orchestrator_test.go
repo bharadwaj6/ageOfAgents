@@ -507,6 +507,60 @@ func (r *recordBackend) seen() []string {
 	return append([]string(nil), r.goals...)
 }
 
+// taskRecorder captures every Task it is handed, then delegates.
+type taskRecorder struct {
+	inner agent.Backend
+	mu    sync.Mutex
+	tasks []agent.Task
+}
+
+func (r *taskRecorder) Name() string { return "task-recorder" }
+func (r *taskRecorder) Run(ctx context.Context, task agent.Task) (agent.Result, error) {
+	r.mu.Lock()
+	r.tasks = append(r.tasks, task)
+	r.mu.Unlock()
+	return r.inner.Run(ctx, task)
+}
+func (r *taskRecorder) seen() []agent.Task {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]agent.Task(nil), r.tasks...)
+}
+
+func TestVerificationFailureFeedsNextAttempt(t *testing.T) {
+	// A gate that fails its first run (emitting a recognizable marker) and passes
+	// thereafter, so the second attempt should carry the first attempt's output.
+	sentinel := filepath.Join(t.TempDir(), "gate-ran")
+	script := "if [ -f " + sentinel + " ]; then exit 0; fi; touch " + sentinel +
+		"; echo GATE_FAIL_MARKER: build broken; exit 1"
+	gate := verify.Verifier{Commands: []verify.Command{{"sh", "-c", script}}}
+	rec := &taskRecorder{inner: agent.NewMock()}
+	o, h := setup(t, rec, gate, Options{Concurrency: 1, MaxAttempts: 3})
+	h.submitGoal(t, "g1", "build app")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if tk := h.state(t).Tickets["g1-impl"]; tk == nil || tk.Status != state.StatusMerged {
+		t.Fatalf("g1-impl = %+v, want merged after the gate passes on retry", tk)
+	}
+
+	tasks := rec.seen()
+	if len(tasks) != 2 {
+		t.Fatalf("backend saw %d tasks, want 2 (fail then retry)", len(tasks))
+	}
+	if tasks[0].Attempt != 1 || tasks[0].LastFailure != "" {
+		t.Errorf("first task = {Attempt:%d, LastFailure:%q}, want attempt 1 with no prior failure", tasks[0].Attempt, tasks[0].LastFailure)
+	}
+	if tasks[1].Attempt != 2 {
+		t.Errorf("retry Attempt = %d, want 2", tasks[1].Attempt)
+	}
+	if !strings.Contains(tasks[1].LastFailure, "GATE_FAIL_MARKER") {
+		t.Errorf("retry LastFailure = %q, want it to carry the prior gate output", tasks[1].LastFailure)
+	}
+}
+
 func TestGoalAmendmentReachesNextDispatch(t *testing.T) {
 	gate := verify.Verifier{Commands: []verify.Command{{"true"}}}
 	rec := &recordBackend{inner: agent.NewMock()}

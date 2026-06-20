@@ -104,6 +104,7 @@ type Ticket struct {
 	Approved       bool     // a human approved the parked proposal (ADR 008)
 	LastActivity   time.Time
 	LastFailReason string // reason of the most recent verification failure (crash-loop detection)
+	LastFailOutput string // verifier output of the most recent failure, fed back into the retry prompt
 	SameFailCount  int    // consecutive verification failures sharing LastFailReason
 	Worktree       string // preserved checkout of a terminally-failed attempt (warm handoff); empty otherwise
 }
@@ -299,6 +300,7 @@ func (s *State) Apply(e api.Event) error {
 				t.LastFailReason = p.Reason
 				t.SameFailCount = 1
 			}
+			t.LastFailOutput = p.Output
 			t.Worker = ""
 			t.Branch, t.Commit, t.Trace = "", "", ""
 			t.LastActivity = e.Timestamp

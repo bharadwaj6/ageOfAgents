@@ -17,6 +17,11 @@ const subtaskFence = "aoa:subtasks"
 // unparseable usage simply yields 0, keeping cost accounting opt-in.
 const usageFence = "aoa:usage"
 
+// maxFailureChars bounds how much prior-attempt Gate output is fed back into a
+// retry prompt, keeping token cost predictable. The tail is kept because build
+// and test failures report the actual error at the end of their output.
+const maxFailureChars = 2000
+
 // defaultClaudeArgs let the headless agent actually apply its edits. Without a
 // permission mode, `claude -p` runs but declines to write files, so every Task
 // would fail with "agent produced no changes". acceptEdits auto-approves file
@@ -158,6 +163,14 @@ func BuildPrompt(task Task) string {
 		fmt.Fprintf(&b, "Overall goal: %s\n\n", task.Goal)
 	}
 	fmt.Fprintf(&b, "Task: %s\n\n", task.Title)
+	if task.Attempt > 1 && task.LastFailure != "" {
+		fmt.Fprintf(&b, "This is attempt %d. Your previous attempt failed the verification Gate "+
+			"with the output below. Diagnose the cause and fix it; do not repeat the same mistake.\n\n",
+			task.Attempt)
+		b.WriteString("Previous Gate output:\n")
+		b.WriteString(tailLines(task.LastFailure, maxFailureChars))
+		b.WriteString("\n\n")
+	}
 	b.WriteString("Make the necessary code changes in this working directory. " +
 		"Keep changes minimal and ensure the project still builds and its tests pass.\n\n")
 	b.WriteString("If this task is too large to implement in one focused change, do NOT edit any " +
@@ -169,6 +182,20 @@ func BuildPrompt(task Task) string {
 	b.WriteString("Use local_id to reference sibling subtasks in depends_on. Decompose OR implement, " +
 		"never both.")
 	return b.String()
+}
+
+// tailLines returns at most max trailing bytes of s, trimmed to a line boundary
+// and prefixed with a truncation marker when content was dropped. Build/test
+// output puts the actual failure last, so the tail is the useful part.
+func tailLines(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	tail := s[len(s)-max:]
+	if nl := strings.IndexByte(tail, '\n'); nl >= 0 && nl+1 < len(tail) {
+		tail = tail[nl+1:]
+	}
+	return "[...truncated...]\n" + tail
 }
 
 func defaultRunner(ctx context.Context, dir, name string, args ...string) (string, error) {
