@@ -127,10 +127,16 @@ func (e Event) TicketID() string {
 
 // --- Typed payloads -------------------------------------------------------
 
-// GoalSubmittedPayload accompanies [GoalSubmitted].
+// GoalSubmittedPayload accompanies [GoalSubmitted]. Source names where the Goal
+// came from ("cli" when a human typed it, otherwise the entry point that
+// produced it). IdempotencyKey, when set, makes re-submitting the same logical
+// Goal a no-op — an at-least-once source such as a redelivered webhook can
+// safely replay without forking a second Goal (ADR 010).
 type GoalSubmittedPayload struct {
-	GoalID string `json:"goal_id"`
-	Text   string `json:"text"`
+	GoalID         string `json:"goal_id"`
+	Text           string `json:"text"`
+	Source         string `json:"source,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 // TicketCreatedPayload accompanies [TicketCreated]. IdempotencyKey makes

@@ -134,6 +134,7 @@ type State struct {
 	Tickets     map[string]*Ticket
 	TicketOrder []string          `json:"ticket_order"`  // creation order, for deterministic iteration
 	KeyToTicket map[string]string `json:"key_to_ticket"` // idempotency key -> ticket ID (dedupe)
+	KeyToGoal   map[string]string `json:"key_to_goal"`   // idempotency key -> goal ID (dedupe)
 	LastSeq     int
 }
 
@@ -143,6 +144,7 @@ func New() *State {
 		Goals:       map[string]*Goal{},
 		Tickets:     map[string]*Ticket{},
 		KeyToTicket: map[string]string{},
+		KeyToGoal:   map[string]string{},
 	}
 }
 
@@ -172,6 +174,18 @@ func (s *State) Apply(e api.Event) error {
 		var p api.GoalSubmittedPayload
 		if err := e.DecodePayload(&p); err != nil {
 			return err
+		}
+		// Idempotency: a Goal submitted from an at-least-once source (a redelivered
+		// webhook, a re-run trigger) must not become a second Goal, and must not
+		// reset the spend of the one already on the log (ADR 010).
+		if p.IdempotencyKey != "" {
+			if _, seen := s.KeyToGoal[p.IdempotencyKey]; seen {
+				break
+			}
+			s.KeyToGoal[p.IdempotencyKey] = p.GoalID
+		}
+		if _, exists := s.Goals[p.GoalID]; exists {
+			break
 		}
 		s.Goals[p.GoalID] = &Goal{ID: p.GoalID, Text: p.Text, TokensByModel: map[string]int{}}
 

@@ -337,6 +337,40 @@ func TestStallRestartChargesNothing(t *testing.T) {
 	}
 }
 
+func TestDuplicateGoalKeyIsIgnored(t *testing.T) {
+	// An at-least-once source (a redelivered webhook) may put the same logical
+	// Goal on the log more than once. Replay must collapse them, and must not
+	// reset the spend already recorded against the first one.
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "fix it", IdempotencyKey: "d-1"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "t1", IdempotencyKey: "g1:t1"}).
+		add(api.TicketFailed, api.TicketFailedPayload{TicketID: "t1", Reason: "x", Tokens: 400, Model: "m"}).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "fix it", IdempotencyKey: "d-1"}).
+		fold()
+
+	if len(s.Goals) != 1 {
+		t.Fatalf("goal count = %d, want 1 (same idempotency key)", len(s.Goals))
+	}
+	if s.Goals["g1"] == nil {
+		t.Fatal("the first goal should be the one that survives")
+	}
+	if got := s.Goals["g1"].TokensSpent; got != 400 {
+		t.Errorf("TokensSpent = %d, want 400 (a redelivery must not reset spend)", got)
+	}
+}
+
+func TestUnkeyedGoalsAreIndependent(t *testing.T) {
+	// Without a key there is nothing to dedupe on: two CLI submissions of the
+	// same text are two distinct Goals, as they always have been.
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "same words"}).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "same words"}).
+		fold()
+	if len(s.Goals) != 2 {
+		t.Errorf("goal count = %d, want 2 (unkeyed goals are independent)", len(s.Goals))
+	}
+}
+
 func TestGoalBudgetExceededSetsFlag(t *testing.T) {
 	s := newBuild(t).
 		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).

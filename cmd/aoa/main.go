@@ -271,16 +271,31 @@ func cmdGoal(args []string) error {
 	if err != nil {
 		return err
 	}
-	goalID := "g-" + orchestrator.ShortID()
-	ev, err := api.NewEvent(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: goalID, Text: text})
+	goalID, err := submitGoal(led, text, "human", "")
 	if err != nil {
-		return err
-	}
-	if _, err := led.Append(ev); err != nil {
 		return err
 	}
 	fmt.Printf("submitted goal %s: %q\n", goalID, text)
 	return nil
+}
+
+// submitGoal appends a GoalSubmitted event and returns the new Goal's id. source
+// names the entry point that produced it. key, when non-empty, is an idempotency
+// key: replaying the same logical Goal from an at-least-once source (a
+// redelivered webhook, a re-fired trigger) is then a no-op on replay rather than
+// a second Goal.
+func submitGoal(led *ledger.Ledger, text, source, key string) (string, error) {
+	goalID := "g-" + orchestrator.ShortID()
+	ev, err := api.NewEvent(api.GoalSubmitted, source, api.GoalSubmittedPayload{
+		GoalID: goalID, Text: text, Source: source, IdempotencyKey: key,
+	})
+	if err != nil {
+		return "", err
+	}
+	if _, err := led.Append(ev); err != nil {
+		return "", err
+	}
+	return goalID, nil
 }
 
 // cmdAmend appends steering guidance to a Goal mid-run (GoalAmended). Future
