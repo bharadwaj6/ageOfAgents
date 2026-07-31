@@ -163,12 +163,13 @@ a new lifecycle concern and should land with its own ADR.
 
 ## Also on the radar (known / already roadmapped — listed for completeness, not core bets)
 
-- **Dollar circuit-breaker & cost dashboard.** A token governor (`max_tokens_per_goal`) and an optional
-  `$` ceiling exist; a true cross-run dollar circuit breaker and a real-time burn view are on the README
-  roadmap. Cost data is already event-sourced (`tokens_by_model`, `metrics.USD`).
-- **Heartbeat-based stall detection.** The `Heartbeat` event type exists but is never emitted; stall
-  detection is timeout-only today. Progress-based liveness would reduce false restarts on legitimately
-  long tasks.
+- **Dollar circuit-breaker & cost dashboard.** A token governor (`max_tokens_per_goal`) and a `$` ceiling
+  (`max_usd_per_goal`) exist, and both now count *every* attempt including failed ones; a true cross-run
+  dollar circuit breaker and a real-time burn view are on the README roadmap. Cost data is already
+  event-sourced (`tokens_by_model`, `metrics.USD`).
+- **Heartbeat-based stall detection.** *Shipped* — workers emit `Heartbeat` on
+  `Options.HeartbeatInterval` (30s) for the duration of every Backend call, so the Stall Detector
+  distinguishes a slow agent from a dead one instead of inferring liveness from the dispatch timestamp.
 - **Multi-repo coordination & Firecracker sandboxing.** Already captured in `cross_repo.md` and the
   README roadmap; not re-argued here.
 

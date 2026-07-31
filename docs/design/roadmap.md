@@ -260,6 +260,52 @@ Docker variant) accept `BACKEND=grok`, `LIMIT`, and `MAX_COST` / `PRICE_FILE` / 
 budget-bounded, traced run is one command (needs a Grok key + the Lite dataset). That single empirical
 artifact is what converts the project from "measured architecture" to "measured tool."
 
+## Phase F — unattended-run hardening (loop engineering)
+
+Scored `aoa` against the "loop engineering" model (discover → hand off → verify → persist → schedule) and
+its four debts. The finding, written up in [`loop_engineering.md`](loop_engineering.md): `aoa` was already
+ahead of the model's prescriptions on handoff, verification and persistence — the deterministic Gate is a
+strictly stronger oracle than the adversarial maker-checker sub-agent the literature recommends, and the
+Event Log dominates Markdown memory. The gaps were the two outer moves plus one real accounting bug.
+
+- [x] **Token blowout closed.** Failed/retried attempts (`TicketFailed`, `WorkerRestarted`) now carry
+      `Tokens`/`Model` and charge the Goal through a single `state.chargeGoal`. Previously only
+      `ProposalSubmitted`/`TicketDecomposed` charged, so the spend governor was blind to the failure
+      spiral — the exact bimodal tail that dominates an unattended budget. USD ceiling finished
+      (`LimitUSD`/`SpentUSD` on `GoalBudgetExceeded`); the `mock` backend now reports a model id so
+      `CostUSD` is exercisable offline at all.
+- [x] **Liveness.** `Heartbeat` was defined and folded but never emitted; the Stall Detector was
+      timeout-only against a 2m default, so any long agent run looked dead to the next reader of the log.
+      Emitted on `Options.HeartbeatInterval` (30s) around every Backend call.
+- [x] **Termination gates configurable.** `stall_timeout`, `max_passes`, `max_graph_depth`,
+      `max_tickets_per_goal`, `max_fan_out` reachable from `aoa.toml` (0 = Scheduler default, so the
+      authoritative values stay in `orchestrator.New`). Config reference also gained the four fields that
+      were supported but undocumented (`best_of_n`, `max_usd_per_goal`, `sandbox`, `[backends]`,
+      `fallback_backends`).
+- [x] **`aoa serve` hardened.** Single-flight runner (two deliveries could previously drive concurrent
+      runs racing the same Ledger), durable delivery dedupe via `GoalSubmitted.IdempotencyKey` keyed on
+      `X-GitHub-Delivery`, local mux, server timeouts, body limit, surfaced errors. Replay also no longer
+      recreates an existing Goal (which reset its recorded spend).
+- [x] **Scheduling.** Deliberately *not* a daemon (ADR 003 — a supervisor is a second control loop).
+      `aoa run` is idempotent, crash-recoverable and quiet when idle, so cron/systemd/Actions is the
+      scheduler: [`docs/scheduling.md`](../scheduling.md) with the overlap guards each needs, plus
+      `aoa run --interval D` for interactive use.
+- [ ] **Discovery — the remaining gap.** Nothing surfaces work autonomously: goals arrive only via
+      `aoa goal` or an `@aoa` comment. No CI-failure ingestion, issue triage, or commit scanning.
+      **Reopen when** the hardened webhook path proves insufficient on a real repo. Shape is settled — a
+      deterministic `Source` emitting keyed candidates, starting with `gate-red` (run the Gate on `main`;
+      if red, submit one deduped Goal), reusing `internal/verify`, no network. Discovery stays
+      deterministic Go: an LLM choosing the fleet's next task is a coordinator by another name.
+
+**Deferred with reopen gates:** prompt-cache-aware backends (the literature's largest cost lever, but
+needs `cache_control` in the native backends and session reuse in `claudecode`, which currently re-pays
+full context every attempt) — *reopen when* the new per-attempt token data shows re-sent prefix cost
+dominates. Per-run human digest (comprehension rot) — *reopen when* `aoa status` + `aoa diagnose` prove
+insufficient on a real repo. `mini-swe-agent` as a Backend — gated on the #4 baseline.
+
+**Last status:** all items above shipped except discovery, which is recorded as an open gap rather than
+closed. Phase E #4 (SWE-bench Lite at scale) remains the outstanding empirical work.
+
 ## Proposed next bets
 
 Beyond Phase E, a prioritized set of quality- and coordination-focused proposals lives in

@@ -67,6 +67,35 @@ others are assessed from each system's documented architecture and may change as
   crash recovery, rather than coordination/merging policy that is session-scoped and configuration-
   dependent. Where ultraworker is strong, `aoa` is strong *and* checkable.
 
+## A different layer: harnesses and personal loops
+
+Three systems come up constantly alongside `aoa` but are **not** in the matrix above, because they answer
+a different question. Placing them precisely matters more than scoring them.
+
+- **OpenHands and SWE-agent** (and its minimal descendant `mini-swe-agent`) are **harnesses**: they arm a
+  *single* agent run — which tools it gets, how terminal output is condensed to survive the context
+  window, when the run is finished. SWE-agent's Agent-Computer Interface is the sharpest statement of that
+  idea. They sit one layer *below* `aoa`, which schedules, verifies, and merges many such runs. The clean
+  relationship is that a harness is an `agent.Backend` (ADR 004), not a competitor — and `mini-swe-agent`
+  would be a useful A/B backend once a reproducible SWE-bench baseline exists to compare against.
+- **OpenClaw** is a **personal always-on assistant**: a gateway daemon bridging chat platforms, with
+  memory as human-readable Markdown on disk (`SOUL.md`, `AGENTS.md`, `HEARTBEAT.md`) rather than a vector
+  store. Its dynamic-context-assembly insight — pull specific files in on demand, don't rely on semantic
+  similarity — is the same instinct behind `aoa`'s deterministic context pack. The divergence is the
+  medium: `aoa`'s state is a replayable event log, which additionally yields crash recovery, idempotency,
+  audit, and every metric as a pure projection. Markdown memory cannot give those.
+- **Ralph** (the "run the same prompt in an infinite loop with fresh context" technique) is the closest
+  thing to `aoa`'s dispatch model in spirit — every attempt starts clean, and objective compiler output is
+  the only signal that carries forward. `aoa` is Ralph with the sharp edges removed: state lives in an
+  append-only log rather than a plan file the agent edits, termination is bounded by explicit gates rather
+  than a loop-detection heuristic, and nothing lands without passing the Gate.
+
+A caution worth carrying from the harness literature: the strong harnesses resolve 70–78% of SWE-bench
+Verified, but roughly 17–19% of **SWE-bench-Live**, whose issues are freshly opened and uncontaminated.
+Whatever the loop around them, agents are far better on known ground than on genuine ambiguity — an
+argument for a strict Gate and a human approval path, not for a longer leash. See
+[`loop_engineering.md`](loop_engineering.md).
+
 ## Live evaluation protocol (closing the mock→live gap)
 
 The matrix above is hermetic and architectural. The honest next step — repeatedly flagged in review — is
