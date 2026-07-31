@@ -277,6 +277,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	return nil
 }
 
+// usage is one agent attempt's token spend, carried to whichever event records
+// the attempt's outcome. The zero value means "nothing to charge" — the attempt
+// failed before the agent ran, or the Backend reported no usage.
+type usage struct {
+	tokens int
+	model  string
+}
+
 type dispatchJob struct {
 	ticketID string
 	goalID   string
@@ -301,7 +309,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	dest := filepath.Join(o.opt.WorktreeBase, worktree.SanitizeBranch(branch))
 	wt, err := o.repo.AddWorktree(ctx, dest, branch)
 	if err != nil {
-		o.failAttempt(ctx, j, worker, fmt.Sprintf("worktree: %v", err))
+		o.failAttempt(ctx, j, worker, fmt.Sprintf("worktree: %v", err), usage{})
 		return
 	}
 	o.mu.Lock()
@@ -323,7 +331,10 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		DepContext:  j.depCtx,
 	})
 	if err != nil {
-		o.failAttempt(ctx, j, worker, fmt.Sprintf("agent: %v", err))
+		// A Backend returning an error reports no usage by Go convention, so a
+		// failed agent call charges nothing. Backends that can attribute partial
+		// spend should surface it on a successful Result instead.
+		o.failAttempt(ctx, j, worker, fmt.Sprintf("agent: %v", err), usage{})
 		return
 	}
 
@@ -356,13 +367,17 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		return
 	}
 
+	// The agent ran and burned tokens whether or not it produced a usable diff;
+	// charge them on either failure path so the spend governor sees the burn.
+	spent := usage{tokens: res.Tokens, model: res.Model}
+
 	sha, changed, err := wt.Commit(ctx, fmt.Sprintf("feat: %s (%s)", j.title, j.ticketID))
 	if err != nil {
-		o.failAttempt(ctx, j, worker, fmt.Sprintf("commit: %v", err))
+		o.failAttempt(ctx, j, worker, fmt.Sprintf("commit: %v", err), spent)
 		return
 	}
 	if !changed {
-		o.failAttempt(ctx, j, worker, "agent produced no changes")
+		o.failAttempt(ctx, j, worker, "agent produced no changes", spent)
 		return
 	}
 
@@ -532,29 +547,31 @@ func childID(parentID, local string) string { return parentID + "/" + local }
 // breaker bounds the *next* wave, which is the right granularity for a governor.
 func (o *Orchestrator) enforceBudgets(s *state.State) error {
 	for _, g := range sortedGoals(s) {
+		spentUSD := g.CostUSD(o.opt.Pricing)
 		tokenExceeded := o.opt.MaxTokensPerGoal > 0 && g.TokensSpent >= o.opt.MaxTokensPerGoal
-		usdExceeded := o.opt.MaxUsdPerGoal > 0 && g.CostUSD(o.opt.Pricing) >= o.opt.MaxUsdPerGoal
+		usdExceeded := o.opt.MaxUsdPerGoal > 0 && spentUSD >= o.opt.MaxUsdPerGoal
 
 		if !tokenExceeded && !usdExceeded {
 			continue
 		}
+		// One event records the trip, carrying whichever ceiling was breached
+		// (both, when the Goal crossed them in the same pass). The unbreached
+		// limit stays zero so a reader can tell which one fired.
 		if !g.BudgetExceeded {
+			p := api.GoalBudgetExceededPayload{GoalID: g.ID, SpentTokens: g.TokensSpent, SpentUSD: spentUSD}
 			if tokenExceeded {
-				if err := o.emit(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{
-					GoalID: g.ID, SpentTokens: g.TokensSpent, Limit: o.opt.MaxTokensPerGoal,
-				}); err != nil {
-					return err
-				}
-			} else if usdExceeded {
-				// We reuse GoalBudgetExceeded with an implied USD limit reason since we don't have
-				// a specific API event for USD limit. We'll set limit to 0 and rely on Reason if we had one.
-				// Wait, GoalBudgetExceededPayload doesn't have CostUSD. Let's just emit it with SpentTokens to log it.
-				if err := o.emit(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{
-					GoalID: g.ID, SpentTokens: g.TokensSpent, Limit: 0, // Using 0 to distinguish USD trip if needed
-				}); err != nil {
-					return err
-				}
+				p.Limit = o.opt.MaxTokensPerGoal
 			}
+			if usdExceeded {
+				p.LimitUSD = o.opt.MaxUsdPerGoal
+			}
+			if err := o.emit(api.GoalBudgetExceeded, p); err != nil {
+				return err
+			}
+		}
+		reason := "goal token budget exceeded"
+		if usdExceeded && !tokenExceeded {
+			reason = "goal cost budget exceeded"
 		}
 		var doomed []*state.Ticket
 		for _, t := range s.Tickets {
@@ -565,7 +582,7 @@ func (o *Orchestrator) enforceBudgets(s *state.State) error {
 		sort.Slice(doomed, func(i, j int) bool { return doomed[i].ID < doomed[j].ID })
 		for _, t := range doomed {
 			if err := o.emit(api.TicketFailed, api.TicketFailedPayload{
-				TicketID: t.ID, Worker: t.Worker, Reason: "goal token budget exceeded",
+				TicketID: t.ID, Worker: t.Worker, Reason: reason,
 			}); err != nil {
 				return err
 			}
@@ -743,7 +760,7 @@ func (o *Orchestrator) nextBackoffWait(s *state.State, now time.Time) (time.Dura
 // failAttempt handles a dispatch-time failure (before a proposal existed). A
 // retry cleans up the worktree; a terminal failure preserves it for a warm
 // handoff (the human can inspect/take over the agent's attempt).
-func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, reason string) {
+func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, reason string, u usage) {
 	s, err := o.loadState()
 	isLastWorker := true
 	if err == nil && s.Tickets[j.ticketID] != nil {
@@ -753,11 +770,14 @@ func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, r
 	if isLastWorker && j.attempt >= o.opt.MaxAttempts {
 		_ = o.emit(api.TicketFailed, api.TicketFailedPayload{
 			TicketID: j.ticketID, Worker: worker, Reason: reason, Worktree: o.preserveWorktree(j.ticketID),
+			Tokens: u.tokens, Model: u.model,
 		})
 		return
 	}
 	o.cleanupWorktree(ctx, j.ticketID)
-	_ = o.emit(api.WorkerRestarted, api.WorkerRestartedPayload{TicketID: j.ticketID, Worker: worker})
+	_ = o.emit(api.WorkerRestarted, api.WorkerRestartedPayload{
+		TicketID: j.ticketID, Worker: worker, Tokens: u.tokens, Model: u.model,
+	})
 }
 
 func (o *Orchestrator) cleanupWorktree(ctx context.Context, ticketID string) {

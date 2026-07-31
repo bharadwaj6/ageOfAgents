@@ -347,6 +347,120 @@ func TestSpendGovernorStopsOverBudgetGoal(t *testing.T) {
 	}
 }
 
+// noChangeMock burns tokens on every attempt and never edits the worktree — the
+// "agent produced no changes" path, which reaches no proposal and so charged the
+// Goal nothing before failed attempts were accounted for.
+func noChangeMock(tokens int) *agent.Mock {
+	return &agent.Mock{Plan: map[string][]agent.File{"*": {}}, TokensPerTask: tokens}
+}
+
+func TestFailedAttemptsChargeGoalTokens(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	o, h := setup(t, noChangeMock(100), pass, Options{Concurrency: 1, MaxAttempts: 2})
+	h.submitGoal(t, "g1", "burns tokens, ships nothing")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run did not converge: %v", err)
+	}
+
+	s := h.state(t)
+	if tk := s.Tickets["g1-impl"]; tk == nil || tk.Status != state.StatusFailed {
+		t.Fatalf("g1-impl status = %v, want failed", tk)
+	}
+	// Two attempts at 100 tokens each: the retry (WorkerRestarted) and the
+	// terminal failure (TicketFailed) must both charge the Goal.
+	if got := s.Goals["g1"].TokensSpent; got != 200 {
+		t.Errorf("goal TokensSpent = %d, want 200 (2 failed attempts x 100)", got)
+	}
+	if got := s.Goals["g1"].TokensByModel["mock"]; got != 200 {
+		t.Errorf("TokensByModel[mock] = %d, want 200", got)
+	}
+}
+
+func TestSpendGovernorTripsOnFailedAttempts(t *testing.T) {
+	// The failure spiral the governor exists to stop: work that burns budget
+	// without ever producing a mergeable diff. The decomposition alone (100) is
+	// under the 150 ceiling — only the failed child attempt pushes it over.
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := noChangeMock(100)
+	mock.Decompose = map[string][]agent.Subtask{
+		"Implement: doomed goal": {
+			{LocalID: "a", Title: "a", IdempotencyKey: "g1:a"},
+			{LocalID: "b", Title: "b", IdempotencyKey: "g1:b"},
+		},
+	}
+	o, h := setup(t, mock, pass, Options{Concurrency: 1, MaxAttempts: 1, MaxTokensPerGoal: 150})
+	h.submitGoal(t, "g1", "doomed goal")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run did not converge: %v", err)
+	}
+
+	s := h.state(t)
+	if !s.Goals["g1"].BudgetExceeded {
+		t.Fatalf("goal BudgetExceeded = false, want true (spent %d, limit 150)", s.Goals["g1"].TokensSpent)
+	}
+	for _, id := range []string{"g1-impl/a", "g1-impl/b"} {
+		if tk := s.Tickets[id]; tk == nil || tk.Status != state.StatusFailed {
+			t.Errorf("child %s status = %v, want failed", id, tk)
+		}
+	}
+	events, err := h.led.Read()
+	require.NoError(t, err)
+	trips := 0
+	for _, e := range events {
+		if e.Type == api.GoalBudgetExceeded {
+			trips++
+		}
+	}
+	if trips != 1 {
+		t.Errorf("GoalBudgetExceeded count = %d, want 1", trips)
+	}
+}
+
+func TestSpendGovernorRecordsUsdCeiling(t *testing.T) {
+	// A cost trip must be distinguishable from a token trip on the log: it
+	// carries LimitUSD/SpentUSD and leaves the token Limit zero.
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	// One failed attempt burns 1M tokens at $10/M, over the $5 ceiling. MaxAttempts=2
+	// leaves the ticket Ready for a retry, so the governor gets a pass in which to
+	// trip and stop it — the burn is what ends the Goal, not the attempt cap.
+	o, h := setup(t, noChangeMock(1_000_000), pass, Options{
+		Concurrency:   1,
+		MaxAttempts:   2,
+		MaxUsdPerGoal: 5,
+		Pricing:       map[string]float64{"mock": 10}, // $10 per million tokens
+	})
+	h.submitGoal(t, "g1", "expensive goal")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run did not converge: %v", err)
+	}
+
+	events, err := h.led.Read()
+	require.NoError(t, err)
+	var trip api.GoalBudgetExceededPayload
+	found := false
+	for _, e := range events {
+		if e.Type == api.GoalBudgetExceeded {
+			require.NoError(t, e.DecodePayload(&trip))
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no GoalBudgetExceeded event; goal spent %d tokens", h.state(t).Goals["g1"].TokensSpent)
+	}
+	if trip.LimitUSD != 5 {
+		t.Errorf("LimitUSD = %v, want 5", trip.LimitUSD)
+	}
+	if trip.SpentUSD != 10 {
+		t.Errorf("SpentUSD = %v, want 10 (1M tokens at $10/M)", trip.SpentUSD)
+	}
+	if trip.Limit != 0 {
+		t.Errorf("Limit = %d, want 0 (this was a cost trip, not a token trip)", trip.Limit)
+	}
+}
+
 func TestSpendGovernorOffByDefaultMergesGoal(t *testing.T) {
 	// With MaxTokensPerGoal=0 the governor is inert: the goal completes normally
 	// even though its work charges tokens.

@@ -216,12 +216,16 @@ type MergedPayload struct {
 
 // TicketFailedPayload accompanies [TicketFailed]. Worktree, when set, is the
 // preserved checkout of the agent's last attempt — kept on disk for a human to
-// inspect or take over (warm handoff on terminal failure).
+// inspect or take over (warm handoff on terminal failure). Tokens/Model charge
+// the failed attempt's spend to the Goal so the governor sees budget burned by
+// work that never reached a proposal.
 type TicketFailedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker,omitempty"`
 	Reason   string `json:"reason"`
 	Worktree string `json:"worktree,omitempty"`
+	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the failed attempt consumed (0 when unknown)
+	Model    string `json:"model,omitempty"`  // model that consumed them, for per-model cost
 }
 
 // WorkerStalledPayload accompanies [WorkerStalled].
@@ -230,10 +234,14 @@ type WorkerStalledPayload struct {
 	Worker   string `json:"worker"`
 }
 
-// WorkerRestartedPayload accompanies [WorkerRestarted].
+// WorkerRestartedPayload accompanies [WorkerRestarted]. Tokens/Model charge a
+// retried attempt's spend to the Goal; a restart driven by the Stall Detector
+// (rather than a failed attempt) leaves them zero.
 type WorkerRestartedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker"`
+	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the abandoned attempt consumed (0 when unknown)
+	Model    string `json:"model,omitempty"`  // model that consumed them, for per-model cost
 }
 
 // ApprovalRequestedPayload accompanies [ApprovalRequested]. Commit is the
@@ -258,11 +266,16 @@ type ApprovalDeniedPayload struct {
 }
 
 // GoalBudgetExceededPayload accompanies [GoalBudgetExceeded]. SpentTokens is the
-// Goal's cumulative token spend at the moment the budget tripped.
+// Goal's cumulative token spend at the moment the budget tripped. A Goal may trip
+// on either ceiling: Limit is the token ceiling (0 when the trip was on cost),
+// LimitUSD the dollar ceiling (0 when the trip was on tokens). SpentUSD is the
+// priced spend at the trip, and is 0 when no [pricing] table covers the models used.
 type GoalBudgetExceededPayload struct {
-	GoalID      string `json:"goal_id"`
-	SpentTokens int    `json:"spent_tokens"`
-	Limit       int    `json:"limit"`
+	GoalID      string  `json:"goal_id"`
+	SpentTokens int     `json:"spent_tokens"`
+	Limit       int     `json:"limit"`
+	SpentUSD    float64 `json:"spent_usd,omitempty"`
+	LimitUSD    float64 `json:"limit_usd,omitempty"`
 }
 
 // GoalAmendedPayload accompanies [GoalAmended]. Guidance is steering text

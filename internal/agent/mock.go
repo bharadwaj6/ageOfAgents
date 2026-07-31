@@ -57,6 +57,7 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 			Summary:  task.Title,
 			Subtasks: subs,
 			Tokens:   m.TokensPerTask,
+			Model:    m.model(),
 		}, nil
 	}
 
@@ -82,5 +83,17 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 		Trace:   fmt.Sprintf("mock wrote %d file(s) for %q", len(files), task.Title),
 		Summary: task.Title,
 		Tokens:  m.TokensPerTask,
+		Model:   m.model(),
 	}, nil
+}
+
+// model names the "model" the mock reports usage under. Per-model accounting
+// (and therefore CostUSD, which prices TokensByModel) needs a non-empty model
+// id; reporting none would leave the cost governor permanently at $0 offline.
+// Left empty when the mock reports no tokens, so unpriced runs stay unchanged.
+func (m *Mock) model() string {
+	if m.TokensPerTask == 0 {
+		return ""
+	}
+	return "mock"
 }

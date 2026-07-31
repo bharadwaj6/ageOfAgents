@@ -295,6 +295,48 @@ func TestGoalTokensSpentAccumulates(t *testing.T) {
 	}
 }
 
+func TestFailedAndRestartedAttemptsChargeTokens(t *testing.T) {
+	// Attempts that never reach a proposal still burn budget: a retried attempt
+	// (WorkerRestarted) and a terminal failure (TicketFailed) must both charge
+	// the Goal, or the spend governor is blind to the failure spiral.
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "t1", IdempotencyKey: "g1:t1"}).
+		add(api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
+		add(api.WorkerRestarted, api.WorkerRestartedPayload{TicketID: "t1", Worker: "w1", Tokens: 300, Model: "m"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w2"}).
+		add(api.TicketFailed, api.TicketFailedPayload{TicketID: "t1", Worker: "w2", Reason: "no changes", Tokens: 200, Model: "m"}).
+		fold()
+
+	g := s.Goals["g1"]
+	if g.TokensSpent != 500 {
+		t.Errorf("TokensSpent = %d, want 500 (300 restarted + 200 failed)", g.TokensSpent)
+	}
+	if g.TokensByModel["m"] != 500 {
+		t.Errorf("TokensByModel[m] = %d, want 500", g.TokensByModel["m"])
+	}
+	if s.Tickets["t1"].Status != StatusFailed {
+		t.Errorf("t1 status = %s, want failed", s.Tickets["t1"].Status)
+	}
+}
+
+func TestStallRestartChargesNothing(t *testing.T) {
+	// The Stall Detector restarts a worker without an attempt result, so it
+	// reports no usage and must not invent spend.
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "t1", IdempotencyKey: "g1:t1"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
+		add(api.WorkerStalled, api.WorkerStalledPayload{TicketID: "t1", Worker: "w1"}).
+		add(api.WorkerRestarted, api.WorkerRestartedPayload{TicketID: "t1", Worker: "w1"}).
+		fold()
+
+	if got := s.Goals["g1"].TokensSpent; got != 0 {
+		t.Errorf("TokensSpent = %d, want 0 (a stall restart reports no usage)", got)
+	}
+}
+
 func TestGoalBudgetExceededSetsFlag(t *testing.T) {
 	s := newBuild(t).
 		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).

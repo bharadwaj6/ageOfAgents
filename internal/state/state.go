@@ -12,6 +12,24 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
 )
 
+// chargeGoal adds an attempt's token spend to the ticket's Goal. Every path that
+// consumes tokens charges through here — a proposal, a decomposition, and equally
+// an attempt that failed or was retried — so the spend governor sees the full
+// burn, not just the work that succeeded. A zero token count is a no-op.
+func (s *State) chargeGoal(t *Ticket, tokens int, model string) {
+	if t == nil || tokens == 0 {
+		return
+	}
+	g := s.Goals[t.GoalID]
+	if g == nil {
+		return
+	}
+	g.TokensSpent += tokens
+	if model != "" {
+		g.TokensByModel[model] += tokens
+	}
+}
+
 func removeWorker(workers []string, worker string) []string {
 	var out []string
 	for _, w := range workers {
@@ -195,12 +213,7 @@ func (s *State) Apply(e api.Event) error {
 			t.ActiveWorkers = nil
 			t.Children = p.Children
 			t.LastActivity = e.Timestamp
-			if g := s.Goals[t.GoalID]; g != nil {
-				g.TokensSpent += p.Tokens
-				if p.Model != "" {
-					g.TokensByModel[p.Model] += p.Tokens
-				}
-			}
+			s.chargeGoal(t, p.Tokens, p.Model)
 		}
 
 	case api.TicketReady:
@@ -258,12 +271,7 @@ func (s *State) Apply(e api.Event) error {
 				t.Commit = p.Commit
 				t.Summary = p.Summary
 				t.Trace = p.Trace
-				if g := s.Goals[t.GoalID]; g != nil {
-					g.TokensSpent += p.Tokens
-					if p.Model != "" {
-						g.TokensByModel[p.Model] += p.Tokens
-					}
-				}
+				s.chargeGoal(t, p.Tokens, p.Model)
 			}
 			t.LastActivity = e.Timestamp
 		}
@@ -342,6 +350,7 @@ func (s *State) Apply(e api.Event) error {
 				t.LastFailReason = p.Reason
 			}
 			t.Worktree = p.Worktree // preserved checkout for a warm handoff ("" if none)
+			s.chargeGoal(t, p.Tokens, p.Model)
 		}
 
 	case api.ApprovalRequested:
@@ -418,6 +427,7 @@ func (s *State) Apply(e api.Event) error {
 			t.Worker = ""
 			t.Branch, t.Commit, t.Trace = "", "", ""
 			t.LastActivity = e.Timestamp
+			s.chargeGoal(t, p.Tokens, p.Model)
 		}
 	case api.TicketInvalidated:
 		var p api.TicketInvalidatedPayload
