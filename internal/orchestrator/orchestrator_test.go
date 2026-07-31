@@ -295,6 +295,98 @@ func TestDetectStalled(t *testing.T) {
 	}
 }
 
+// blockingBackend holds an agent run open until released, so a test can observe
+// what the Scheduler does while a Worker is genuinely in flight.
+type blockingBackend struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (*blockingBackend) Name() string { return "blocking" }
+
+func (b *blockingBackend) Run(ctx context.Context, task agent.Task) (agent.Result, error) {
+	close(b.started)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return agent.Result{}, ctx.Err()
+	}
+	dst := filepath.Join(task.Worktree, "out.txt")
+	if err := os.WriteFile(dst, []byte(task.Title+"\n"), 0o644); err != nil {
+		return agent.Result{}, err
+	}
+	return agent.Result{Summary: task.Title}, nil
+}
+
+func TestHeartbeatEmittedDuringAgentRun(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	backend := &blockingBackend{started: make(chan struct{}), release: make(chan struct{})}
+	o, h := setup(t, backend, pass, Options{Concurrency: 1, HeartbeatInterval: 10 * time.Millisecond})
+	h.submitGoal(t, "g1", "slow work")
+
+	done := make(chan error, 1)
+	go func() { done <- o.Run(context.Background()) }()
+
+	<-backend.started
+	time.Sleep(80 * time.Millisecond) // long enough for several ticks
+	close(backend.release)
+	require.NoError(t, <-done)
+
+	events, err := h.led.Read()
+	require.NoError(t, err)
+	beats := 0
+	for _, e := range events {
+		if e.Type != api.Heartbeat {
+			continue
+		}
+		var p api.HeartbeatPayload
+		require.NoError(t, e.DecodePayload(&p))
+		if p.TicketID != "g1-impl" || p.Worker != "worker/g1-impl" {
+			t.Errorf("heartbeat = %+v, want ticket g1-impl / worker/g1-impl", p)
+		}
+		beats++
+	}
+	if beats < 2 {
+		t.Errorf("heartbeat count = %d, want at least 2 during an ~80ms run at 10ms", beats)
+	}
+	// The attempt still completes normally; heartbeats are observational.
+	if tk := h.state(t).Tickets["g1-impl"]; tk == nil || tk.Status != state.StatusMerged {
+		t.Fatalf("g1-impl status = %v, want merged", tk)
+	}
+}
+
+func TestHeartbeatKeepsSlowWorkerFromStalling(t *testing.T) {
+	// A long-running agent looks dead to the Stall Detector if the only liveness
+	// signal is the dispatch timestamp. A Heartbeat advances LastActivity, which
+	// is what lets a fresh process tell "slow" from "crashed".
+	t0 := time.Now().Add(-10 * time.Minute)
+	mk := func(seq int, ts time.Time, typ api.EventType, payload any) api.Event {
+		e, err := api.NewEvent(typ, "o", payload)
+		require.NoError(t, err)
+		e.Seq, e.Timestamp = seq, ts
+		return e
+	}
+	events := []api.Event{
+		mk(1, t0, api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k"}),
+		mk(2, t0, api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}),
+		mk(3, t0, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w"}),
+	}
+	now := t0.Add(5 * time.Minute)
+
+	s, err := state.Fold(events)
+	require.NoError(t, err)
+	if got := detectStalled(s, now, 2*time.Minute); len(got) != 1 {
+		t.Fatalf("without a heartbeat detectStalled = %v, want [t1]", got)
+	}
+
+	beating, err := state.Fold(append(events,
+		mk(4, now.Add(-30*time.Second), api.Heartbeat, api.HeartbeatPayload{TicketID: "t1", Worker: "w"})))
+	require.NoError(t, err)
+	if got := detectStalled(beating, now, 2*time.Minute); len(got) != 0 {
+		t.Errorf("a worker beating 30s ago was flagged stalled: %v", got)
+	}
+}
+
 func TestSpendGovernorStopsOverBudgetGoal(t *testing.T) {
 	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
 	mock := &agent.Mock{

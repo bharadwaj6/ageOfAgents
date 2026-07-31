@@ -37,6 +37,7 @@ type Options struct {
 	Conventions        string             // injected into every agent prompt (Conventions)
 	WorktreeBase       string             // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
 	StallTimeout       time.Duration      // no-progress timeout for the Stall Detector; default 2m
+	HeartbeatInterval  time.Duration      // how often a running Worker signals liveness; default 30s
 	MaxPasses          int                // safety bound on Scheduler passes in Run; default 1000
 	MaxGraphDepth      int                // max emergent decomposition depth (graph governor); default 5
 	MaxTicketsPerGoal  int                // max tickets a single Goal may spawn (graph governor); default 64
@@ -76,6 +77,9 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 	}
 	if opt.StallTimeout <= 0 {
 		opt.StallTimeout = 2 * time.Minute
+	}
+	if opt.HeartbeatInterval <= 0 {
+		opt.HeartbeatInterval = 30 * time.Second
 	}
 	if opt.MaxPasses <= 0 {
 		opt.MaxPasses = 1000
@@ -320,6 +324,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		return
 	}
 
+	stopHeartbeat := o.startHeartbeat(j.ticketID, worker)
 	res, err := o.backend.Run(ctx, agent.Task{
 		TicketID:    j.ticketID,
 		Title:       j.title,
@@ -330,6 +335,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		LastFailure: j.lastFail,
 		DepContext:  j.depCtx,
 	})
+	stopHeartbeat()
 	if err != nil {
 		// A Backend returning an error reports no usage by Go convention, so a
 		// failed agent call charges nothing. Backends that can attribute partial
@@ -778,6 +784,37 @@ func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, r
 	_ = o.emit(api.WorkerRestarted, api.WorkerRestartedPayload{
 		TicketID: j.ticketID, Worker: worker, Tokens: u.tokens, Model: u.model,
 	})
+}
+
+// startHeartbeat appends a Heartbeat for the ticket on an interval until the
+// returned stop function is called. This is the Worker's liveness signal: each
+// Heartbeat advances the ticket's LastActivity on replay, so the Stall Detector
+// can tell an agent that is merely slow from one whose process died. Without it,
+// liveness is inferred from the dispatch timestamp alone and any agent run longer
+// than StallTimeout looks dead to the next process that reads the log.
+//
+// stop blocks until the goroutine has exited, so no Heartbeat can land after the
+// event recording the attempt's outcome.
+func (o *Orchestrator) startHeartbeat(ticketID, worker string) (stop func()) {
+	done := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		tick := time.NewTicker(o.opt.HeartbeatInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				_ = o.emit(api.Heartbeat, api.HeartbeatPayload{TicketID: ticketID, Worker: worker})
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-exited
+	}
 }
 
 func (o *Orchestrator) cleanupWorktree(ctx context.Context, ticketID string) {
