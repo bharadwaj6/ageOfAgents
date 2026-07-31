@@ -899,6 +899,14 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		}
 		backoff = d
 	}
+	var stall time.Duration
+	if cfg.StallTimeout != "" {
+		d, err := time.ParseDuration(cfg.StallTimeout)
+		if err != nil {
+			return nil, nil, fmt.Errorf("stall_timeout %q: %w", cfg.StallTimeout, err)
+		}
+		stall = d
+	}
 	opt := orchestrator.Options{
 		Concurrency:        cfg.Concurrency,
 		MaxAttempts:        cfg.MaxAttempts,
@@ -911,6 +919,12 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		Pricing:            cfg.Pricing,
 		RetryBackoff:       backoff,
 		CrashLoopThreshold: cfg.CrashLoopThreshold,
+		// Termination gates; zero means "Scheduler default" (orchestrator.New).
+		StallTimeout:      stall,
+		MaxPasses:         cfg.MaxPasses,
+		MaxGraphDepth:     cfg.MaxGraphDepth,
+		MaxTicketsPerGoal: cfg.MaxTicketsPerGoal,
+		MaxFanOut:         cfg.MaxFanOut,
 	}
 	mq := mergequeue.New(repo, gate)
 	if len(cfg.RegressionVerify) > 0 {

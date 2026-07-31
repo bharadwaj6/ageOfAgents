@@ -53,3 +53,44 @@ func TestDefaultIsUsable(t *testing.T) {
 		t.Errorf("Default not usable: %+v", d)
 	}
 }
+
+func TestTerminationGatesRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	want := Config{
+		Repo:              "./demo",
+		StallTimeout:      "10m",
+		MaxPasses:         50,
+		MaxGraphDepth:     3,
+		MaxTicketsPerGoal: 16,
+		MaxFanOut:         4,
+	}
+	if err := want.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.StallTimeout != "10m" || got.MaxPasses != 50 || got.MaxGraphDepth != 3 ||
+		got.MaxTicketsPerGoal != 16 || got.MaxFanOut != 4 {
+		t.Errorf("termination gates did not round-trip: %+v", got)
+	}
+}
+
+func TestTerminationGatesDefaultToZero(t *testing.T) {
+	// Zero is the "use the Scheduler's default" signal; withDefaults must not
+	// invent values here, or the authoritative defaults in orchestrator.New
+	// would be shadowed by a second copy that can drift.
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := (Config{Repo: "./x"}).Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.StallTimeout != "" || got.MaxPasses != 0 || got.MaxGraphDepth != 0 ||
+		got.MaxTicketsPerGoal != 0 || got.MaxFanOut != 0 {
+		t.Errorf("unset termination gates should stay zero, got %+v", got)
+	}
+}

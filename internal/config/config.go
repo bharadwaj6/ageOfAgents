@@ -67,6 +67,29 @@ type Config struct {
 	// Sandbox specifies how to isolate untrusted code execution (e.g. the verifier gate).
 	// Supported values: "" (no sandboxing, runs on host) or "docker".
 	Sandbox string `toml:"sandbox"`
+
+	// The termination gates below bound an unattended run. Each is zero by
+	// default, which means "use the Scheduler's built-in default" — the
+	// authoritative values live in orchestrator.New so they cannot drift.
+	//
+	// StallTimeout is how long a Worker may go without progress before the Stall
+	// Detector restarts it, as a duration string (e.g. "10m"). Workers heartbeat
+	// while running, so this bounds genuinely dead work, not merely slow work.
+	// Empty ⇒ default 2m.
+	StallTimeout string `toml:"stall_timeout"`
+	// MaxPasses bounds how many reconcile passes a single `aoa run` may make
+	// before giving up — the backstop against a Scheduler that makes progress
+	// forever without settling. 0 ⇒ default 1000.
+	MaxPasses int `toml:"max_passes"`
+	// MaxGraphDepth caps how deep emergent decomposition may nest (graph
+	// governor, ADR 007). 0 ⇒ default 5.
+	MaxGraphDepth int `toml:"max_graph_depth"`
+	// MaxTicketsPerGoal caps how many Tasks one Goal may spawn in total (graph
+	// governor). 0 ⇒ default 64.
+	MaxTicketsPerGoal int `toml:"max_tickets_per_goal"`
+	// MaxFanOut caps how many new children a single decomposition may emit
+	// (graph governor). 0 ⇒ default 8.
+	MaxFanOut int `toml:"max_fan_out"`
 	// Pricing maps a model id (as reported by the Backend) to its cost in USD per
 	// *million* tokens, used to turn token counts into a $ figure in `aoa status`.
 	// Absent ⇒ unpriced ($0). Example: [pricing] then claudecode = 15.0.

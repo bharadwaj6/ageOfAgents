@@ -158,11 +158,19 @@ repo                = "./demo"          # git repository for agents to work on
 backend             = "mock"            # "mock" (offline) | "openai" | "anthropic" | "claudecode" | "grok"
 concurrency         = 4                 # max Workers running at once
 max_attempts        = 2                 # retries before a Task fails
+best_of_n           = 1                 # concurrent attempts per Task; the Gate picks the winner
 conventions_file    = "CONVENTIONS.md"  # coding rules injected into every agent prompt
 require_approval     = false            # if true, park each verified proposal for `aoa approve`
 max_tokens_per_goal = 0                 # spend governor: per-goal token ceiling (0 = unlimited)
+max_usd_per_goal    = 0                 # spend governor: per-goal $ ceiling (needs [pricing])
 retry_backoff       = "0s"              # wait before re-dispatching a failed Task (grows per attempt)
 crash_loop_threshold = 3                # give up after N identical failures, even under max_attempts
+stall_timeout       = "2m"              # no-progress timeout before a Worker is restarted
+max_passes          = 1000              # hard cap on reconcile passes in one run
+max_graph_depth     = 5                 # graph governor: emergent decomposition depth
+max_tickets_per_goal = 64               # graph governor: total Tasks one Goal may spawn
+max_fan_out         = 8                 # graph governor: children per decomposition
+sandbox             = ""                # "" (host) | "docker" — how the Gate's commands are isolated
 verify = [                              # the Gate — nothing merges unless this passes
   ["go", "build", "./..."],
   ["go", "test", "./..."],
