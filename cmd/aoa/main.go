@@ -10,10 +10,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
@@ -90,7 +92,8 @@ Usage:
   aoa init   [--path DIR] [--repo PATH]   Scaffold a workspace + integration repo
   aoa goal   [--path DIR] "objective"     Submit a goal
   aoa amend  [--path DIR] <goal-id> "..."  Append steering guidance to a goal mid-run
-  aoa run    [--path DIR] [--once] [--otel | --otel-live]  Run the reconciler (loop by default)
+  aoa run    [--path DIR] [--once | --interval D] [--otel | --otel-live]
+                                          Run the reconciler (to settled by default)
   aoa compact [--path DIR]                Compact the event log to a single state snapshot
   aoa status [--path DIR] [--watch]       Show goals and tickets (--watch to live-refresh)
   aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
@@ -349,9 +352,14 @@ func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	path := fs.String("path", ".", "workspace root")
 	once := fs.Bool("once", false, "run a single reconcile pass instead of looping")
+	interval := fs.Duration("interval", 0, "keep running, reconciling again every <dur> until interrupted (0 = run until settled, then exit)")
 	otelExport := fs.Bool("otel", false, "after the run, replay the Event Log to OTLP (needs OTEL_EXPORTER_OTLP_ENDPOINT)")
 	otelLive := fs.Bool("otel-live", false, "stream spans to OTLP live as events happen (instead of one post-hoc export)")
 	_ = fs.Parse(args)
+
+	if *once && *interval > 0 {
+		return fmt.Errorf("--once and --interval are mutually exclusive")
+	}
 
 	ws, err := workspaceAt(*path)
 	if err != nil {
@@ -379,9 +387,14 @@ func cmdRun(args []string) error {
 		}
 	}
 
-	if *once {
+	switch {
+	case *interval > 0:
+		sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		err = runEvery(sigCtx, o, led, ws, *interval)
+	case *once:
 		err = o.ReconcileOnce(ctx)
-	} else {
+	default:
 		err = o.Run(ctx)
 	}
 	if live != nil {
@@ -393,6 +406,9 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *interval > 0 {
+		return nil // runEvery already printed status after each pass
+	}
 
 	cfg, _ := config.Load(ws.configPath)
 	if *otelExport {
@@ -402,6 +418,37 @@ func cmdRun(args []string) error {
 	}
 	_, err = printStatus(led, cfg.Pricing)
 	return err
+}
+
+// runEvery keeps the workspace converging on a fixed cadence: reconcile to
+// settled, wait, reconcile again. It is a convenience for a machine you are
+// sitting at — it is not a daemon and holds no state, so nothing is lost if it
+// dies. For unattended deployment prefer cron, a systemd timer, or a scheduled
+// GitHub Actions workflow driving plain `aoa run`, which needs no supervised
+// process at all (see docs/scheduling.md).
+//
+// A failing cycle is reported and the schedule continues: a transient failure
+// (a flaky Gate, a rate-limited backend) should not end the loop. Returns nil
+// when interrupted.
+func runEvery(ctx context.Context, o *orchestrator.Orchestrator, led *ledger.Ledger, ws workspace, every time.Duration) error {
+	cfg, _ := config.Load(ws.configPath)
+	for {
+		if err := o.Run(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "run: %v\n", err)
+		}
+		if _, err := printStatus(led, cfg.Pricing); err != nil {
+			return err
+		}
+		fmt.Printf("\nnext pass in %s (ctrl-c to stop)\n", every)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(every):
+		}
+	}
 }
 
 func cmdCompact(args []string) error {

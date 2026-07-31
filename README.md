@@ -191,7 +191,7 @@ a worked config and copy-paste runbook are in [`examples/`](examples/).
 |---------|--------------|
 | `aoa init [--repo \| --adopt PATH]` | Scaffold a demo, or adopt your own repo (Gate auto-detected) |
 | `aoa goal "…"` | Submit a Goal |
-| `aoa run [--once] [--otel\|--otel-live]` | Run the Scheduler (loops to completion; `--once` for a single pass) |
+| `aoa run [--once\|--interval D] [--otel\|--otel-live]` | Run the Scheduler (reconciles to settled, then exits `0`; `--once` for a single pass, `--interval` to keep going on a cadence). Safe to re-run any time — see [scheduling](docs/scheduling.md) |
 | `aoa status [--watch]` | Goals, Task states, per-ticket tokens, run cost, and a "needs human" handoff for failures |
 | `aoa amend <goal> "…"` | Append steering guidance to a Goal mid-run (future dispatches pick it up; ADR — `GoalAmended`) |
 | `aoa approve \| reject <ticket>` | Decide a proposal parked by the approval gate (ADR 008) |
@@ -241,6 +241,8 @@ The `mock` Backend makes the full loop hermetic and offline in tests. Real agent
 - [`docs/design/architecture.md`](docs/design/architecture.md) — design and research basis
 - [`docs/design/cross_repo.md`](docs/design/cross_repo.md) — architecture for atomic multi-repo merges
 - [`docs/config-reference.md`](docs/config-reference.md) — every `aoa.toml` field, defaults, when to set it
+- [`docs/scheduling.md`](docs/scheduling.md) — running `aoa` on a cadence (cron, systemd, Actions, webhooks)
+- [`docs/design/loop_engineering.md`](docs/design/loop_engineering.md) — how `aoa` scores against the loop-engineering model, and what it refuses
 - [`docs/integrations/`](docs/integrations/README.md) — OpenTelemetry/OTLP (Honeycomb, etc.) + agent backends
 - [`examples/`](examples/) — a copy-paste runbook for adopting your own repo
 - [`docs/design/getting_started.md`](docs/design/getting_started.md) — step-by-step tutorial

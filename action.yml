@@ -1,5 +1,17 @@
 name: "Age of Agents Run"
 description: "Run the aoa orchestrator as a GitHub Action"
+# One reconcile pass, safe to re-run. To keep a repo converging on a cadence,
+# drive this from a scheduled workflow — and add a `concurrency:` group so two
+# runs never race the same Event Log:
+#
+#   on:
+#     schedule:
+#       - cron: "*/30 * * * *"
+#   concurrency:
+#     group: aoa-${{ github.ref }}
+#     cancel-in-progress: false
+#
+# See docs/scheduling.md for cron, systemd and webhook recipes.
 inputs:
   path:
     description: "Workspace path"

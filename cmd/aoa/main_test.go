@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
@@ -246,5 +247,50 @@ func TestFilterEvents(t *testing.T) {
 	// Filtering doesn't mutate the input slice.
 	if events[2].Type != api.Merged {
 		t.Error("filterEvents must not modify the source slice")
+	}
+}
+
+func TestRunRejectsOnceWithInterval(t *testing.T) {
+	// The two are contradictory: --once is a single pass, --interval never stops.
+	err := cmdRun([]string{"--path", t.TempDir(), "--once", "--interval", "1s"})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("err = %v, want a mutually-exclusive error", err)
+	}
+}
+
+func TestRunEveryStopsOnCancel(t *testing.T) {
+	// The interval loop is not a daemon: it exits cleanly when interrupted,
+	// which is what makes it safe to ctrl-c and what a systemd timer relies on.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	if err := cmdInit([]string{"--path", tmp, "--repo", "./demo"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	ws, err := workspaceAt(tmp)
+	if err != nil {
+		t.Fatalf("workspaceAt: %v", err)
+	}
+	o, led, err := buildOrchestrator(ws)
+	if err != nil {
+		t.Fatalf("buildOrchestrator: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runEvery(ctx, o, led, ws, time.Hour) }()
+
+	// The first pass settles immediately (no goals), then the loop waits.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("runEvery returned %v, want nil on cancel", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runEvery did not return after cancel")
 	}
 }
