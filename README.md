@@ -40,14 +40,17 @@ boring distributed-systems core, with proofs attached:
 - **Adoptable and recoverable:** point it at your own repo on any branch (`aoa init --adopt`); on a
   terminal failure it preserves the agent's worktree and hands it back to you (`aoa status`).
 
-> **SWE-bench Lite:** no headline solve-rate yet, and the reason is worth stating. The runs recorded in
-> `logs/run_evaluation/` (best: 10/11 with the `grok` backend) were all produced with **aoa's Gate
-> disabled** — the eval script passed `--inference-mode`, so every proposal merged unconditionally. They
-> were scored honestly by the official Docker harness, but they measure the backend agent, not the
-> verifier-gated merge queue this project is about. The A/B that isolates the Gate (`--gate=none` vs
-> `--gate=repo`, same instances, same backend) is specified in
-> [`docs/design/live_eval.md`](docs/design/live_eval.md) and has not been run. Every other number in this
-> repo comes from the hermetic `mock` backend and is labeled as such.
+> **SWE-bench Lite:** no headline solve-rate, and the reason is worth stating. Every run recorded in
+> `logs/run_evaluation/` (best: 10/11 with `grok`) was produced with **aoa's Gate disabled** — the eval
+> script passed `--inference-mode`, so every proposal merged unconditionally. Those numbers were scored
+> honestly by the official Docker harness, but they measure the backend agent, not the verifier-gated
+> merge queue this project is about.
+>
+> The first Gate-on vs Gate-off comparison ran on 2026-08-23 (see
+> [`docs/design/live_eval.md`](docs/design/live_eval.md)): on 2 instances, both configurations resolved
+> both, and the Gate rejected 1 of 2 proposals on `astropy-14365` — catching a patch that broke the
+> repo's existing tests and recovering on retry. That is the mechanism working, at a cost of one extra
+> attempt. It is not yet evidence that the Gate changes outcomes; two instances support no rate.
 
 ## What it aims to be
 
