@@ -63,10 +63,8 @@ def as_list(v):
     return []
 
 
-# pytest node ids are passed on the command line; PASS_TO_PASS runs to 1689 ids on
-# the largest Lite instance, so the Gate is split into several commands rather
-# than one unbounded argv.
-PYTEST_IDS_PER_COMMAND = 40
+# The Gate runs whole test files; a few instances touch many, so cap the argv.
+PYTEST_FILES_PER_COMMAND = 20
 
 # Where aoa mounts the repo inside a docker sandbox (verify.SandboxMount).
 SANDBOX_MOUNT = "/workspace"
@@ -85,8 +83,18 @@ def swebench_image(instance_id, template):
     return template.format(instance=instance_id.replace("__", "_1776_"))
 
 
-def conda_pytest(test_ids):
+def conda_pytest(test_files, deselect_ids):
     """A pytest command that runs inside a SWE-bench image's `testbed` env.
+
+    Runs whole test FILES, not PASS_TO_PASS node ids. Those ids are recorded
+    against the post-test-patch tree, so ids for parametrised cases the held-out
+    test patch adds do not exist at base_commit and pytest exits "not found",
+    failing the gate no matter what the agent wrote. The files exist either way,
+    and at base_commit they contain exactly the repo's pre-existing tests.
+
+    FAIL_TO_PASS ids are deselected so a reproduce test that already exists is
+    never part of the Gate; pytest ignores a --deselect that matches nothing, so
+    the far more common case (the test patch adds it later) costs nothing.
 
     The image installs the project editable from /testbed and keeps compiled
     extensions there (astropy ships 17 .so files the agent's source tree does
@@ -96,11 +104,13 @@ def conda_pytest(test_ids):
     place. The conda env must be active before python resolves to the prepared
     interpreter.
     """
-    ids = " ".join(shlex.quote(t) for t in test_ids)
+    args = " ".join(shlex.quote(f) for f in test_files)
+    for t in deselect_ids:
+        args += f" --deselect {shlex.quote(t)}"
     script = (
         f"cp -a {SANDBOX_MOUNT}/. /testbed/ && "
         "source /opt/miniconda3/bin/activate && conda activate testbed && "
-        f"cd /testbed && python -m pytest -q {ids}"
+        f"cd /testbed && python -m pytest -q {args}"
     )
     return ["/bin/bash", "-lc", script]
 
@@ -223,8 +233,9 @@ def main():
                     print(f"skipping {iid}: --gate=repo needs PASS_TO_PASS tests",
                           file=sys.stderr)
                     continue
-                gate = [conda_pytest(chunk)
-                        for chunk in chunked(p2p, PYTEST_IDS_PER_COMMAND)]
+                files = sorted({t.split("::")[0] for t in p2p})
+                gate = [conda_pytest(chunk, f2p)
+                        for chunk in chunked(files, PYTEST_FILES_PER_COMMAND)]
             else:
                 # Gate AND success oracle are the issue's reproduce tests: the
                 # agent can iterate against the exact tests that grade it.
