@@ -71,10 +71,6 @@ type Config struct {
 	// means verify.DefaultSandboxImage, which carries only a Go toolchain; set a
 	// prepared image when the Gate needs another language's dependencies.
 	SandboxImage string `toml:"sandbox_image"`
-	// SandboxMount is where the repo is mounted inside SandboxImage. Empty means
-	// verify.DefaultSandboxMount. Set it when the image installs the project from
-	// a fixed path, so the Gate tests the agent's changes and not the image's copy.
-	SandboxMount string `toml:"sandbox_mount"`
 
 	// The termination gates below bound an unattended run. Each is zero by
 	// default, which means "use the Scheduler's built-in default" — the

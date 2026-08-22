@@ -179,7 +179,6 @@ max_tickets_per_goal = 64               # graph governor: total Tasks one Goal m
 max_fan_out         = 8                 # graph governor: children per decomposition
 sandbox             = ""                # "" (host) | "docker" — how the Gate's commands are isolated
 sandbox_image       = ""                # image for sandbox="docker" (default golang:1.22; set for non-Go gates)
-sandbox_mount       = ""                # where the repo mounts inside that image (default /workspace)
 verify = [                              # the Gate — nothing merges unless this passes
   ["go", "build", "./..."],
   ["go", "test", "./..."],

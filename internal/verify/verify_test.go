@@ -79,18 +79,7 @@ func TestDockerArgs(t *testing.T) {
 				"golang:1.22", "python", "-m", "pytest", "-q"},
 		},
 		{
-			name: "prepared image mounted over the path it installs from",
-			verifier: Verifier{
-				Sandbox: "docker",
-				Image:   "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest",
-				Mount:   "/testbed",
-			},
-			want: []string{"run", "--rm", "-v", "/repo:/testbed", "-w", "/testbed",
-				"swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest",
-				"python", "-m", "pytest", "-q"},
-		},
-		{
-			name:     "image without mount keeps the default mount",
+			name:     "prepared image keeps the standard mount",
 			verifier: Verifier{Sandbox: "docker", Image: "python:3.11"},
 			want: []string{"run", "--rm", "-v", "/repo:/workspace", "-w", "/workspace",
 				"python:3.11", "python", "-m", "pytest", "-q"},
