@@ -70,7 +70,11 @@ type Task struct {
 type RejectedPatch struct {
 	TicketID string `json:"ticket_id"`
 	Reason   string `json:"reason"`
-	Diff     string `json:"diff"`
+	// Output is the Gate's output for this rejection. A rejection whose output
+	// shows a sandbox fault rather than a test failure is not a verdict on the
+	// patch and must be excluded before computing precision.
+	Output string `json:"output,omitempty"`
+	Diff   string `json:"diff"`
 }
 
 // Report is one task's outcome, derived almost entirely by replaying the log.
@@ -188,7 +192,9 @@ func collectRejectedPatches(ctx context.Context, events []api.Event) []RejectedP
 		if err != nil || strings.TrimSpace(diff) == "" {
 			continue
 		}
-		out = append(out, RejectedPatch{TicketID: p.TicketID, Reason: p.Reason, Diff: diff})
+		out = append(out, RejectedPatch{
+			TicketID: p.TicketID, Reason: p.Reason, Output: p.Output, Diff: diff,
+		})
 	}
 	return out
 }

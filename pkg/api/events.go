@@ -229,6 +229,11 @@ type TicketFailedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker,omitempty"`
 	Reason   string `json:"reason"`
+	// Output is the Gate's combined output when a verification failure was what
+	// ended the ticket. Without it a terminal failure records only which command
+	// failed, so an infrastructure fault and a genuinely broken patch are
+	// indistinguishable after the fact.
+	Output   string `json:"output,omitempty"`
 	Worktree string `json:"worktree,omitempty"`
 	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the failed attempt consumed (0 when unknown)
 	Model    string `json:"model,omitempty"`  // model that consumed them, for per-model cost
