@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
@@ -83,5 +84,49 @@ success = [["go", "test", "./..."]]
 	}
 	if len(tasks[0].Gate) != 1 || tasks[0].Gate[0][0] != "go" {
 		t.Fatalf("unexpected gate: %+v", tasks[0].Gate)
+	}
+}
+
+// A Gate that always fails, with MaxAttempts 1, makes the rejection terminal so
+// the proposal's worktree survives — the path Gate-precision measurement relies
+// on. Without recovery here the rejected diff is unrecoverable: the temp base is
+// removed as soon as the run returns.
+func TestRejectedPatchesRecovered(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	if err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+
+	task := Task{
+		Name:        "rejected",
+		RepoDir:     repo.Dir,
+		Goal:        "produce the marker file",
+		Gate:        [][]string{{"false"}}, // nothing can pass
+		MaxAttempts: 1,                     // so the first rejection is terminal
+	}
+
+	rep, err := Run(ctx, agent.NewMock(), filepath.Join(base, "ws"), task)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Metrics.Merged != 0 {
+		t.Fatalf("a failing Gate must merge nothing, got %d", rep.Metrics.Merged)
+	}
+	if len(rep.RejectedPatches) != 1 {
+		t.Fatalf("want 1 rejected patch, got %d (%+v)", len(rep.RejectedPatches), rep.RejectedPatches)
+	}
+	got := rep.RejectedPatches[0]
+	if got.Diff == "" {
+		t.Error("rejected patch has no diff")
+	}
+	// The mock writes <ticket>.txt, so the recovered diff must name it.
+	if !strings.Contains(got.Diff, "g-eval-impl.txt") {
+		t.Errorf("diff should contain the proposal's file, got:\n%s", got.Diff)
+	}
+	if got.TicketID != "g-eval-impl" {
+		t.Errorf("ticket_id = %q, want g-eval-impl", got.TicketID)
 	}
 }

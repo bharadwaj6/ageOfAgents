@@ -191,6 +191,14 @@ def main():
         ),
     )
     ap.add_argument(
+        "--max-attempts", type=int, default=0, metavar="N",
+        help=(
+            "Cap attempts per ticket (0 = aoa's default of 2). Pass 1 to measure "
+            "Gate precision: every rejection becomes terminal, so the rejected "
+            "proposal is preserved and reported instead of being retried away."
+        ),
+    )
+    ap.add_argument(
         "--inference-mode", action="store_true",
         help="Deprecated alias for --gate=none.",
     )
@@ -253,6 +261,8 @@ def main():
             f.write(f"goal = {toml_str(r.get('problem_statement', '').strip())}\n")
             f.write(f"gate = {toml_cmd_list(gate)}\n")
             f.write(f"success = {toml_cmd_list(success)}\n")
+            if a.max_attempts:
+                f.write(f"max_attempts = {a.max_attempts}\n")
             if a.gate == "repo":
                 f.write('sandbox = "docker"\n')
                 f.write(f"sandbox_image = {toml_str(swebench_image(iid, a.sandbox_image))}\n")

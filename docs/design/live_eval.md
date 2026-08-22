@@ -150,10 +150,29 @@ both the Gate and the held-out oracle. The mechanism works end to end against a 
 is visible — one extra attempt and ~70s on that instance.
 
 **What this does not show.** Both configurations resolved both instances, so the Gate has not yet been
-shown to change an *outcome*. Proving value needs the counterfactual this run cannot supply: would the
-rejected proposal have failed the oracle? Answering it means scoring rejected proposals against the oracle
-too, which measures Gate precision — what fraction of rejections were justified. That is the experiment
-worth running next, and it is cheap: the patches already exist at rejection time.
+shown to change an *outcome*.
+
+## Gate precision
+
+The counterfactual the A/B cannot supply: would a rejected proposal have failed the oracle? A Gate that
+rejects nothing is useless, and one that rejects good work is worse than no Gate, so the number that
+matters is **precision** — the fraction of rejections the oracle would also have rejected.
+
+Measuring it needs the rejected patch, which a retry normally discards. Run with `--max-attempts 1`: every
+rejection becomes terminal, the orchestrator preserves the worktree (the existing warm-handoff path), and
+`aoa eval --json` reports the recovered diff under `rejected_patches`. `scripts/gate_precision.py` turns
+those into a predictions file the official harness scores like any other:
+
+```bash
+GATE=repo scripts/eval_swebench_docker.sh scripts/astropy_5.json grok 5   # --max-attempts 1
+scripts/gate_precision.py aoa_report.json rejected_predictions.json
+uv run --with "swebench==4.1.0" python -m swebench.harness.run_evaluation \
+    --predictions_path rejected_predictions.json --run_id gate-precision \
+    --dataset_name princeton-nlp/SWE-bench_Lite --split test --cache_level env
+```
+
+**Every rejected patch the harness marks resolved is a Gate false positive** — work the Gate discarded
+that would have fixed the issue. Precision = 1 − (resolved rejections / total rejections).
 
 **Sample size.** Two instances, four runs. This screens for mechanism and regressions; it supports no
 rate. Note also that 14365 failed in *every* June run under both backends and now passes ungated on the
