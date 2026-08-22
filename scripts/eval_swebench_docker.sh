@@ -88,7 +88,11 @@ echo "=== Phase 3: official SWE-bench Docker evaluation (run_id=$RUN_ID) ==="
 echo "    This builds per-instance Docker images and runs FAIL_TO_PASS tests."
 echo "    First run will be slow (~minutes per image); subsequent runs use the cache."
 echo ""
-uv run --with "swebench[eval]" python -m swebench.harness.run_evaluation \
+# Pinned: swebench 5.x dropped --cache_level and the [eval] extra, and expects an
+# `image` field the princeton-nlp dataset does not carry. 4.1.0 is the last
+# release matching the protocol the runs in docs/design/live_eval.md were scored
+# under, so results stay comparable across runs.
+uv run --with "swebench==4.1.0" python -m swebench.harness.run_evaluation \
     --predictions_path "$PREDICTIONS" \
     --run_id "$RUN_ID" \
     --max_workers 2 \

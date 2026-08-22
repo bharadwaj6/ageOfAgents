@@ -95,6 +95,16 @@ GATE=repo scripts/eval_swebench_docker.sh scripts/astropy_5.json grok 5 aoa-gate
 `--gate=repo` skips any instance with no `PASS_TO_PASS` tests (it has nothing to gate on), so check the
 task count matches across arms before comparing.
 
+**Architecture note.** The published `swebench/sweb.eval.x86_64.*` images are x86_64-only, so on Apple
+Silicon (and any arm64 host) `run_evaluation` must be given `-n none`, which builds `sweb.eval.arm64.*`
+images locally — the first build of a repo is slow, but the env layer caches for later instances of the
+same repo. `swebench_to_tasks.py` defaults `sandbox_image` to the local name for the host architecture;
+pass `--sandbox-image 'swebench/sweb.eval.x86_64.{instance}:latest'` to gate in the published images.
+
+The harness is pinned to `swebench==4.1.0`: 5.x removed `--cache_level` and the `[eval]` extra and expects
+an `image` field the `princeton-nlp` dataset does not carry. Unpinned, phase 3 breaks after the agent has
+already run, and results stop being comparable to the runs recorded below.
+
 **Where the Gate runs.** A `repo` Gate needs the target repo's dependencies, which aoa does not provision
 (ADR 009). The adapter therefore emits per-task `sandbox = "docker"` with `sandbox_image` set to the
 instance's official SWE-bench image — the same images phase 3 builds, so gating costs no extra pulls — and
