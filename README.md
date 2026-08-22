@@ -40,9 +40,14 @@ boring distributed-systems core, with proofs attached:
 - **Adoptable and recoverable:** point it at your own repo on any branch (`aoa init --adopt`); on a
   terminal failure it preserves the agent's worktree and hands it back to you (`aoa status`).
 
-> **SWE-bench Lite:** the headline solve-rate / cost-per-solve number goes here once the at-scale run lands
-> (the harness is ready; see [`docs/design/live_eval.md`](docs/design/live_eval.md)). Until then, every
-> number in this repo comes from the hermetic `mock` backend and is labeled as such.
+> **SWE-bench Lite:** no headline solve-rate yet, and the reason is worth stating. The runs recorded in
+> `logs/run_evaluation/` (best: 10/11 with the `grok` backend) were all produced with **aoa's Gate
+> disabled** — the eval script passed `--inference-mode`, so every proposal merged unconditionally. They
+> were scored honestly by the official Docker harness, but they measure the backend agent, not the
+> verifier-gated merge queue this project is about. The A/B that isolates the Gate (`--gate=none` vs
+> `--gate=repo`, same instances, same backend) is specified in
+> [`docs/design/live_eval.md`](docs/design/live_eval.md) and has not been run. Every other number in this
+> repo comes from the hermetic `mock` backend and is labeled as such.
 
 ## What it aims to be
 
@@ -55,8 +60,10 @@ worker; the control plane is unchanged.
 
 The goal is to be a **tool engineers use daily on real repositories** — not a demo. That means: correct
 by construction (done), cost-bounded and observable so you can run it on real money and see what happened
-(done), adoptable into an existing project in minutes (done), and **empirically validated at scale**. 
-We've achieved the latter, landing a 50% pass@1 solve-rate on a verified 20-instance SWE-bench Lite subset, allowing future architectural changes to be honestly A/B tested.
+(done), adoptable into an existing project in minutes (done), and **empirically validated at scale** —
+which is the part still outstanding. The eval harness runs end-to-end against SWE-bench Lite through the
+official Docker scorer, but no run so far has had the Gate switched on, so the central claim is untested.
+Closing that is the next milestone, not a finished one.
 
 
 ## Roadmap
