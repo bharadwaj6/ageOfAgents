@@ -137,15 +137,28 @@ backend harness, which is a swappable component (ADR 004).
 The first runs where `--gate=none` and `--gate=repo` are compared on the same instance with the same
 backend, both scored by the official Docker harness on held-out `FAIL_TO_PASS`.
 
-| Instance | Gate | Merged | Attempts | Duration | Violations | Resolved |
-|---|---|---|---:|---:|---|:---:|
-| astropy-12907 | none | 1 | 1 | 208s | 0 | ✅ 1/1 |
-| astropy-12907 | repo | 1 | 1 | 132s | 0 | ✅ 1/1 |
+| Instance | Gate | Merged | Attempts | Rejected | Duration | Violations | Resolved |
+|---|---|---|---:|---:|---:|---|:---:|
+| astropy-12907 | none | 1 | 1 | 0% | 208s | 0 | ✅ |
+| astropy-12907 | repo | 1 | 1 | 0% | 132s | 0 | ✅ |
+| astropy-14365 | none | 1 | 1 | 0% | 236s | 0 | ✅ |
+| astropy-14365 | repo | 1 | 2 | **50%** | 306s | 0 | ✅ |
 
-On an instance the backend solves cleanly the Gate changes nothing, which is the expected result and not
-evidence either way: there is no headroom above 1/1, so the Gate can only show its value where the
-ungated baseline produces a patch the repo's own tests reject. The informative instances are the ones
-that historically fail.
+**What this shows.** On 14365 the Gate did exactly what it exists to do: it rejected a proposal that broke
+the repo's own existing tests, the agent retried against the Gate's output, and the second proposal passed
+both the Gate and the held-out oracle. The mechanism works end to end against a real backend, and its cost
+is visible — one extra attempt and ~70s on that instance.
+
+**What this does not show.** Both configurations resolved both instances, so the Gate has not yet been
+shown to change an *outcome*. Proving value needs the counterfactual this run cannot supply: would the
+rejected proposal have failed the oracle? Answering it means scoring rejected proposals against the oracle
+too, which measures Gate precision — what fraction of rejections were justified. That is the experiment
+worth running next, and it is cheap: the patches already exist at rejection time.
+
+**Sample size.** Two instances, four runs. This screens for mechanism and regressions; it supports no
+rate. Note also that 14365 failed in *every* June run under both backends and now passes ungated on the
+first attempt — with no Gate and no retries, aoa's control plane cannot be the cause, so the `grok` CLI
+itself improved. The June baselines are therefore no longer a like-for-like comparison.
 
 **A false result worth recording.** The first `--gate=repo` attempt reported 0/1 with the Gate rejecting
 both attempts — which reads exactly like "the Gate caught a bad patch". It was a broken Gate: it ran
