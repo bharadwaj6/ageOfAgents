@@ -171,7 +171,19 @@ uv run --with "swebench==4.1.0" python -m swebench.harness.run_evaluation \
     --dataset_name princeton-nlp/SWE-bench_Lite --split test --cache_level env
 ```
 
-**Every rejected patch the harness marks resolved is a Gate false positive** — work the Gate discarded
+**Exclude sandbox faults first.** A gate that could not run is not a verdict on the patch. The first
+precision sweep (2026-08-23, 4 instances) produced 2 rejections and **both were spurious**: replaying each
+rejected patch through the same gate at `base_commit` passed (13 and 179 tests), so neither said anything
+about the agent's work. One was byte-identical to a patch that had already resolved.
+
+That exposed a real defect, now fixed: `verify.Run` treated *any* non-zero exit as a failed gate, so a
+docker outage, a missing image or an OOM was recorded as "the patch is broken". The gate still blocks the
+merge in that case — failing closed is right — but the failure is now flagged `Infra`, the reason reads
+`gate could not run (sandbox failure)`, and `gate_precision.py` drops those before computing precision.
+`TicketFailed` also carries the gate output now; without it a terminal failure recorded only the command
+that failed, which is why diagnosing this needed a manual reproduction.
+
+**Every remaining rejected patch the harness marks resolved is a Gate false positive** — work the Gate discarded
 that would have fixed the issue. Precision = 1 − (resolved rejections / total rejections).
 
 **Sample size.** Two instances, four runs. This screens for mechanism and regressions; it supports no

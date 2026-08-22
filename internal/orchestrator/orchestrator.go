@@ -682,12 +682,14 @@ func (o *Orchestrator) rejectOrFail(ctx context.Context, t *state.Ticket, worker
 		return o.emit(api.TicketFailed, api.TicketFailedPayload{
 			TicketID: t.ID, Worker: worker,
 			Reason:   fmt.Sprintf("crash loop: %s (×%d)", reason, t.SameFailCount+1),
+			Output:   output,
 			Worktree: o.preserveWorktree(t.ID),
 		})
 	}
 	if isLastWorker && t.Attempts >= o.opt.MaxAttempts {
 		return o.emit(api.TicketFailed, api.TicketFailedPayload{
-			TicketID: t.ID, Worker: worker, Reason: reason, Worktree: o.preserveWorktree(t.ID),
+			TicketID: t.ID, Worker: worker, Reason: reason, Output: output,
+			Worktree: o.preserveWorktree(t.ID),
 		})
 	}
 	o.cleanupWorktree(ctx, t.ID)

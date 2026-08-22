@@ -6,6 +6,7 @@ package verify
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 )
@@ -41,6 +42,12 @@ type Result struct {
 	Passed bool   // true iff every command exited zero
 	Failed string // the first command that failed (empty if Passed)
 	Output string // combined stdout+stderr across commands
+	// Infra is true when the gate could not be run at all — the sandbox failed
+	// rather than the code under test. A failing gate blocks the merge either
+	// way (failing closed is the safe direction), but the distinction matters:
+	// an Infra failure says nothing about the proposal, so counting it as a
+	// rejection misattributes a broken environment to the agent's work.
+	Infra bool
 }
 
 // Run executes the commands in order within dir, stopping at the first failure.
@@ -61,10 +68,32 @@ func (v Verifier) Run(ctx context.Context, dir string) Result {
 		b, err := cmd.CombinedOutput()
 		out.Write(b)
 		if err != nil {
-			return Result{Passed: false, Failed: c.String(), Output: out.String()}
+			infra := v.Sandbox == "docker" && isDockerInfraFailure(err)
+			if infra {
+				out.WriteString("\n[gate could not run: docker failed to start the container]\n")
+			}
+			return Result{Passed: false, Failed: c.String(), Output: out.String(), Infra: infra}
 		}
 	}
 	return Result{Passed: true, Output: out.String()}
+}
+
+// isDockerInfraFailure reports whether a `docker run` failure came from docker
+// itself rather than from the command inside the container. Docker reserves
+// 125 (the run failed: daemon unreachable, image missing, bad flag), 126 (the
+// command could not be invoked) and 127 (command not found); every other status
+// is the contained command's own.
+func isDockerInfraFailure(err error) bool {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		// Never started (docker binary missing) or killed — not a test result.
+		return true
+	}
+	switch ee.ExitCode() {
+	case 125, 126, 127:
+		return true
+	}
+	return false
 }
 
 // dockerArgs builds the `docker run` argv that executes c against the repo at

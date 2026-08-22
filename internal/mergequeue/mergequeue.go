@@ -22,6 +22,16 @@ type Proposal struct {
 	Branch   string
 }
 
+// verifyFailureReason describes why the gate failed, distinguishing a real
+// verdict on the proposal from a sandbox that could not run it at all. Both
+// block the merge; only the first says anything about the code.
+func verifyFailureReason(res verify.Result) string {
+	if res.Infra {
+		return "gate could not run (sandbox failure): " + res.Failed
+	}
+	return "verification failed: " + res.Failed
+}
+
 // Outcome reports what happened to a proposal. A rejected proposal (merge
 // conflict or failed verification) is a normal Outcome, not a Go error; errors
 // are reserved for unexpected infrastructure failures.
@@ -78,7 +88,7 @@ func (q *Queue) Process(ctx context.Context, p Proposal) (Outcome, error) {
 		if rbErr := q.Repo.ResetHard(ctx, pre); rbErr != nil {
 			return out, fmt.Errorf("rollback after failed verify: %w", rbErr)
 		}
-		out.Reason = "verification failed: " + res.Failed
+		out.Reason = verifyFailureReason(res)
 		return out, nil
 	}
 
@@ -125,7 +135,7 @@ func (q *Queue) DryRun(ctx context.Context, p Proposal) (Outcome, error) {
 		return out, fmt.Errorf("rollback after dry run: %w", rbErr)
 	}
 	if !res.Passed {
-		out.Reason = "verification failed: " + res.Failed
+		out.Reason = verifyFailureReason(res)
 		return out, nil
 	}
 

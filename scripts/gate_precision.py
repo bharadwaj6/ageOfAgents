@@ -33,13 +33,17 @@ def main():
     a = ap.parse_args()
 
     reports = json.load(open(a.report))
-    preds, tasks_with_rejects = [], 0
+    preds, tasks_with_rejects, skipped = [], 0, 0
     for rep in reports:
         rejected = rep.get("rejected_patches") or []
-        if not rejected:
+        # A gate that could not run is not a verdict on the patch; counting it
+        # would report a false positive that never happened.
+        real = [r for r in rejected if "sandbox failure" not in (r.get("reason") or "")]
+        skipped += len(rejected) - len(real)
+        if not real:
             continue
         tasks_with_rejects += 1
-        for i, rp in enumerate(rejected):
+        for i, rp in enumerate(real):
             # The instance id is the task name; a suffix keeps multiple rejected
             # proposals for one instance distinguishable in the harness output.
             preds.append({
@@ -52,6 +56,9 @@ def main():
     json.dump(preds, open(a.out, "w"), indent=2)
     print(f"wrote {len(preds)} rejected prediction(s) from {tasks_with_rejects} task(s) "
           f"to {a.out}", file=sys.stderr)
+    if skipped:
+        print(f"skipped {skipped} sandbox failure(s) — the gate could not run, so "
+              f"they say nothing about the patch", file=sys.stderr)
     if not preds:
         print("no rejected patches — either the Gate rejected nothing, or the run "
               "did not use max_attempts = 1 (retried rejections leave no worktree)",

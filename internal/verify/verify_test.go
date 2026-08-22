@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -92,5 +93,38 @@ func TestDockerArgs(t *testing.T) {
 				t.Errorf("dockerArgs() =\n  %q\nwant\n  %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A sandbox that cannot run the gate must be distinguishable from a gate the
+// code failed: both block the merge, but only the second is a verdict on the
+// proposal. Without this, a docker outage is recorded as "your patch is broken".
+func TestDockerInfraFailureIsNotAVerdict(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not installed")
+	}
+	v := Verifier{
+		Commands: []Command{{"true"}},
+		Sandbox:  "docker",
+		Image:    "aoa-nonexistent-image-for-tests:latest",
+	}
+	res := v.Run(context.Background(), t.TempDir())
+	if res.Passed {
+		t.Fatal("a missing image must not pass the gate")
+	}
+	if !res.Infra {
+		t.Errorf("missing image should be flagged as an infrastructure failure, got Output:\n%s", res.Output)
+	}
+}
+
+// The ordinary case must stay a verdict, or everything looks like infrastructure.
+func TestCommandFailureIsAVerdict(t *testing.T) {
+	v := Verifier{Commands: []Command{{"false"}}}
+	res := v.Run(context.Background(), t.TempDir())
+	if res.Passed {
+		t.Fatal("`false` must fail the gate")
+	}
+	if res.Infra {
+		t.Error("a failing command is a verdict on the code, not an infrastructure fault")
 	}
 }
