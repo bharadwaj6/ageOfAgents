@@ -78,7 +78,14 @@ next to any result you publish.
 |---|---|---|
 | `none` | `true` — every proposal merges | measuring the **harness** alone; this is what `--inference-mode` did |
 | `f2p` | the issue's `FAIL_TO_PASS` tests | nothing. The agent iterates against its own grader; kept only to reproduce `eval_swebench.sh` |
-| `repo` | the repo's own tests near the change | measuring **aoa** — a Gate that rejects broken patches without naming the answer |
+| `repo` | the repo's own tests in the files the issue touches | measuring **aoa** — a Gate that rejects broken patches without naming the answer |
+
+`repo` gates on whole test *files*, derived from the `PASS_TO_PASS` ids, not on the ids themselves. Those
+ids are recorded against the post-test-patch tree, so an id for a parametrised case the held-out test
+patch adds does not exist at `base_commit`: pytest exits "not found" and the Gate fails on every instance
+regardless of the agent's work. The files exist either way, and at `base_commit` they contain exactly the
+repo's pre-existing tests. `FAIL_TO_PASS` ids are passed as `--deselect`, so a reproduce test that already
+exists is never part of the Gate; pytest ignores a `--deselect` matching nothing, which is the usual case.
 
 Both arms must use the same instance set. The 5 astropy instances with an existing `--gate=none`
 baseline (see below) are the cheapest starting point; regenerate the subset from the Lite split with:
