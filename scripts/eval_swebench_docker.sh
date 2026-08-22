@@ -25,6 +25,10 @@
 #   GATE=none vs GATE=repo on the same instances is the A/B; see
 #   docs/design/live_eval.md.
 #
+#   MAX_ATTEMPTS=N  (env, default 0 = aoa's default of 2). Set 1 to measure Gate
+#     precision: rejections become terminal and their patches are preserved in
+#     the aoa report for scripts/gate_precision.py.
+#
 # Requires: go, git, uv, docker (running), and — with BACKEND=claudecode —
 # an authenticated `claude` CLI.
 set -euo pipefail
@@ -34,6 +38,7 @@ BACKEND="${2:-claudecode}"
 LIMIT="${3:-0}"
 RUN_ID="${4:-aoa-$(date +%Y%m%d-%H%M%S)}"
 GATE="${GATE:-none}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-0}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -62,7 +67,8 @@ LIMIT_ARG=()
 
 echo "=== Phase 1: preparing repos + tasks.toml (gate=$GATE) ==="
 uv run python scripts/swebench_to_tasks.py \
-    "$INSTANCES" "$WORK/repos" "$TASKS" "${LIMIT_ARG[@]}" --gate "$GATE"
+    "$INSTANCES" "$WORK/repos" "$TASKS" "${LIMIT_ARG[@]}" --gate "$GATE" \
+    --max-attempts "$MAX_ATTEMPTS"
 
 echo ""
 echo "=== Running aoa eval (backend=$BACKEND, gate=$GATE) ==="
@@ -106,6 +112,7 @@ echo "=== Done ==="
 echo "  aoa report:         $AOA_REPORT"
 echo "  predictions:        $PREDICTIONS"
 echo "  SWE-bench logs:     logs/run_evaluation/$RUN_ID/"
+echo "  aoa report:         $AOA_REPORT"
 echo "  Repos (kept):       $WORK/repos/"
 echo ""
 echo "Resolved count (from harness logs):"
