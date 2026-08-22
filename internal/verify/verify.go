@@ -23,17 +23,17 @@ type Verifier struct {
 	// [DefaultSandboxImage], which only carries a Go toolchain — set this to a
 	// prepared image when the gate needs another language's dependencies.
 	Image string
-	// Mount is where the repository is mounted (and the working directory) inside
-	// that image. Empty means [DefaultSandboxMount]. Images that install the
-	// project from a fixed path need the repo mounted over that path, or the gate
-	// tests the image's copy instead of the agent's changes.
-	Mount string
 }
 
-// Defaults for [Verifier.Image] and [Verifier.Mount].
+// Defaults for the docker sandbox.
 const (
 	DefaultSandboxImage = "golang:1.22"
-	DefaultSandboxMount = "/workspace"
+	// SandboxMount is where the repository is mounted, and the working directory,
+	// inside the sandbox image. A prepared image whose dependencies were built
+	// against a different path should copy the repo across as part of its gate
+	// command rather than being mounted over that path, which would hide the
+	// image's own build artifacts.
+	SandboxMount = "/workspace"
 )
 
 // Result reports the outcome of running the gate.
@@ -70,14 +70,11 @@ func (v Verifier) Run(ctx context.Context, dir string) Result {
 // dockerArgs builds the `docker run` argv that executes c against the repo at
 // dir, applying the Image and Mount defaults.
 func (v Verifier) dockerArgs(dir string, c Command) []string {
-	image, mount := v.Image, v.Mount
+	image := v.Image
 	if image == "" {
 		image = DefaultSandboxImage
 	}
-	if mount == "" {
-		mount = DefaultSandboxMount
-	}
-	args := []string{"run", "--rm", "-v", dir + ":" + mount, "-w", mount, image}
+	args := []string{"run", "--rm", "-v", dir + ":" + SandboxMount, "-w", SandboxMount, image}
 	return append(args, c...)
 }
 

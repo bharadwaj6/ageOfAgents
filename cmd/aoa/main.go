@@ -952,7 +952,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 			conventions = string(b)
 		}
 	}
-	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage, Mount: cfg.SandboxMount}
+	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage}
 	var backoff time.Duration
 	if cfg.RetryBackoff != "" {
 		d, err := time.ParseDuration(cfg.RetryBackoff)
@@ -990,7 +990,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	}
 	mq := mergequeue.New(repo, gate)
 	if len(cfg.RegressionVerify) > 0 {
-		mq.Shadow = verify.Verifier{Commands: verify.ToCommands(cfg.RegressionVerify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage, Mount: cfg.SandboxMount}
+		mq.Shadow = verify.Verifier{Commands: verify.ToCommands(cfg.RegressionVerify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage}
 	}
 	o := orchestrator.New(led, repo, backend, mq, opt)
 	return o, led, nil

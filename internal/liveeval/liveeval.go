@@ -51,12 +51,11 @@ type Task struct {
 	// to measure the regression-escape rate — merges the Gate accepted but a
 	// wider suite would reject. Reported in Metrics.RegressionEscapeRate.
 	Regression [][]string `toml:"regression"`
-	// Sandbox, SandboxImage and SandboxMount isolate this task's Gate the same way
-	// the aoa.toml fields of those names do. They are per-task because a benchmark
-	// run gates each task in the image prepared for that task's repository.
+	// Sandbox and SandboxImage isolate this task's Gate the same way the aoa.toml
+	// fields of those names do. They are per-task because a benchmark run gates
+	// each task in the image prepared for that task's repository.
 	Sandbox      string `toml:"sandbox"`
 	SandboxImage string `toml:"sandbox_image"`
-	SandboxMount string `toml:"sandbox_mount"`
 }
 
 // Report is one task's outcome, derived almost entirely by replaying the log.
@@ -101,7 +100,6 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 			Commands: verify.ToCommands(cmds),
 			Sandbox:  t.Sandbox,
 			Image:    t.SandboxImage,
-			Mount:    t.SandboxMount,
 		}
 	}
 	gate := sandbox(t.Gate)

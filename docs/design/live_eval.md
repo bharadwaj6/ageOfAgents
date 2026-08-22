@@ -95,13 +95,17 @@ GATE=repo scripts/eval_swebench_docker.sh scripts/astropy_5.json grok 5 aoa-gate
 `--gate=repo` skips any instance with no `PASS_TO_PASS` tests (it has nothing to gate on), so check the
 task count matches across arms before comparing.
 
-**Architecture note.** The published `swebench/sweb.eval.x86_64.*` images are x86_64-only and are not
-pulled on arm64, so on Apple Silicon `run_evaluation` needs `-n none` and builds the images locally under
-emulation. swebench 4.1.0 tags every image `x86_64` regardless of host, so the local name is
-`sweb.eval.x86_64.<instance>:latest` with no namespace — which is what `swebench_to_tasks.py` defaults
-`sandbox_image` to. The first build of a repo is slow (emulated); the base and env layers then cache for
-later instances of the same repo. Pass `--sandbox-image 'swebench/sweb.eval.x86_64.{instance}:latest'` to
-gate in the published images on an x86_64 host.
+**Architecture note.** The per-instance images are x86_64-only. They *run* fine on Apple Silicon under
+emulation, but *building* them locally does not work — the miniconda installer in the base image exits 255
+under Rosetta — so `-n none` is not a workaround on arm64. Neither the harness nor aoa pulls images, so
+each instance needs an explicit pull first:
+
+```bash
+docker pull --platform linux/amd64 swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest
+```
+
+At ~3 GB per instance, pull → run both arms → `docker rmi` before the next instance keeps peak disk to one
+image rather than the whole set.
 
 The harness is pinned to `swebench==4.1.0`: 5.x removed `--cache_level` and the `[eval]` extra and expects
 an `image` field the `princeton-nlp` dataset does not carry. Unpinned, phase 3 breaks after the agent has
@@ -109,11 +113,13 @@ already run, and results stop being comparable to the runs recorded below.
 
 **Where the Gate runs.** A `repo` Gate needs the target repo's dependencies, which aoa does not provision
 (ADR 009). The adapter therefore emits per-task `sandbox = "docker"` with `sandbox_image` set to the
-instance's official SWE-bench image — the same images phase 3 builds, so gating costs no extra pulls — and
-`sandbox_mount = "/testbed"`, because those images install the project editable from `/testbed`: mount the
-worktree anywhere else and the Gate tests the image's copy instead of the agent's changes. The Gate command
-activates the image's `testbed` conda env before invoking pytest. `--gate=none` emits no sandbox fields and
-runs on the host exactly as before.
+instance's published SWE-bench image.
+
+The Gate command copies the worktree into `/testbed` rather than being mounted there. This is not
+incidental: the image keeps compiled extensions at `/testbed` (astropy ships 17 `.so` files) that the
+agent's source tree does not contain, so mounting over that path hides them and every Gate fails on
+import. `cp -a /workspace/. /testbed/` overlays the agent's sources and leaves the build products intact.
+`--gate=none` emits no sandbox fields and runs on the host exactly as before.
 
 `none` vs `repo` on the same instances, same backend, is the A/B that isolates what the verifier-gated
 merge queue contributes. Only the delta is attributable to aoa: the absolute rate is dominated by the

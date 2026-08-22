@@ -68,17 +68,16 @@ def as_list(v):
 # than one unbounded argv.
 PYTEST_IDS_PER_COMMAND = 40
 
-# SWE-bench images install the project editable from /testbed, so the agent's
-# worktree must be mounted over that path or the Gate tests the image's copy.
-SANDBOX_MOUNT = "/testbed"
+# Where aoa mounts the repo inside a docker sandbox (verify.SandboxMount).
+SANDBOX_MOUNT = "/workspace"
 
 
-# Image built by `run_evaluation ... -n none`, which is how the harness must be
-# invoked on arm64 (the published swebench/... images are x86_64-only and are not
-# pulled there). swebench 4.1.0 tags every image x86_64 regardless of host and
-# builds under emulation, so the arch is fixed rather than detected. Pass
-# --sandbox-image to gate in the published images instead.
-DEFAULT_IMAGE_TEMPLATE = "sweb.eval.x86_64.{instance}:latest"
+# The published per-instance images. These are x86_64-only but run fine under
+# emulation; building them locally is the path that does not work on arm64 (the
+# miniconda installer in the base image exits 255 under Rosetta). Neither the
+# harness nor aoa pulls them, so `docker pull --platform linux/amd64 <image>` is
+# a prerequisite of a --gate=repo run. Override with --sandbox-image.
+DEFAULT_IMAGE_TEMPLATE = "swebench/sweb.eval.x86_64.{instance}:latest"
 
 
 def swebench_image(instance_id, template):
@@ -89,14 +88,19 @@ def swebench_image(instance_id, template):
 def conda_pytest(test_ids):
     """A pytest command that runs inside a SWE-bench image's `testbed` env.
 
-    The image installs the project editable from /testbed, so the repo is mounted
-    over that path (SANDBOX_MOUNT) and the conda env must be activated before
-    python resolves to the prepared interpreter.
+    The image installs the project editable from /testbed and keeps compiled
+    extensions there (astropy ships 17 .so files the agent's source tree does
+    not), so the worktree is copied over /testbed rather than mounted onto it:
+    a mount would hide those artifacts and every gate would fail on import.
+    `cp -a` overlays the agent's sources while leaving the build products in
+    place. The conda env must be active before python resolves to the prepared
+    interpreter.
     """
     ids = " ".join(shlex.quote(t) for t in test_ids)
     script = (
+        f"cp -a {SANDBOX_MOUNT}/. /testbed/ && "
         "source /opt/miniconda3/bin/activate && conda activate testbed && "
-        f"python -m pytest -q {ids}"
+        f"cd /testbed && python -m pytest -q {ids}"
     )
     return ["/bin/bash", "-lc", script]
 
@@ -172,10 +176,8 @@ def main():
         "--sandbox-image", default=None, metavar="TEMPLATE",
         help=(
             "Image template for the --gate=repo sandbox; '{instance}' is replaced "
-            "with the harness-escaped instance id. Defaults to the name the "
-            "harness builds locally (%s). Pass "
-            "'swebench/sweb.eval.x86_64.{instance}:latest' to gate in the "
-            "published images instead." % DEFAULT_IMAGE_TEMPLATE
+            "with the harness-escaped instance id. Defaults to the published "
+            "image (%s), which must be pulled first." % DEFAULT_IMAGE_TEMPLATE
         ),
     )
     ap.add_argument(
@@ -243,7 +245,6 @@ def main():
             if a.gate == "repo":
                 f.write('sandbox = "docker"\n')
                 f.write(f"sandbox_image = {toml_str(swebench_image(iid, a.sandbox_image))}\n")
-                f.write(f"sandbox_mount = {toml_str(SANDBOX_MOUNT)}\n")
             f.write("\n")
             written += 1
             print(f"prepared {iid} -> {dest}", file=sys.stderr)
