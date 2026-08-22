@@ -95,11 +95,13 @@ GATE=repo scripts/eval_swebench_docker.sh scripts/astropy_5.json grok 5 aoa-gate
 `--gate=repo` skips any instance with no `PASS_TO_PASS` tests (it has nothing to gate on), so check the
 task count matches across arms before comparing.
 
-**Architecture note.** The published `swebench/sweb.eval.x86_64.*` images are x86_64-only, so on Apple
-Silicon (and any arm64 host) `run_evaluation` must be given `-n none`, which builds `sweb.eval.arm64.*`
-images locally — the first build of a repo is slow, but the env layer caches for later instances of the
-same repo. `swebench_to_tasks.py` defaults `sandbox_image` to the local name for the host architecture;
-pass `--sandbox-image 'swebench/sweb.eval.x86_64.{instance}:latest'` to gate in the published images.
+**Architecture note.** The published `swebench/sweb.eval.x86_64.*` images are x86_64-only and are not
+pulled on arm64, so on Apple Silicon `run_evaluation` needs `-n none` and builds the images locally under
+emulation. swebench 4.1.0 tags every image `x86_64` regardless of host, so the local name is
+`sweb.eval.x86_64.<instance>:latest` with no namespace — which is what `swebench_to_tasks.py` defaults
+`sandbox_image` to. The first build of a repo is slow (emulated); the base and env layers then cache for
+later instances of the same repo. Pass `--sandbox-image 'swebench/sweb.eval.x86_64.{instance}:latest'` to
+gate in the published images on an x86_64 host.
 
 The harness is pinned to `swebench==4.1.0`: 5.x removed `--cache_level` and the `[eval]` extra and expects
 an `image` field the `princeton-nlp` dataset does not carry. Unpinned, phase 3 breaks after the agent has
