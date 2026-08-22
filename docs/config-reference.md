@@ -15,6 +15,8 @@ config behaves exactly like the hermetic suite until you opt in.
 | `best_of_n` | int | `1` | Concurrent attempts dispatched per Task (parallel generation). Each attempt consumes a concurrency slot, and the Gate — never a vote — picks the winner (ADR 002). |
 | `conventions_file` | string | — | A file whose contents are injected into every agent prompt as shared coding rules. |
 | `sandbox` | string | `""` (host) | How the Gate's commands are isolated. `"docker"` runs each verify command in a container; `""` runs them on the host. |
+| `sandbox_image` | string | `"golang:1.22"` | Container image used when `sandbox = "docker"`. The default carries only a Go toolchain — set a prepared image when the Gate needs another language's dependencies. |
+| `sandbox_mount` | string | `"/workspace"` | Where the repo is mounted (and the working directory) inside `sandbox_image`. Set it when the image installs the project from a fixed path, so the Gate tests the agent's changes rather than the image's own copy. |
 
 ## Backends
 

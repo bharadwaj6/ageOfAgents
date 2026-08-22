@@ -19,7 +19,22 @@ func (c Command) String() string { return strings.Join(c, " ") }
 type Verifier struct {
 	Commands []Command
 	Sandbox  string
+	// Image is the container image used when Sandbox is "docker". Empty means
+	// [DefaultSandboxImage], which only carries a Go toolchain — set this to a
+	// prepared image when the gate needs another language's dependencies.
+	Image string
+	// Mount is where the repository is mounted (and the working directory) inside
+	// that image. Empty means [DefaultSandboxMount]. Images that install the
+	// project from a fixed path need the repo mounted over that path, or the gate
+	// tests the image's copy instead of the agent's changes.
+	Mount string
 }
+
+// Defaults for [Verifier.Image] and [Verifier.Mount].
+const (
+	DefaultSandboxImage = "golang:1.22"
+	DefaultSandboxMount = "/workspace"
+)
 
 // Result reports the outcome of running the gate.
 type Result struct {
@@ -38,11 +53,7 @@ func (v Verifier) Run(ctx context.Context, dir string) Result {
 		}
 		var cmd *exec.Cmd
 		if v.Sandbox == "docker" {
-			// Mount dir into the container and execute the command.
-			// Using golang:1.22 as the default sandbox image for Go projects.
-			args := []string{"run", "--rm", "-v", dir + ":/workspace", "-w", "/workspace", "golang:1.22"}
-			args = append(args, c...)
-			cmd = exec.CommandContext(ctx, "docker", args...)
+			cmd = exec.CommandContext(ctx, "docker", v.dockerArgs(dir, c)...)
 		} else {
 			cmd = exec.CommandContext(ctx, c[0], c[1:]...)
 			cmd.Dir = dir
@@ -54,6 +65,20 @@ func (v Verifier) Run(ctx context.Context, dir string) Result {
 		}
 	}
 	return Result{Passed: true, Output: out.String()}
+}
+
+// dockerArgs builds the `docker run` argv that executes c against the repo at
+// dir, applying the Image and Mount defaults.
+func (v Verifier) dockerArgs(dir string, c Command) []string {
+	image, mount := v.Image, v.Mount
+	if image == "" {
+		image = DefaultSandboxImage
+	}
+	if mount == "" {
+		mount = DefaultSandboxMount
+	}
+	args := []string{"run", "--rm", "-v", dir + ":" + mount, "-w", mount, image}
+	return append(args, c...)
 }
 
 // ToCommands converts a slice of string slices into a slice of [Command].

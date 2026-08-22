@@ -95,6 +95,14 @@ GATE=repo scripts/eval_swebench_docker.sh scripts/astropy_5.json grok 5 aoa-gate
 `--gate=repo` skips any instance with no `PASS_TO_PASS` tests (it has nothing to gate on), so check the
 task count matches across arms before comparing.
 
+**Where the Gate runs.** A `repo` Gate needs the target repo's dependencies, which aoa does not provision
+(ADR 009). The adapter therefore emits per-task `sandbox = "docker"` with `sandbox_image` set to the
+instance's official SWE-bench image — the same images phase 3 builds, so gating costs no extra pulls — and
+`sandbox_mount = "/testbed"`, because those images install the project editable from `/testbed`: mount the
+worktree anywhere else and the Gate tests the image's copy instead of the agent's changes. The Gate command
+activates the image's `testbed` conda env before invoking pytest. `--gate=none` emits no sandbox fields and
+runs on the host exactly as before.
+
 `none` vs `repo` on the same instances, same backend, is the A/B that isolates what the verifier-gated
 merge queue contributes. Only the delta is attributable to aoa: the absolute rate is dominated by the
 backend harness, which is a swappable component (ADR 004).
