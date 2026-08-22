@@ -132,6 +132,28 @@ import. `cp -a /workspace/. /testbed/` overlays the agent's sources and leaves t
 merge queue contributes. Only the delta is attributable to aoa: the absolute rate is dominated by the
 backend harness, which is a swappable component (ADR 004).
 
+## Gate A/B (2026-08-23, grok backend, at HEAD)
+
+The first runs where `--gate=none` and `--gate=repo` are compared on the same instance with the same
+backend, both scored by the official Docker harness on held-out `FAIL_TO_PASS`.
+
+| Instance | Gate | Merged | Attempts | Duration | Violations | Resolved |
+|---|---|---|---:|---:|---|:---:|
+| astropy-12907 | none | 1 | 1 | 208s | 0 | ✅ 1/1 |
+| astropy-12907 | repo | 1 | 1 | 132s | 0 | ✅ 1/1 |
+
+On an instance the backend solves cleanly the Gate changes nothing, which is the expected result and not
+evidence either way: there is no headroom above 1/1, so the Gate can only show its value where the
+ungated baseline produces a patch the repo's own tests reject. The informative instances are the ones
+that historically fail.
+
+**A false result worth recording.** The first `--gate=repo` attempt reported 0/1 with the Gate rejecting
+both attempts — which reads exactly like "the Gate caught a bad patch". It was a broken Gate: it ran
+`PASS_TO_PASS` node ids, which are recorded against the post-test-patch tree, so ids for parametrised
+cases the held-out test patch adds exited "not found" and the Gate failed on every instance regardless of
+the agent's work. Gating on test files fixed it. A Gate that can never pass produces a plausible number,
+so check any new Gate against `base_commit` before believing a rejection.
+
 ## Prior runs (as of 2026-08-22)
 
 Every run below was produced with **`--gate=none`** — `eval_swebench_docker.sh` hardcoded
