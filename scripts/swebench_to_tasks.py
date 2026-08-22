@@ -38,7 +38,6 @@ them. aoa is responsible for orchestration + verification, not env provisioning.
 import argparse
 import json
 import os
-import platform
 import shlex
 import subprocess
 import sys
@@ -74,17 +73,12 @@ PYTEST_IDS_PER_COMMAND = 40
 SANDBOX_MOUNT = "/testbed"
 
 
-def default_image_template():
-    """Image name template matching what run_evaluation builds on this host.
-
-    The harness escapes `__` in an instance id as `_1776_` and tags images by
-    architecture. On arm64 the prebuilt `swebench/...x86_64...` images do not
-    exist, so run_evaluation must be given `-n none` and builds `sweb.eval.arm64.*`
-    locally, unnamespaced. Override with --sandbox-image when pulling the
-    published x86_64 images instead.
-    """
-    arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x86_64"
-    return f"sweb.eval.{arch}.{{instance}}:latest"
+# Image built by `run_evaluation ... -n none`, which is how the harness must be
+# invoked on arm64 (the published swebench/... images are x86_64-only and are not
+# pulled there). swebench 4.1.0 tags every image x86_64 regardless of host and
+# builds under emulation, so the arch is fixed rather than detected. Pass
+# --sandbox-image to gate in the published images instead.
+DEFAULT_IMAGE_TEMPLATE = "sweb.eval.x86_64.{instance}:latest"
 
 
 def swebench_image(instance_id, template):
@@ -178,10 +172,10 @@ def main():
         "--sandbox-image", default=None, metavar="TEMPLATE",
         help=(
             "Image template for the --gate=repo sandbox; '{instance}' is replaced "
-            "with the harness-escaped instance id. Defaults to the locally built "
-            "name for this architecture (%s). Pass "
+            "with the harness-escaped instance id. Defaults to the name the "
+            "harness builds locally (%s). Pass "
             "'swebench/sweb.eval.x86_64.{instance}:latest' to gate in the "
-            "published images instead." % default_image_template()
+            "published images instead." % DEFAULT_IMAGE_TEMPLATE
         ),
     )
     ap.add_argument(
@@ -191,7 +185,7 @@ def main():
     a = ap.parse_args()
 
     if a.sandbox_image is None:
-        a.sandbox_image = default_image_template()
+        a.sandbox_image = DEFAULT_IMAGE_TEMPLATE
 
     if a.gate is None:
         a.gate = "none" if a.inference_mode else "f2p"
