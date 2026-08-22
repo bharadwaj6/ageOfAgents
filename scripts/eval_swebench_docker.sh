@@ -2,20 +2,28 @@
 # Proper SWE-bench evaluation via the official Docker harness.
 #
 # Three phases:
-#   1. aoa eval --inference-mode  — agent generates patches (no-op Gate so
-#      merges always proceed; the Docker harness is the real verifier).
+#   1. aoa eval — the agent generates patches under the chosen merge Gate.
 #   2. extract_swebench_patches.py — collect git diffs → predictions.json.
 #   3. swebench.harness.run_evaluation — build Docker images, apply patches,
 #      run FAIL_TO_PASS / PASS_TO_PASS tests, report resolved count.
+#
+# The Gate (what merges) is separate from the oracle (what scores): phase 3
+# always grades on held-out FAIL_TO_PASS regardless of GATE.
 #
 # Usage:
 #   scripts/eval_swebench_docker.sh INSTANCES.json [BACKEND] [LIMIT] [RUN_ID]
 #
 #   INSTANCES.json  SWE-bench instances (JSON array or JSONL).
 #                   Use scripts/swebench_lite.json (already downloaded).
-#   BACKEND         mock | claudecode   (default: claudecode)
+#   BACKEND         mock | claudecode | grok   (default: claudecode)
 #   LIMIT           only the first N instances (default: all)
 #   RUN_ID          label for this run (default: aoa-YYYYMMDD-HHMMSS)
+#
+#   GATE=none|f2p|repo  (env, default: none) which merge Gate phase 1 runs under.
+#     none  no-op Gate — measures the backend harness alone (historical default).
+#     repo  PASS_TO_PASS regression Gate — measures what aoa's Gate contributes.
+#   GATE=none vs GATE=repo on the same instances is the A/B; see
+#   docs/design/live_eval.md.
 #
 # Requires: go, git, uv, docker (running), and — with BACKEND=claudecode —
 # an authenticated `claude` CLI.
@@ -25,6 +33,7 @@ INSTANCES="${1:?usage: eval_swebench_docker.sh INSTANCES.json [BACKEND] [LIMIT] 
 BACKEND="${2:-claudecode}"
 LIMIT="${3:-0}"
 RUN_ID="${4:-aoa-$(date +%Y%m%d-%H%M%S)}"
+GATE="${GATE:-none}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -51,12 +60,12 @@ echo ""
 LIMIT_ARG=()
 [ "$LIMIT" != "0" ] && LIMIT_ARG=(--limit "$LIMIT")
 
-echo "=== Phase 1: preparing repos + tasks.toml (inference mode) ==="
+echo "=== Phase 1: preparing repos + tasks.toml (gate=$GATE) ==="
 uv run python scripts/swebench_to_tasks.py \
-    "$INSTANCES" "$WORK/repos" "$TASKS" "${LIMIT_ARG[@]}" --inference-mode
+    "$INSTANCES" "$WORK/repos" "$TASKS" "${LIMIT_ARG[@]}" --gate "$GATE"
 
 echo ""
-echo "=== Running aoa eval (backend=$BACKEND, inference mode) ==="
+echo "=== Running aoa eval (backend=$BACKEND, gate=$GATE) ==="
 # Optional cost/OTel knobs (see eval_swebench.sh header): MAX_COST, PRICE_FILE, OTEL.
 EVAL_ARGS=(--tasks "$TASKS" --backend "$BACKEND" --json)
 [ -n "${PRICE_FILE:-}" ] && EVAL_ARGS+=(--price-file "$PRICE_FILE")

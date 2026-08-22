@@ -66,3 +66,61 @@ agent and the Gate. The HuggingFace dataset host is fetched by you (it is firewa
 
 The mock numbers prove correctness by construction; these live numbers measure efficacy. We never fold one
 into the other (ADR 009).
+
+## Gate modes — what the number is measuring
+
+`scripts/swebench_to_tasks.py --gate` decides what a proposal must pass to merge. It is independent of the
+**oracle** (what decides "resolved"), which is always `FAIL_TO_PASS` run by the official Docker harness in
+`eval_swebench_docker.sh`. Conflating the two is easy and makes numbers meaningless, so state the mode
+next to any result you publish.
+
+| `--gate` | Merge Gate | Use it for |
+|---|---|---|
+| `none` | `true` — every proposal merges | measuring the **harness** alone; this is what `--inference-mode` did |
+| `f2p` | the issue's `FAIL_TO_PASS` tests | nothing. The agent iterates against its own grader; kept only to reproduce `eval_swebench.sh` |
+| `repo` | the repo's own tests near the change | measuring **aoa** — a Gate that rejects broken patches without naming the answer |
+
+Both arms must use the same instance set. The 5 astropy instances with an existing `--gate=none`
+baseline (see below) are the cheapest starting point; regenerate the subset from the Lite split with:
+
+```bash
+python3 -c 'import json; rows={r["instance_id"]:r for r in json.load(open("scripts/swebench_lite.json"))}; \
+ids=["astropy__astropy-12907","astropy__astropy-14182","astropy__astropy-14365","astropy__astropy-14995","astropy__astropy-6938"]; \
+json.dump([rows[i] for i in ids], open("scripts/astropy_5.json","w"))'
+
+GATE=none scripts/eval_swebench_docker.sh scripts/astropy_5.json grok 5 aoa-gateoff
+GATE=repo scripts/eval_swebench_docker.sh scripts/astropy_5.json grok 5 aoa-gateon
+```
+
+`--gate=repo` skips any instance with no `PASS_TO_PASS` tests (it has nothing to gate on), so check the
+task count matches across arms before comparing.
+
+`none` vs `repo` on the same instances, same backend, is the A/B that isolates what the verifier-gated
+merge queue contributes. Only the delta is attributable to aoa: the absolute rate is dominated by the
+backend harness, which is a swappable component (ADR 004).
+
+## Prior runs (as of 2026-08-22)
+
+Every run below was produced with **`--gate=none`** — `eval_swebench_docker.sh` hardcoded
+`--inference-mode`, so `gate = [["true"]]` and every proposal merged unconditionally. Scoring was honest
+(official SWE-bench Docker harness, oracle held out), but these numbers measure the backend's patch
+quality with aoa orchestrating and **not gating**. The Gate's own contribution is unmeasured.
+
+| Run | Backend | Resolved | Instances |
+|---|---|---:|---|
+| `aoa-20260614-044927` | claudecode | 1/1 | astropy-12907 |
+| `aoa-20260614-144745` | claudecode | 3/5 | astropy-12907, -14182, -14365, -14995, -6938 |
+| `aoa-20260615-222419` | grok | 10/11 | the 5 astropy + django-11001, -11019, -11039, -11049, -11283, -11422, -11564 |
+| `aoa-debug-1781465753` | claudecode | 1/2 | astropy-12907, -14182 |
+| `aoa-grok-smoke-3` | grok | 1/1 | astropy-12907 |
+| `aoa-grok-smoke-5` | grok | 4/5 | astropy-12907, -14182, -14365, -14995, -6938 |
+
+Two caveats on the 10/11:
+
+- **Selection bias.** The instances are the head of the Lite split (astropy, then consecutive
+  `django-110xx`), not a random sample. A rate on a hand-ordered prefix is not a Lite score.
+- **Sample size.** At n=11 one instance is 9 points; at n=5 it is 20. These screen for regressions and
+  for large effects. They cannot support a headline solve-rate.
+
+On the shared 5-instance astropy set the two backends differ: grok 4/5, claudecode 3/5 — a reminder that
+the harness, not the control plane, sets the level.

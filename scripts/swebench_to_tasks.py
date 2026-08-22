@@ -3,16 +3,31 @@
 cloning each task's repository at its base commit.
 
 The output feeds `aoa eval --tasks <tasks.toml> --backend claudecode` (ADR 009):
-each task hands the orchestrator the issue's problem statement as the Goal, uses
-the issue's FAIL_TO_PASS tests as both the merge Gate and the success oracle, and
-scores whether the agent's merged change makes those tests pass.
+each task hands the orchestrator the issue's problem statement as the Goal.
+
+`--gate` decides what a proposal must pass to MERGE. It is independent of the
+success ORACLE (what decides "resolved"), which in the two-phase Docker eval is
+always FAIL_TO_PASS scored by swebench.harness.run_evaluation:
+
+    none   no-op Gate, every proposal merges. Measures the backend harness
+           alone - aoa orchestrates but does not gate.
+    f2p    the issue's FAIL_TO_PASS tests. The agent iterates against the exact
+           tests that grade it; kept only to reproduce eval_swebench.sh.
+    repo   the issue's PASS_TO_PASS tests - the ones already passing at
+           base_commit. A regression Gate that rejects a patch breaking existing
+           behaviour without naming the answer, so the oracle stays held out.
+
+`none` vs `repo` on the same instances and backend is the A/B that isolates what
+aoa's verifier-gated merge queue contributes; see docs/design/live_eval.md.
 
 Input: a JSON array (or JSONL) of SWE-bench instances. Required fields per row:
     instance_id, repo, base_commit, problem_statement, FAIL_TO_PASS
-FAIL_TO_PASS may be a list or a JSON-encoded string (both dataset forms work).
+    (PASS_TO_PASS is additionally required for --gate=repo)
+Test lists may be a list or a JSON-encoded string (both dataset forms work).
 
 Usage:
     swebench_to_tasks.py INSTANCES.json WORKDIR TASKS_OUT.toml [--limit N]
+                         [--gate none|f2p|repo]
 
 Important environment caveat (ADR 009): aoa drives the agent and runs the Gate,
 but this adapter does NOT install each repo's Python dependencies. Run it inside
@@ -45,6 +60,18 @@ def as_list(v):
         except json.JSONDecodeError:
             return [v]
     return []
+
+
+# pytest node ids are passed on the command line; PASS_TO_PASS runs to 1689 ids on
+# the largest Lite instance, so the Gate is split into several commands rather
+# than one unbounded argv.
+PYTEST_IDS_PER_COMMAND = 40
+
+
+def chunked(items, n):
+    """Yield successive n-sized lists from items."""
+    for i in range(0, len(items), n):
+        yield items[i : i + n]
 
 
 def toml_str(s):
@@ -96,15 +123,28 @@ def main():
     ap.add_argument("out", help="tasks.toml to write")
     ap.add_argument("--limit", type=int, default=0, help="only the first N instances")
     ap.add_argument(
-        "--inference-mode", action="store_true",
+        "--gate", choices=("none", "f2p", "repo"), default=None,
         help=(
-            "Use a no-op Gate (always passes) so the agent can merge without a "
-            "prepared test environment. Intended for Phase 1 of the two-phase "
-            "Docker eval: aoa generates patches here; the official "
-            "swebench.harness.run_evaluation harness scores them in Docker later."
+            "What a proposal must pass to merge. Independent of the success "
+            "oracle, which is always FAIL_TO_PASS scored by the official Docker "
+            "harness. 'none': no-op Gate, every proposal merges - measures the "
+            "backend harness alone. 'f2p': the issue's FAIL_TO_PASS tests - the "
+            "agent iterates against its own grader; kept only to reproduce the "
+            "single-phase eval_swebench.sh. 'repo': the issue's PASS_TO_PASS "
+            "tests - a regression Gate that rejects patches breaking existing "
+            "behaviour without naming the answer. Default: f2p (historical)."
         ),
     )
+    ap.add_argument(
+        "--inference-mode", action="store_true",
+        help="Deprecated alias for --gate=none.",
+    )
     a = ap.parse_args()
+
+    if a.gate is None:
+        a.gate = "none" if a.inference_mode else "f2p"
+    elif a.inference_mode and a.gate != "none":
+        ap.error("--inference-mode conflicts with --gate=%s" % a.gate)
 
     rows = load(a.instances)
     if a.limit:
@@ -119,13 +159,27 @@ def main():
             dest = prepare_repo(a.workdir, iid, r["repo"], base_commit)
             f2p = as_list(r.get("FAIL_TO_PASS", []))
 
-            if a.inference_mode:
+            success: list[list[str]] = []
+            if a.gate == "none":
                 # No-op Gate: agent's proposal always merges; the official Docker
-                # harness (Phase 2) does the real test verification.
+                # harness (Phase 2) does the real test verification. This measures
+                # the backend harness, not aoa - nothing is gated.
                 gate = [["true"]]
-                success: list[list[str]] = []
+            elif a.gate == "repo":
+                # Regression Gate: the tests that already pass at base_commit. It
+                # rejects a patch that breaks existing behaviour without ever
+                # naming FAIL_TO_PASS, so the oracle stays held out. Chunked
+                # because PASS_TO_PASS runs to hundreds of ids on some instances.
+                p2p = as_list(r.get("PASS_TO_PASS", []))
+                if not p2p:
+                    print(f"skipping {iid}: --gate=repo needs PASS_TO_PASS tests",
+                          file=sys.stderr)
+                    continue
+                gate = [["python", "-m", "pytest", "-q", *chunk]
+                        for chunk in chunked(p2p, PYTEST_IDS_PER_COMMAND)]
             else:
-                # Gate AND success oracle are the issue's reproduce tests.
+                # Gate AND success oracle are the issue's reproduce tests: the
+                # agent can iterate against the exact tests that grade it.
                 if f2p:
                     gate = [["python", "-m", "pytest", "-q", t] for t in f2p]
                 else:
