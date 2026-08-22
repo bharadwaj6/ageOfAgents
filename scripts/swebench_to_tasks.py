@@ -38,6 +38,7 @@ them. aoa is responsible for orchestration + verification, not env provisioning.
 import argparse
 import json
 import os
+import platform
 import shlex
 import subprocess
 import sys
@@ -73,15 +74,22 @@ PYTEST_IDS_PER_COMMAND = 40
 SANDBOX_MOUNT = "/testbed"
 
 
-def swebench_image(instance_id):
-    """Official SWE-bench eval image for an instance.
+def default_image_template():
+    """Image name template matching what run_evaluation builds on this host.
 
-    The harness escapes the `__` in an instance id as `_1776_`, e.g.
-    astropy__astropy-12907 -> swebench/sweb.eval.x86_64.astropy_1776_astropy-12907.
-    These are the same images `swebench.harness.run_evaluation` builds in phase 3,
-    so gating in them costs no extra pulls.
+    The harness escapes `__` in an instance id as `_1776_` and tags images by
+    architecture. On arm64 the prebuilt `swebench/...x86_64...` images do not
+    exist, so run_evaluation must be given `-n none` and builds `sweb.eval.arm64.*`
+    locally, unnamespaced. Override with --sandbox-image when pulling the
+    published x86_64 images instead.
     """
-    return f"swebench/sweb.eval.x86_64.{instance_id.replace('__', '_1776_')}:latest"
+    arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x86_64"
+    return f"sweb.eval.{arch}.{{instance}}:latest"
+
+
+def swebench_image(instance_id, template):
+    """Render an image template for one instance."""
+    return template.format(instance=instance_id.replace("__", "_1776_"))
 
 
 def conda_pytest(test_ids):
@@ -167,10 +175,23 @@ def main():
         ),
     )
     ap.add_argument(
+        "--sandbox-image", default=None, metavar="TEMPLATE",
+        help=(
+            "Image template for the --gate=repo sandbox; '{instance}' is replaced "
+            "with the harness-escaped instance id. Defaults to the locally built "
+            "name for this architecture (%s). Pass "
+            "'swebench/sweb.eval.x86_64.{instance}:latest' to gate in the "
+            "published images instead." % default_image_template()
+        ),
+    )
+    ap.add_argument(
         "--inference-mode", action="store_true",
         help="Deprecated alias for --gate=none.",
     )
     a = ap.parse_args()
+
+    if a.sandbox_image is None:
+        a.sandbox_image = default_image_template()
 
     if a.gate is None:
         a.gate = "none" if a.inference_mode else "f2p"
@@ -227,7 +248,7 @@ def main():
             f.write(f"success = {toml_cmd_list(success)}\n")
             if a.gate == "repo":
                 f.write('sandbox = "docker"\n')
-                f.write(f"sandbox_image = {toml_str(swebench_image(iid))}\n")
+                f.write(f"sandbox_image = {toml_str(swebench_image(iid, a.sandbox_image))}\n")
                 f.write(f"sandbox_mount = {toml_str(SANDBOX_MOUNT)}\n")
             f.write("\n")
             written += 1
