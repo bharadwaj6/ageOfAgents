@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -56,6 +57,20 @@ type Task struct {
 	// each task in the image prepared for that task's repository.
 	Sandbox      string `toml:"sandbox"`
 	SandboxImage string `toml:"sandbox_image"`
+	// MaxAttempts caps attempts per ticket (0 = the orchestrator default). Set it
+	// to 1 to measure Gate precision: every rejection then becomes terminal, so
+	// the rejected proposal is preserved and reported in RejectedPatches instead
+	// of being retried away.
+	MaxAttempts int `toml:"max_attempts"`
+}
+
+// RejectedPatch is a proposal the Gate refused, recovered before its worktree is
+// discarded. Scoring these against the task oracle measures Gate precision: what
+// fraction of rejections the oracle would also have rejected.
+type RejectedPatch struct {
+	TicketID string `json:"ticket_id"`
+	Reason   string `json:"reason"`
+	Diff     string `json:"diff"`
 }
 
 // Report is one task's outcome, derived almost entirely by replaying the log.
@@ -67,6 +82,9 @@ type Report struct {
 	MAST        diagnose.Report `json:"mast"`
 	Violations  []string        `json:"violations,omitempty"`
 	AgentErrors []string        `json:"agent_errors,omitempty"`
+	// RejectedPatches carries proposals the Gate refused, populated only when the
+	// run left them terminal (see Task.MaxAttempts).
+	RejectedPatches []RejectedPatch `json:"rejected_patches,omitempty"`
 }
 
 // TaskFile is the on-disk format for `aoa eval --tasks`.
@@ -108,6 +126,7 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 	o := orchestrator.New(led, repo, backend, mq, orchestrator.Options{
 		Concurrency:  4,
 		WorktreeBase: filepath.Join(baseDir, "wt"),
+		MaxAttempts:  t.MaxAttempts,
 	})
 
 	ev, err := api.NewEvent(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g-eval", Text: t.Goal})
@@ -134,6 +153,7 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 		rep.Violations = append(rep.Violations, v.String())
 	}
 	rep.AgentErrors = collectFailureReasons(events)
+	rep.RejectedPatches = collectRejectedPatches(ctx, events)
 
 	// Success oracle: an explicit command set if given, else "merged something
 	// without breaking any invariant".
@@ -149,6 +169,30 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 // collectFailureReasons extracts the Reason field from every TicketFailed event
 // in the log. This surfaces agent/worktree/commit error messages that would
 // otherwise be lost when the eval workspace is cleaned up.
+// collectRejectedPatches recovers the diff of every proposal the Gate refused,
+// reading each preserved worktree before the caller discards it. Only terminal
+// failures preserve a worktree, so this is populated when Task.MaxAttempts makes
+// a rejection terminal; a retried rejection leaves nothing behind.
+func collectRejectedPatches(ctx context.Context, events []api.Event) []RejectedPatch {
+	var out []RejectedPatch
+	for _, e := range events {
+		if e.Type != api.TicketFailed {
+			continue
+		}
+		var p api.TicketFailedPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil || p.Worktree == "" {
+			continue
+		}
+		w := &worktree.Worktree{Path: p.Worktree}
+		diff, err := w.DiffFromBase(ctx, "main")
+		if err != nil || strings.TrimSpace(diff) == "" {
+			continue
+		}
+		out = append(out, RejectedPatch{TicketID: p.TicketID, Reason: p.Reason, Diff: diff})
+	}
+	return out
+}
+
 func collectFailureReasons(events []api.Event) []string {
 	var reasons []string
 	for _, e := range events {

@@ -117,6 +117,17 @@ func (w *Worktree) Commit(ctx context.Context, msg string) (sha string, changed 
 	return commitDir(ctx, w.Path, msg)
 }
 
+// DiffFromBase returns the patch this worktree's branch adds relative to where
+// it diverged from base. Used to recover a proposal the Gate rejected, whose
+// commits never reach the integration branch.
+func (w *Worktree) DiffFromBase(ctx context.Context, base string) (string, error) {
+	mergeBase, err := git(ctx, w.Path, "merge-base", base, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("merge-base %s: %w", base, err)
+	}
+	return git(ctx, w.Path, "diff", strings.TrimSpace(mergeBase)+"..HEAD")
+}
+
 // CommitAll stages and commits all changes in the integration repo's main
 // worktree (used to seed scaffolding). Reports changed=false when clean.
 func (r *Repo) CommitAll(ctx context.Context, msg string) (sha string, changed bool, err error) {
