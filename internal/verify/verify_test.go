@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,5 +62,46 @@ func TestCanceledContextFailsFast(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Error("canceled context should fail fast, not wait for sleep")
+	}
+}
+
+func TestDockerArgs(t *testing.T) {
+	cmd := Command{"python", "-m", "pytest", "-q"}
+	tests := []struct {
+		name     string
+		verifier Verifier
+		want     []string
+	}{
+		{
+			name:     "defaults to the Go image and /workspace",
+			verifier: Verifier{Sandbox: "docker"},
+			want: []string{"run", "--rm", "-v", "/repo:/workspace", "-w", "/workspace",
+				"golang:1.22", "python", "-m", "pytest", "-q"},
+		},
+		{
+			name: "prepared image mounted over the path it installs from",
+			verifier: Verifier{
+				Sandbox: "docker",
+				Image:   "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest",
+				Mount:   "/testbed",
+			},
+			want: []string{"run", "--rm", "-v", "/repo:/testbed", "-w", "/testbed",
+				"swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest",
+				"python", "-m", "pytest", "-q"},
+		},
+		{
+			name:     "image without mount keeps the default mount",
+			verifier: Verifier{Sandbox: "docker", Image: "python:3.11"},
+			want: []string{"run", "--rm", "-v", "/repo:/workspace", "-w", "/workspace",
+				"python:3.11", "python", "-m", "pytest", "-q"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.verifier.dockerArgs("/repo", cmd)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("dockerArgs() =\n  %q\nwant\n  %q", got, tt.want)
+			}
+		})
 	}
 }

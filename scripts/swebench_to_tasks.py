@@ -38,6 +38,7 @@ them. aoa is responsible for orchestration + verification, not env provisioning.
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 
@@ -66,6 +67,36 @@ def as_list(v):
 # the largest Lite instance, so the Gate is split into several commands rather
 # than one unbounded argv.
 PYTEST_IDS_PER_COMMAND = 40
+
+# SWE-bench images install the project editable from /testbed, so the agent's
+# worktree must be mounted over that path or the Gate tests the image's copy.
+SANDBOX_MOUNT = "/testbed"
+
+
+def swebench_image(instance_id):
+    """Official SWE-bench eval image for an instance.
+
+    The harness escapes the `__` in an instance id as `_1776_`, e.g.
+    astropy__astropy-12907 -> swebench/sweb.eval.x86_64.astropy_1776_astropy-12907.
+    These are the same images `swebench.harness.run_evaluation` builds in phase 3,
+    so gating in them costs no extra pulls.
+    """
+    return f"swebench/sweb.eval.x86_64.{instance_id.replace('__', '_1776_')}:latest"
+
+
+def conda_pytest(test_ids):
+    """A pytest command that runs inside a SWE-bench image's `testbed` env.
+
+    The image installs the project editable from /testbed, so the repo is mounted
+    over that path (SANDBOX_MOUNT) and the conda env must be activated before
+    python resolves to the prepared interpreter.
+    """
+    ids = " ".join(shlex.quote(t) for t in test_ids)
+    script = (
+        "source /opt/miniconda3/bin/activate && conda activate testbed && "
+        f"python -m pytest -q {ids}"
+    )
+    return ["/bin/bash", "-lc", script]
 
 
 def chunked(items, n):
@@ -175,7 +206,7 @@ def main():
                     print(f"skipping {iid}: --gate=repo needs PASS_TO_PASS tests",
                           file=sys.stderr)
                     continue
-                gate = [["python", "-m", "pytest", "-q", *chunk]
+                gate = [conda_pytest(chunk)
                         for chunk in chunked(p2p, PYTEST_IDS_PER_COMMAND)]
             else:
                 # Gate AND success oracle are the issue's reproduce tests: the
@@ -193,7 +224,12 @@ def main():
             f.write(f"base_commit = {toml_str(base_commit)}\n")
             f.write(f"goal = {toml_str(r.get('problem_statement', '').strip())}\n")
             f.write(f"gate = {toml_cmd_list(gate)}\n")
-            f.write(f"success = {toml_cmd_list(success)}\n\n")
+            f.write(f"success = {toml_cmd_list(success)}\n")
+            if a.gate == "repo":
+                f.write('sandbox = "docker"\n')
+                f.write(f"sandbox_image = {toml_str(swebench_image(iid))}\n")
+                f.write(f"sandbox_mount = {toml_str(SANDBOX_MOUNT)}\n")
+            f.write("\n")
             written += 1
             print(f"prepared {iid} -> {dest}", file=sys.stderr)
 

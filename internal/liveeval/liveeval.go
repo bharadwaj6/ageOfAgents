@@ -51,6 +51,12 @@ type Task struct {
 	// to measure the regression-escape rate — merges the Gate accepted but a
 	// wider suite would reject. Reported in Metrics.RegressionEscapeRate.
 	Regression [][]string `toml:"regression"`
+	// Sandbox, SandboxImage and SandboxMount isolate this task's Gate the same way
+	// the aoa.toml fields of those names do. They are per-task because a benchmark
+	// run gates each task in the image prepared for that task's repository.
+	Sandbox      string `toml:"sandbox"`
+	SandboxImage string `toml:"sandbox_image"`
+	SandboxMount string `toml:"sandbox_mount"`
 }
 
 // Report is one task's outcome, derived almost entirely by replaying the log.
@@ -90,9 +96,17 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 	if err != nil {
 		return rep, err
 	}
-	gate := verify.Verifier{Commands: verify.ToCommands(t.Gate)}
+	sandbox := func(cmds [][]string) verify.Verifier {
+		return verify.Verifier{
+			Commands: verify.ToCommands(cmds),
+			Sandbox:  t.Sandbox,
+			Image:    t.SandboxImage,
+			Mount:    t.SandboxMount,
+		}
+	}
+	gate := sandbox(t.Gate)
 	mq := mergequeue.New(repo, gate)
-	mq.Shadow = verify.Verifier{Commands: verify.ToCommands(t.Regression)}
+	mq.Shadow = sandbox(t.Regression)
 	o := orchestrator.New(led, repo, backend, mq, orchestrator.Options{
 		Concurrency:  4,
 		WorktreeBase: filepath.Join(baseDir, "wt"),
@@ -126,7 +140,7 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 	// Success oracle: an explicit command set if given, else "merged something
 	// without breaking any invariant".
 	if len(t.Success) > 0 {
-		oracle := verify.Verifier{Commands: verify.ToCommands(t.Success)}
+		oracle := sandbox(t.Success)
 		rep.Success = oracle.Run(ctx, repo.Dir).Passed && len(rep.Violations) == 0
 	} else {
 		rep.Success = rep.Metrics.Merged > 0 && len(rep.Violations) == 0
