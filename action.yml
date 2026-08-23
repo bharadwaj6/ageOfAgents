@@ -32,7 +32,7 @@ runs:
     # hardcode 1.22 while the module required a newer Go, so `go install` below
     # failed outright and the published action could not install the tool.
     - name: Setup Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v7
       with:
         go-version-file: ${{ github.action_path }}/go.mod
 
