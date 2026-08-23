@@ -109,3 +109,32 @@ func TestSanitizeBranch(t *testing.T) {
 		t.Errorf("SanitizeBranch = %q", got)
 	}
 }
+
+// A repo aoa creates must not inherit the user's global git hooks. Their
+// post-commit hooks fork background work that races teardown, and a failing
+// pre-commit hook would reject every agent commit — surfacing only as the
+// useless "agent produced no changes".
+func TestInitRepoIgnoresTheGlobalGitTemplate(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+
+	// A template that would install a hook into any repo git initialises.
+	tmpl := filepath.Join(t.TempDir(), "template")
+	if err := os.MkdirAll(filepath.Join(tmpl, "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(tmpl, "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_TEMPLATE_DIR", tmpl)
+
+	// InitRepo commits as part of its work: with the hook inherited, that fails.
+	repo, err := InitRepo(ctx, filepath.Join(t.TempDir(), "repo"))
+	if err != nil {
+		t.Fatalf("InitRepo inherited the global template's pre-commit hook: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, ".git", "hooks", "pre-commit")); !os.IsNotExist(err) {
+		t.Error("a repo aoa creates should start with no inherited hooks")
+	}
+}

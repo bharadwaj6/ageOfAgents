@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,5 +71,39 @@ func TestRejectStrayFlags(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--path") {
 		t.Errorf("error should name the offending flag, got %q", err)
+	}
+}
+
+// Both documented forms must honour --count. Go's flag package stops at the
+// first non-flag argument, so a single Parse can only ever handle one of them —
+// and before parseWithSubcommand both silently dropped --count.
+func TestEventsFlagsWorkOnEitherSideOfTheSubcommand(t *testing.T) {
+	for _, args := range [][]string{
+		{"tail", "--count", "3", "--path", "/ws"},
+		{"--path", "/ws", "tail", "--count", "3"},
+		{"--path", "/ws", "--count", "3", "tail"},
+	} {
+		fs := flag.NewFlagSet("events", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		path := fs.String("path", ".", "")
+		count := fs.Int("count", 20, "")
+
+		sub, err := parseWithSubcommand(fs, args, "tail")
+		if err != nil {
+			t.Errorf("%v: %v", args, err)
+			continue
+		}
+		if sub != "tail" || *count != 3 || *path != "/ws" {
+			t.Errorf("%v -> sub=%q count=%d path=%q, want tail/3//ws", args, sub, *count, *path)
+		}
+	}
+
+	// No subcommand at all falls back to the default.
+	fs := flag.NewFlagSet("events", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	count := fs.Int("count", 20, "")
+	sub, err := parseWithSubcommand(fs, []string{"--count", "7"}, "tail")
+	if err != nil || sub != "tail" || *count != 7 {
+		t.Errorf("bare flags -> sub=%q count=%d err=%v, want tail/7/nil", sub, *count, err)
 	}
 }
