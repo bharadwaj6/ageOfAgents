@@ -969,6 +969,14 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		}
 		stall = d
 	}
+	var agentTimeout time.Duration
+	if cfg.AgentTimeout != "" {
+		d, err := time.ParseDuration(cfg.AgentTimeout)
+		if err != nil {
+			return nil, nil, fmt.Errorf("agent_timeout %q: %w", cfg.AgentTimeout, err)
+		}
+		agentTimeout = d
+	}
 	opt := orchestrator.Options{
 		Concurrency:        cfg.Concurrency,
 		MaxAttempts:        cfg.MaxAttempts,
@@ -983,6 +991,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		CrashLoopThreshold: cfg.CrashLoopThreshold,
 		// Termination gates; zero means "Scheduler default" (orchestrator.New).
 		StallTimeout:      stall,
+		AgentTimeout:      agentTimeout,
 		MaxPasses:         cfg.MaxPasses,
 		MaxGraphDepth:     cfg.MaxGraphDepth,
 		MaxTicketsPerGoal: cfg.MaxTicketsPerGoal,

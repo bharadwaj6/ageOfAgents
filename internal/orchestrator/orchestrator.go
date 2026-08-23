@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -37,6 +38,7 @@ type Options struct {
 	Conventions        string             // injected into every agent prompt (Conventions)
 	WorktreeBase       string             // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
 	StallTimeout       time.Duration      // no-progress timeout for the Stall Detector; default 2m
+	AgentTimeout       time.Duration      // hard ceiling on one agent attempt; default 30m
 	HeartbeatInterval  time.Duration      // how often a running Worker signals liveness; default 30s
 	MaxPasses          int                // safety bound on Scheduler passes in Run; default 1000
 	MaxGraphDepth      int                // max emergent decomposition depth (graph governor); default 5
@@ -62,6 +64,12 @@ type Orchestrator struct {
 
 	mu        sync.Mutex
 	worktrees map[string]*worktree.Worktree
+	// dispatchErr holds the first error a dispatch goroutine could not report
+	// any other way — an Event Log append that failed. dispatch has no error
+	// return (it runs under a WaitGroup) and the log is the only channel it
+	// has, so when the log itself is the thing that broke, the failure would
+	// otherwise vanish. ReconcileOnce surfaces it after the wave joins.
+	dispatchErr error
 }
 
 // New builds an Orchestrator and fills in default options.
@@ -77,6 +85,13 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 	}
 	if opt.StallTimeout <= 0 {
 		opt.StallTimeout = 2 * time.Minute
+	}
+	// Deliberately not StallTimeout: a live Worker emits Heartbeat every
+	// HeartbeatInterval, so StallTimeout measures silence, not runtime. A real
+	// agent attempt routinely runs far longer than 2m and must not be killed for
+	// it. This is the ceiling that stops a hung CLI hanging the run forever.
+	if opt.AgentTimeout <= 0 {
+		opt.AgentTimeout = 30 * time.Minute
 	}
 	if opt.HeartbeatInterval <= 0 {
 		opt.HeartbeatInterval = 30 * time.Second
@@ -217,6 +232,9 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 			}()
 		}
 		wg.Wait()
+		if err := o.takeDispatchErr(); err != nil {
+			return err
+		}
 	}
 
 	// 4. Drain the merge queue for proposed tickets (serialized writes to main).
@@ -300,12 +318,35 @@ type dispatchJob struct {
 	depCtx   string // summaries of merged dependencies (blackboard read, ADR 006)
 }
 
+// recordDispatchErr keeps the first error raised inside a dispatch goroutine so
+// ReconcileOnce can return it once the wave joins.
+func (o *Orchestrator) recordDispatchErr(err error) {
+	if err == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.dispatchErr == nil {
+		o.dispatchErr = err
+	}
+}
+
+// takeDispatchErr returns and clears the recorded dispatch error.
+func (o *Orchestrator) takeDispatchErr() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	err := o.dispatchErr
+	o.dispatchErr = nil
+	return err
+}
+
 // dispatch runs one ticket attempt: claim -> worktree -> agent -> commit ->
 // propose. Failures become a retry (WorkerRestarted) or, at the attempt cap, a
 // terminal TicketFailed.
 func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	worker := "worker/" + j.ticketID
 	if err := o.emit(api.TicketClaimed, api.TicketClaimedPayload{TicketID: j.ticketID, Worker: worker}); err != nil {
+		o.recordDispatchErr(fmt.Errorf("claim %s: %w", j.ticketID, err))
 		return
 	}
 
@@ -321,11 +362,19 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	o.mu.Unlock()
 
 	if err := o.emit(api.WorkStarted, api.WorkStartedPayload{TicketID: j.ticketID, Worker: worker, Worktree: dest}); err != nil {
+		// The worktree is already registered — drop it rather than leak it.
+		o.cleanupWorktree(ctx, j.ticketID)
+		o.recordDispatchErr(fmt.Errorf("start work on %s: %w", j.ticketID, err))
 		return
 	}
 
+	// Bound the attempt. Without this the run's context is unbounded all the way
+	// down to exec.CommandContext, so one wedged agent CLI hangs the whole run
+	// with nothing to time it out — the Stall Detector cannot help, because it
+	// only runs after the dispatch wave joins.
+	runCtx, cancelRun := context.WithTimeout(ctx, o.opt.AgentTimeout)
 	stopHeartbeat := o.startHeartbeat(j.ticketID, worker)
-	res, err := o.backend.Run(ctx, agent.Task{
+	res, err := o.backend.Run(runCtx, agent.Task{
 		TicketID:    j.ticketID,
 		Title:       j.title,
 		Goal:        j.goalText,
@@ -336,7 +385,11 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		DepContext:  j.depCtx,
 	})
 	stopHeartbeat()
+	cancelRun()
 	if err != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			err = fmt.Errorf("timed out after %s: %w", o.opt.AgentTimeout, err)
+		}
 		// A Backend returning an error reports no usage by Go convention, so a
 		// failed agent call charges nothing. Backends that can attribute partial
 		// spend should surface it on a successful Result instead.
@@ -351,17 +404,22 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 			Title:    res.AmendedTitle,
 			Guidance: res.AmendedGuidance,
 		}); err != nil {
-			return
+			// The agent's work is already done and about to be committed;
+			// losing it over a failed bookkeeping append would waste the whole
+			// attempt. Record the failure and carry on with the proposal.
+			o.recordDispatchErr(fmt.Errorf("amend %s: %w", j.ticketID, err))
 		}
 	}
 
 	if res.Invalidated {
 		o.cleanupWorktree(ctx, j.ticketID)
-		_ = o.emit(api.TicketInvalidated, api.TicketInvalidatedPayload{
+		if err := o.emit(api.TicketInvalidated, api.TicketInvalidatedPayload{
 			TicketID: j.ticketID,
 			Worker:   worker,
 			Reason:   res.InvalidatedReason,
-		})
+		}); err != nil {
+			o.recordDispatchErr(fmt.Errorf("invalidate %s: %w", j.ticketID, err))
+		}
 		return
 	}
 
@@ -387,9 +445,13 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		return
 	}
 
-	_ = o.emit(api.ProposalSubmitted, api.ProposalSubmittedPayload{
+	// The one append that must not vanish: without it the committed diff exists
+	// on a branch that nothing will ever look at again.
+	if err := o.emit(api.ProposalSubmitted, api.ProposalSubmittedPayload{
 		TicketID: j.ticketID, Worker: worker, Branch: branch, Commit: sha, Summary: res.Summary, Trace: res.Trace, Tokens: res.Tokens, Model: res.Model,
-	})
+	}); err != nil {
+		o.recordDispatchErr(fmt.Errorf("propose %s (diff is on branch %s): %w", j.ticketID, branch, err))
+	}
 }
 
 // decompose turns a worker's proposed subtasks into child tickets on the Shared
