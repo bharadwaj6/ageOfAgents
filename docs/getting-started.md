@@ -1,10 +1,15 @@
 # Getting Started with Age of Agents
 
-This guide walks you through your first run of **Age of Agents** (`aoa`) — from zero to a fully orchestrated, verified code change in under five minutes.
+This guide walks you through your first run of **Age of Agents** (`aoa`) — from zero to a verified,
+merged code change in a few minutes.
+
+> If you just want the commands, the [README Quick Start](../README.md#quick-start) is the same
+> path in a third of the space. This page explains what each step is doing and why.
 
 ## Prerequisites
 
-- **Go 1.21+** — [install Go](https://go.dev/doc/install)
+- **Go 1.26.4+** — [install Go](https://go.dev/doc/install) (the version in [`go.mod`](../go.mod);
+  an older toolchain fails on the first build)
 - **git** — any recent version
 
 ## Step 1: Build the CLI
@@ -48,7 +53,7 @@ writes nothing into your tree, and auto-detects a sensible Gate:
 `go build`/`go test` for a `go.mod`, `npm test` for a `package.json`,
 `python -m pytest` for a Python project, or `make test` for a `Makefile`. Review
 and adjust it (provisioning the test environment is your job — see
-[ADR 009](adr/009-live-evaluation-out-of-hermetic-suite.md)). `init` never
+[ADR 009](design/adr/009-live-evaluation-out-of-hermetic-suite.md)). `init` never
 overwrites an existing `aoa.toml`; pass `--force` to replace one.
 
 ## Step 3: Submit a Goal
@@ -95,7 +100,7 @@ See what happened:
 ./aoa events --path ./workspace tail
 
 # Full event stream (filterable by type)
-./aoa feed --path ./workspace
+./aoa events --path ./workspace tail --count 20
 ```
 
 Every action is recorded in the Event Log. You can replay it to reconstruct any past state.
@@ -105,7 +110,7 @@ Every action is recorded in the Event Log. You can replay it to reconstruct any 
 Ready to run a real coding agent? Edit `aoa.toml`:
 
 ```toml
-backend = "claudecode"
+backend = "grok"
 ```
 
 Then submit a new goal and run again:
@@ -115,7 +120,9 @@ Then submit a new goal and run again:
 ./aoa run  --path ./workspace
 ```
 
-The Scheduler will invoke the `claudecode` Backend, which drives a real coding agent as a subprocess in the Task's isolated worktree. The agent's code changes are only merged if they pass your Gate.
+The Scheduler invokes the `grok` Backend, which drives a real coding agent as a subprocess in the Task's isolated worktree. Its changes are merged only if they pass your Gate. `grok` authenticates from your local grok.com login — no API key — and reports its own true token counts, which is why it is the backend the loop was verified end to end on. `claudecode` works the same way with the `claude` CLI.
+
+> **Before you point a real backend at a repo you care about:** the agent runs commands the model chooses, as your user. `sandbox = "docker"` isolates the *Gate*, not the agent. See [`../SECURITY.md`](../SECURITY.md).
 
 ## Step 7: Customize the Gate
 
@@ -142,10 +149,10 @@ This is how `aoa` guarantees that `main` is always green — no change lands wit
 | **Scheduler** | Deterministic loop: reads log → dispatches workers → drives merges |
 | **Gate** | Your build/test commands that every change must pass |
 | **Merge Queue** | Serializes merges to `main` — only Gate-passing code lands |
-| **Backend** | The AI engine (`mock` for testing, `claudecode` for real work) |
+| **Backend** | The AI engine (`mock` offline fixture; `grok` / `claudecode` for real work) |
 
 ## Next Steps
 
-- **[Architecture](architecture.md)** — how the Scheduler, Event Log, and Merge Queue fit together
-- **[Architecture Decision Records](adr/)** — the design decisions and the research behind them
-- **[Success Metrics](metrics.md)** — how we measure whether the design works
+- **[Architecture](design/architecture.md)** — how the Scheduler, Event Log, and Merge Queue fit together
+- **[Architecture Decision Records](design/adr/)** — the design decisions and the research behind them
+- **[Success Metrics](design/metrics.md)** — how we measure whether the design works

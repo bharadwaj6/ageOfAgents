@@ -25,4 +25,4 @@ The active backend is chosen in `aoa.toml`. New backends (other CLIs/APIs) imple
 
 ## Research basis
 Provider-abstraction discipline (user coding standards); Anthropic agent-as-subprocess pattern; MCP for
-tool access if/when needed (`docs/claude.md`).
+tool access if/when needed (`docs/research/claude-report.md`).

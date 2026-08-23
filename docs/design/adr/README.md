@@ -1,7 +1,7 @@
 # Architecture Decision Records — Age of Agents
 
 These ADRs record the load-bearing decisions for the orchestrator. Each is grounded in the research
-corpus under `docs/` (`claude.md`, `gemini.md`, `grok.md`, `perplexity.md`, `research_links.md`).
+corpus under `docs/` (`research/claude-report.md`, `research/gemini.md`, `research/grok.md`, `research/perplexity.md`, `research/links.md`).
 
 | ADR | Decision |
 |-----|----------|

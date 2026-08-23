@@ -111,6 +111,8 @@ func (r *runner) submit(batch []pendingGoal) error {
 
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	describe(fs, "aoa serve \u2014 run a GitHub webhook server.\n\nAn `@aoa <goal>` issue comment queues a Goal and reconciles the workspace.\nWithout --secret the endpoint is unauthenticated: anyone who can reach the\nport can make this machine run an agent against your repo. See SECURITY.md.",
+		"aoa serve --path ./workspace --port 8080 --secret $GITHUB_WEBHOOK_SECRET")
 	port := fs.Int("port", 8080, "Port to listen on")
 	path := fs.String("path", ".", "Workspace root directory")
 	secret := fs.String("secret", "", "GitHub webhook secret")

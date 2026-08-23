@@ -15,8 +15,8 @@ market, consensus voting, four-dimensional trust, digital pheromones, and role-h
 (a central coordinator LLM, watchdog daemons, lifecycle managers). It worked, but was large and invested
 heavily in mechanisms that recent empirical work shows are counterproductive for aligned coding agents.
 
-The research corpus (`docs/claude.md`, `docs/gemini.md`, `docs/grok.md`, `docs/perplexity.md`,
-`docs/research_links.md`) converges on a sharper picture:
+The research corpus (`docs/research/claude-report.md`, `docs/research/gemini.md`, `docs/research/grok.md`, `docs/research/perplexity.md`,
+`docs/research/links.md`) converges on a sharper picture:
 
 - **Most multi-agent failures are coordination/design/verification failures, not model failures.** The
   MAST taxonomy (Cemri et al., *Why Do Multi-Agent LLM Systems Fail?*, NeurIPS 2025; 1,642 traces;
@@ -33,10 +33,10 @@ The research corpus (`docs/claude.md`, `docs/gemini.md`, `docs/grok.md`, `docs/p
   (Anthropic, *How we built our multi-agent research system*). Coding is highly interdependent — so
   parallelism must be paired with hard gates and good decomposition, not raw agent count.
 - **Coordinate via shared state, not direct messaging.** The shared-log model yields ~80% token savings
-  vs. agent-to-agent chat (`docs/grok.md`). Workers read and write a shared Event Log instead of
+  vs. agent-to-agent chat (`docs/research/grok.md`). Workers read and write a shared Event Log instead of
   messaging each other.
 
-An independent critique (`docs/gemini.md`) validated these decisions — and concluded the
+An independent critique (`docs/research/gemini.md`) validated these decisions — and concluded the
 game-theoretic primitives are "overkill and often detrimental" for software development — while flagging
 two scalability caveats we address in §5.
 
@@ -201,7 +201,7 @@ emitting ordinary `agent.Backend` work, never as a second coordinator (ADR 011).
 
 How we measure whether this design delivers: [`docs/design/metrics.md`](metrics.md); how it compares to other
 approaches (Gastown, Spec Kit + plan, opencode ultraworker): [`docs/design/comparison.md`](comparison.md). See
-`docs/research_links.md` for the full source list. Load-bearing citations: Cemri et al.
+`docs/research/links.md` for the full source list. Load-bearing citations: Cemri et al.
 (arXiv:2503.13657, MAST); Vallecillos-Ruiz et al. (arXiv:2510.21513, ensemble popularity trap); Huang
 et al. (arXiv:2310.01798, debate ≈ self-consistency); Anthropic multi-agent research engineering post;
-LATTE (emergent task graphs); shared-log coordination synthesis (`docs/grok.md`).
+LATTE (emergent task graphs); shared-log coordination synthesis (`docs/research/grok.md`).
