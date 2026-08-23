@@ -325,3 +325,53 @@ func TestComputeMergeQueueDepthAndWait(t *testing.T) {
 		t.Errorf("MergeQueueWaitMean = %v, want 3.5", m.MergeQueueWaitMean)
 	}
 }
+
+// A retried ticket burns tokens on every attempt, not just the winning one. The
+// spend governor in internal/state already charged the failed ones; metrics did
+// not, so `aoa status` reported roughly half the true burn on a two-attempt
+// ticket. Observed live on 2026-08-23: 289,946 reported, 606,669 actually spent.
+func TestComputeChargesFailedAttempts(t *testing.T) {
+	s := newStream(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "work"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "t", IdempotencyKey: "g1:impl"}).
+		add(api.TicketReady, "orchestrator", api.TicketReadyPayload{TicketID: "t1"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.WorkStarted, "orchestrator", api.WorkStartedPayload{TicketID: "t1", Worker: "w"}).
+		// Attempt 1 burns tokens and is abandoned.
+		add(api.WorkerRestarted, "orchestrator", api.WorkerRestartedPayload{TicketID: "t1", Worker: "w", Tokens: 316723, Model: "grok-4.6-build"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.WorkStarted, "orchestrator", api.WorkStartedPayload{TicketID: "t1", Worker: "w"}).
+		// Attempt 2 succeeds.
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t1", Commit: "x", Tokens: 289946, Model: "grok-4.6-build"}).
+		add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: "t1"}).
+		add(api.Merged, "orchestrator", api.MergedPayload{TicketID: "t1", Commit: "x"})
+
+	const want = 316723 + 289946
+	m := Compute(s.events)
+	if m.TokensTotal != want {
+		t.Errorf("TokensTotal = %d, want %d (both attempts)", m.TokensTotal, want)
+	}
+	if got := m.TokensByModel["grok-4.6-build"]; got != want {
+		t.Errorf("TokensByModel = %d, want %d", got, want)
+	}
+	for _, tc := range m.PerTicket {
+		if tc.TicketID == "t1" && tc.Tokens != want {
+			t.Errorf("PerTicket tokens = %d, want %d", tc.Tokens, want)
+		}
+	}
+}
+
+// A ticket that failed terminally still cost money.
+func TestComputeChargesTerminalFailures(t *testing.T) {
+	s := newStream(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "work"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "t", IdempotencyKey: "g1:impl"}).
+		add(api.TicketReady, "orchestrator", api.TicketReadyPayload{TicketID: "t1"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.WorkStarted, "orchestrator", api.WorkStartedPayload{TicketID: "t1", Worker: "w"}).
+		add(api.TicketFailed, "orchestrator", api.TicketFailedPayload{TicketID: "t1", Reason: "gave up", Tokens: 4242, Model: "m"})
+
+	if m := Compute(s.events); m.TokensTotal != 4242 {
+		t.Errorf("TokensTotal = %d, want 4242 — a failed ticket still cost money", m.TokensTotal)
+	}
+}

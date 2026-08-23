@@ -120,6 +120,21 @@ func Compute(events []api.Event) Metrics {
 		waitSum    float64
 		waitCount  int
 	)
+	// charge attributes one attempt's token burn to the run, the ticket and the
+	// model. Every event that reports usage goes through here so the totals
+	// cannot drift apart by which event happened to carry them.
+	charge := func(id string, tokens int, model string) {
+		if tokens > 0 {
+			m.TokensTotal += tokens
+			tokensByTicket[id] += tokens
+		}
+		if model != "" {
+			modelByTicket[id] = model
+			if tokens > 0 {
+				tokensByModel[model] += tokens
+			}
+		}
+	}
 	resolveQueue := func(id string, ts time.Time) {
 		if !inQueue[id] {
 			return
@@ -176,12 +191,7 @@ func Compute(events []api.Event) Metrics {
 				}
 				var p api.ProposalSubmittedPayload
 				if e.DecodePayload(&p) == nil {
-					m.TokensTotal += p.Tokens
-					tokensByTicket[id] += p.Tokens
-					if p.Model != "" {
-						modelByTicket[id] = p.Model
-						tokensByModel[p.Model] += p.Tokens
-					}
+					charge(id, p.Tokens, p.Model)
 				}
 			}
 			if e.Type == api.TicketFailed {
@@ -190,12 +200,25 @@ func Compute(events []api.Event) Metrics {
 			if e.Type == api.TicketDecomposed {
 				var p api.TicketDecomposedPayload
 				if e.DecodePayload(&p) == nil {
-					m.TokensTotal += p.Tokens
-					tokensByTicket[id] += p.Tokens
-					if p.Model != "" {
-						modelByTicket[id] = p.Model
-						tokensByModel[p.Model] += p.Tokens
-					}
+					charge(id, p.Tokens, p.Model)
+				}
+			}
+			// An attempt that burned tokens and then failed is still spend. The
+			// governor in internal/state already charges these; metrics did not,
+			// so `aoa status` reported only the winning attempt — on a two-attempt
+			// ticket that understated the true burn by roughly half. Two
+			// accounting paths that disagree about the same log is exactly the
+			// bug the single-source-of-truth design exists to prevent.
+			if e.Type == api.WorkerRestarted {
+				var p api.WorkerRestartedPayload
+				if e.DecodePayload(&p) == nil {
+					charge(id, p.Tokens, p.Model)
+				}
+			}
+			if e.Type == api.TicketFailed {
+				var p api.TicketFailedPayload
+				if e.DecodePayload(&p) == nil {
+					charge(id, p.Tokens, p.Model)
 				}
 			}
 		case api.VerificationPassed:
