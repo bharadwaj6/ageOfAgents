@@ -24,4 +24,4 @@ durable log (replacing the multi-agent watchdog hierarchy).
 
 ## Research basis
 Anthropic orchestrator–worker pattern; Kubernetes reconciliation loops; actor-model "let it crash"
-supervision; control theory (governor as backpressure). See `docs/claude.md`.
+supervision; control theory (governor as backpressure). See `docs/research/claude-report.md`.

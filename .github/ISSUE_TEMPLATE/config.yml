@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security concern
+    url: https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md
+    about: Read SECURITY.md first — aoa runs model-authored code on your machine by design.

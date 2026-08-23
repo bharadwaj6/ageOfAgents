@@ -1,0 +1,45 @@
+name: Bug report
+description: Something behaved differently than documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The Event Log is a complete record of what `aoa` did — `aoa events tail --count 40` around the
+        problem is usually worth more than a description.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got.
+      placeholder: |
+        $ aoa run --path ./workspace
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Event Log excerpt
+      description: "`aoa events --path ./workspace tail --count 40`"
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Output of `aoa version`"
+      placeholder: "aoa v0.2.0 (abc1234, 2026-08-24)"
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options: [mock, grok, claudecode, openai, anthropic, a configured plugin]
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS and Go version
+      placeholder: "macOS 15.6 / go1.26.4"

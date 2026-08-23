@@ -143,6 +143,22 @@ type workspace struct {
 	root, configPath, ledgerPath, worktreeBase string
 }
 
+// describe attaches a description and usage example to a subcommand's flag set,
+// so `aoa <cmd> --help` explains what the command does instead of dumping bare
+// flag names. Go's flag package prints only the flags by default, which meant
+// `aoa goal --help` never revealed that goal takes positional text at all.
+func describe(fs *flag.FlagSet, summary, example string) {
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintf(out, "%s\n\n", summary)
+		if example != "" {
+			fmt.Fprintf(out, "Example:\n  %s\n\n", example)
+		}
+		fmt.Fprintf(out, "Flags:\n")
+		fs.PrintDefaults()
+	}
+}
+
 func workspaceAt(path string) (workspace, error) {
 	root, err := filepath.Abs(path)
 	if err != nil {
@@ -193,6 +209,7 @@ func resolve(root, p string) string {
 
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	describe(fs, "aoa init \u2014 scaffold a new workspace, or adopt an existing git repo.\n\nA workspace holds the Event Log (.aoa/) and aoa.toml. --repo scaffolds a fresh\ndemo repository to try things offline; --adopt points at a repo you already\nhave, on whatever branch it is on, and auto-detects its build/test Gate.", "aoa init --path ./workspace --adopt /path/to/your/repo")
 	path := fs.String("path", ".", "workspace root")
 	repo := fs.String("repo", "./repo", "integration repo path (scaffold mode)")
 	adopt := fs.String("adopt", "", "adopt an existing git repo at this path (on its current branch) instead of scaffolding")
@@ -321,6 +338,7 @@ func rejectStrayFlags(args []string) error {
 
 func cmdGoal(args []string) error {
 	fs := flag.NewFlagSet("goal", flag.ExitOnError)
+	describe(fs, "aoa goal \u2014 submit an objective in plain English.\n\nThe Goal becomes one Task. Nothing is dispatched until you run `aoa run`.\nFlags must come before the text.", "aoa goal --path ./workspace \"add a greeting function\"")
 	path := fs.String("path", ".", "workspace root")
 	_ = fs.Parse(args)
 
@@ -371,6 +389,7 @@ func submitGoal(led *ledger.Ledger, text, source, key string) (string, error) {
 // its current attempt uninterrupted. Run `aoa run` afterward to act on it.
 func cmdAmend(args []string) error {
 	fs := flag.NewFlagSet("amend", flag.ExitOnError)
+	describe(fs, "aoa amend \u2014 append steering guidance to a Goal already on the log.\n\nFuture dispatches pick it up; work already in flight is unaffected.", "aoa amend --path ./workspace g-1a2b3c4d \"prefer table-driven tests\"")
 	path := fs.String("path", ".", "workspace root")
 	_ = fs.Parse(args)
 
@@ -418,6 +437,7 @@ func cmdAmend(args []string) error {
 
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	describe(fs, "aoa run \u2014 drive the Scheduler until all work is settled, then exit.\n\nIdempotent and crash-safe: re-running is always allowed and does nothing when\nthere is nothing to do. Exits non-zero if any task ended up failed.", "aoa run --path ./workspace")
 	path := fs.String("path", ".", "workspace root")
 	once := fs.Bool("once", false, "run a single reconcile pass instead of looping")
 	interval := fs.Duration("interval", 0, "keep running, reconciling again every <dur> until interrupted (0 = run until settled, then exit)")
@@ -574,6 +594,7 @@ func cmdOtel(args []string) error {
 		return fmt.Errorf("unknown otel subcommand %q (want: export)", sub)
 	}
 	fs := flag.NewFlagSet("otel", flag.ExitOnError)
+	describe(fs, "aoa otel export \u2014 replay the Event Log to OpenTelemetry as OTLP traces\nand metrics.\n\nNeeds OTEL_EXPORTER_OTLP_ENDPOINT; off by default.", "aoa otel export --path ./workspace")
 	path := fs.String("path", ".", "workspace root")
 	_ = fs.Parse(args)
 	if !otel.Enabled() {
@@ -596,6 +617,7 @@ func cmdOtel(args []string) error {
 
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	describe(fs, "aoa status \u2014 show goals, tasks, per-ticket tokens, run cost, and any\n\"needs human\" handoff left behind by a terminal failure.", "aoa status --path ./workspace --watch")
 	path := fs.String("path", ".", "workspace root")
 	watch := fs.Bool("watch", false, "re-render until all work settles (poll the Event Log)")
 	interval := fs.Duration("interval", 2*time.Second, "refresh interval for --watch")
@@ -673,6 +695,7 @@ func parseWithSubcommand(fs *flag.FlagSet, args []string, def string) (string, e
 
 func cmdEvents(args []string) error {
 	fs := flag.NewFlagSet("events", flag.ExitOnError)
+	describe(fs, "aoa events \u2014 inspect the Event Log, the single source of truth every\nother number is derived from.\n\nSubcommands: tail (most recent events), replay (all of them).", "aoa events --path ./workspace tail --count 20")
 	path := fs.String("path", ".", "workspace root")
 	count := fs.Int("count", 20, "number of events for tail (0 = all)")
 	typ := fs.String("type", "", "filter by event type")
@@ -734,6 +757,7 @@ func renderEvents(events []api.Event, count int, withPayload bool) {
 
 func cmdBench(args []string) error {
 	fs := flag.NewFlagSet("bench", flag.ExitOnError)
+	describe(fs, "aoa bench \u2014 run the hermetic coordination benchmark and print a report.\n\nOffline and deterministic: uses the mock backend, makes no network calls.", "aoa bench --json")
 	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
 	_ = fs.Parse(args)
 
@@ -763,6 +787,7 @@ func cmdBench(args []string) error {
 // live run that needs the agent binary, API keys, and network (ADR 009).
 func cmdEval(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
+	describe(fs, "aoa eval \u2014 run end-to-end tasks against real repositories.\n\nReports per-task success, tokens, cost and a MAST failure-mode histogram.\nReads aoa.toml from the current directory for spend governors and pricing.", "aoa eval --tasks tasks.toml --backend grok --max-cost 5")
 	tasksPath := fs.String("tasks", "", "path to a TOML task file")
 	backendName := fs.String("backend", "mock", "agent backend: mock|grok|claudecode|openai|anthropic (or a configured plugin)")
 	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
@@ -907,6 +932,8 @@ func cmdApprove(args []string, approve bool) error {
 		name = "reject"
 	}
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	describe(fs, fmt.Sprintf("aoa %s \u2014 decide a proposal parked by the approval gate.\n\nOnly applies when require_approval is set. The proposal has already passed\nthe Gate; this is the human decision on top of it.", name),
+		fmt.Sprintf("aoa %s --path ./workspace g-1a2b3c4d-impl", name))
 	path := fs.String("path", ".", "workspace root")
 	_ = fs.Parse(args)
 
@@ -966,6 +993,7 @@ func cmdApprove(args []string, approve bool) error {
 // property of the actual run (see internal/diagnose).
 func cmdDiagnose(args []string) error {
 	fs := flag.NewFlagSet("diagnose", flag.ExitOnError)
+	describe(fs, "aoa diagnose \u2014 print a MAST-style failure-mode histogram for a run,\ncomputed purely by replaying the Event Log.", "aoa diagnose --path ./workspace --json")
 	path := fs.String("path", ".", "workspace root")
 	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
 	_ = fs.Parse(args)

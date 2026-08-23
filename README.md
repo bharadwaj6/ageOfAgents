@@ -1,21 +1,192 @@
 # Age of Agents
 
-**Age of Agents** (`aoa`) is **not a multi-agent framework. It's a deterministic build system whose
-compile step happens to be a stochastic LLM** — Bors for AI agents.
+[![CI](https://github.com/bharadwaj6/ageOfAgents/actions/workflows/ci.yml/badge.svg)](https://github.com/bharadwaj6/ageOfAgents/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8.svg)](go.mod)
 
-Scheduling, state, merge, and done-ness are plain, deterministic Go gated on objective signals (your
-build, your tests, the compiler). The LLM only ever emits a *candidate diff*; whether it lands is decided
-by your Gate, not by the agent. That inverts the usual bet: where most agent frameworks chase orchestration
-cleverness — which better models erode — `aoa`'s bet is that **verification, not intelligence, is the
-scaling constraint**. Better models only sharpen the worker; the control plane is unchanged.
+**Point an AI coding agent at your repo and it might write something broken. `aoa` runs the agent in a
+throwaway git worktree, runs *your* build and tests on the result, and merges it only if they pass.**
 
-You give it a **Goal**. It becomes a **Task**, dispatched to a **Worker** (an agent in an isolated git
-worktree — i.e. a worker process that emits a candidate diff), and merged into `main` **only if your build
-and tests pass**. One binary, one config file, git only — no database, no broker, no LLM coordinator.
+It is a merge queue whose author happens to be a language model — Bors for AI agents. One static binary,
+one config file, git only: no database, no broker, no service to run.
 
-There is no planner: a Goal becomes exactly one Task. The graph grows only when a **Worker itself** decides
-its Task is too large and emits subtasks (emergent decomposition, [ADR 007](docs/design/adr/007-emergent-decomposition-and-graph-governor.md)) —
+```
+$ aoa goal "add table-driven tests for parseUsage"
+$ aoa run
+
+  [merged  ] g-45973ca0-impl  (attempts=2 tokens=606,669)
+  total: tokens=606,669  wall=343.7s
+  all work settled
+```
+
+That run is real: the agent's first attempt failed, the retry passed the full test suite, and `main` was
+green afterwards. See [the receipts](#why-this-is-different--the-receipts).
+
+---
+
+## Quick Start
+
+**Prerequisites:** Go **1.26.4+** (see [`go.mod`](go.mod)) and `git`. Nothing else — the default backend
+runs offline with no API key.
+
+> The repository is currently **private**, so `go install …@latest` and the Releases page work only for
+> accounts with access. Clone and build:
+
+```bash
+git clone https://github.com/bharadwaj6/ageOfAgents.git && cd ageOfAgents
+make install          # puts `aoa` in $GOBIN (or $GOPATH/bin)
+# or, without touching your PATH:
+go build -o aoa ./cmd/aoa
+```
+
+Now run the whole loop offline, in about ten seconds:
+
+```bash
+aoa init --path ./workspace --repo ./demo     # scaffolds a demo git repo + aoa.toml
+aoa goal --path ./workspace "add a greeting function"
+aoa run  --path ./workspace
+```
+
+```
+goal g-acedd614: add a greeting function
+  graph g-acedd614: tickets=1 depth=0 fan-out=0
+
+  [merged  ] g-acedd614-impl  (attempts=1 tokens=0)
+
+total: tokens=0  wall=0.9s
+all work settled
+```
+
+Then look at what happened:
+
+```bash
+aoa status --path ./workspace                 # goals, tasks, tokens, cost, "needs human" handoffs
+aoa events --path ./workspace tail --count 10 # the Event Log every bit of that state came from
+```
+
+**What the demo actually proved.** The default `backend = "mock"` is a *fixture, not a tiny model*: it
+writes one placeholder file named after the Task. So the demo ends with a `g-….txt` committed to `main` —
+that is the point. It exercises the real machinery (isolated worktree → your Gate → serialized merge → the
+Event Log) end to end with no network and no cost. Swap in a real backend below to get real code.
+
+### Use it on your own repo
+
+```bash
+aoa init --path ./workspace --adopt /path/to/your/repo   # stays on its current branch; Gate auto-detected
+```
+
+`aoa` never provisions your test environment — it runs the Gate you configure, on the machine you run it
+on. Edit `verify` in `workspace/aoa.toml` if the auto-detected one is wrong.
+
+### Pick a backend
+
+Set `backend` in `aoa.toml`:
+
+| `backend` | Needs | Notes |
+|---|---|---|
+| `mock` | nothing | the offline fixture; every hermetic test runs on it |
+| `grok` | the `grok` CLI on `$PATH` (local grok.com login, **no API key**) | **used to verify the loop end to end**; reports true tokens and cost |
+| `claudecode` | the `claude` CLI on `$PATH`, authenticated | real CLI harness; reports true tokens and cost |
+| `openai` | `OPENAI_API_KEY` | native HTTP, no CLI. **Not verified against the live API** |
+| `anthropic` | `ANTHROPIC_API_KEY` | native HTTP, no CLI. **Not verified against the live API** |
+
+A missing CLI is caught at startup, not after your retry budget is spent.
+
+> **Security:** an agent backend runs commands the model chooses, on your machine, with your permissions.
+> `sandbox = "docker"` isolates the **Gate**, not the agent. Read [`SECURITY.md`](SECURITY.md) before
+> pointing a real backend at anything you care about.
+
+## How it works
+
+```mermaid
+flowchart LR
+    Goal(["Goal"]) --> Log[("Event Log<br/>(append-only JSONL)")]
+    Log -.->|replay| Sched{"Scheduler<br/>(deterministic Go)"}
+    Sched -->|append| Log
+    Sched ==>|dispatch| W[["Worker<br/>(agent in an isolated worktree)"]]
+    W -->|candidate diff| Log
+    Sched ==>|drive| MQ[/"Merge Queue<br/>verify → merge → roll back"\]
+    MQ -->|your build + tests| Main(["main, always green"])
+```
+
+A Goal becomes a Task, dispatched to a Worker in its own git worktree. The Worker emits a *candidate diff*;
+the Merge Queue merges it, runs your Gate against the **post-merge** state, and keeps it only if the Gate
+passes — otherwise `main` is reset. Everything is an event; all state is a replay of the log, so crash
+recovery, audit and every metric come for free.
+
+There is no planner: a Goal becomes exactly **one** Task. The graph grows only when a Worker decides its
+own Task is too large and emits subtasks ([ADR 007](docs/design/adr/007-emergent-decomposition-and-graph-governor.md)) —
 deliberately, because a deterministic control plane has no business guessing at decomposition.
+
+## Where to go next
+
+| If you want to… | Read |
+|---|---|
+| a step-by-step tutorial | [`docs/getting-started.md`](docs/getting-started.md) |
+| every `aoa.toml` field, with defaults | [`docs/config-reference.md`](docs/config-reference.md) |
+| a worked config for a real repo | [`examples/`](examples/) |
+| run it on a schedule (cron, systemd, Actions) | [`docs/scheduling.md`](docs/scheduling.md) |
+| contribute a change | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| understand the design | [`docs/design/architecture.md`](docs/design/architecture.md) + the [ADRs](docs/design/adr/) |
+
+---
+
+## Configuration (`aoa.toml`)
+
+```toml
+repo                = "./demo"          # git repository for agents to work on
+backend             = "mock"            # "mock" (offline) | "openai" | "anthropic" | "claudecode" | "grok"
+concurrency         = 4                 # max Workers running at once
+max_attempts        = 2                 # retries before a Task fails
+best_of_n           = 1                 # concurrent attempts per Task; the Gate picks the winner
+conventions_file    = "CONVENTIONS.md"  # coding rules injected into every agent prompt
+require_approval     = false            # if true, park each verified proposal for `aoa approve`
+max_tokens_per_goal = 0                 # spend governor: per-goal token ceiling (0 = unlimited)
+max_usd_per_goal    = 0                 # spend governor: per-goal $ ceiling (needs [pricing])
+retry_backoff       = "0s"              # wait before re-dispatching a failed Task (grows per attempt)
+crash_loop_threshold = 3                # give up after N identical failures, even under max_attempts
+stall_timeout       = "2m"              # no-progress timeout before a Worker is restarted
+agent_timeout       = "30m"             # hard ceiling on one agent attempt (bounds runtime, not silence)
+max_passes          = 1000              # hard cap on reconcile passes in one run
+max_graph_depth     = 5                 # graph governor: emergent decomposition depth
+max_tickets_per_goal = 64               # graph governor: total Tasks one Goal may spawn
+max_fan_out         = 8                 # graph governor: children per decomposition
+sandbox             = ""                # "" (host) | "docker" — how the Gate's commands are isolated
+sandbox_image       = ""                # image for sandbox="docker" (default golang:1.26; set for non-Go gates)
+verify = [                              # the Gate — nothing merges unless this passes
+  ["go", "build", "./..."],
+  ["go", "test", "./..."],
+]
+regression_verify = []                  # optional broader set; measures the regression-escape rate
+                                        # (never blocks a merge — see docs/design/metrics.md)
+
+[pricing]                               # optional: $ per *million* tokens, by model — powers cost columns
+# claudecode = 15.0
+```
+
+Every field, with defaults and when to set it, is in the [configuration reference](docs/config-reference.md);
+a worked config and copy-paste runbook are in [`examples/`](examples/).
+
+## Commands
+
+| Command | What it does |
+|---------|--------------|
+| `aoa init [--repo \| --adopt PATH] [--force]` | Scaffold a demo, or adopt your own repo (Gate auto-detected); `--force` overwrites an existing `aoa.toml` |
+| `aoa goal "…"` | Submit a Goal |
+| `aoa run [--once\|--interval D] [--otel\|--otel-live]` | Run the Scheduler (reconciles to settled, then exits `0`; `--once` for a single pass, `--interval` to keep going on a cadence). Safe to re-run any time — see [scheduling](docs/scheduling.md) |
+| `aoa status [--watch]` | Goals, Task states, per-ticket tokens, run cost, and a "needs human" handoff for failures |
+| `aoa amend <goal> "…"` | Append steering guidance to a Goal mid-run (future dispatches pick it up; ADR — `GoalAmended`) |
+| `aoa approve \| reject <ticket>` | Decide a proposal parked by the approval gate (ADR 008) |
+| `aoa events tail [--count N] \| replay` (`aoa feed` = deprecated alias) | Inspect the Event Log |
+| `aoa diagnose [--json]` | MAST-style failure-mode histogram for a run |
+| `aoa eval --tasks T [--price-file F] [--max-cost $] [--otel]` | Run end-to-end eval tasks; per-task success, tokens, `$` (with a cost ceiling), MAST |
+| `aoa bench [--json]` | The hermetic coordination benchmark |
+| `aoa serve [--port N] [--secret S]` | GitHub webhook server: an `@aoa <goal>` issue comment queues a Goal. See [scheduling](docs/scheduling.md) |
+| `aoa otel export` · `aoa run --otel[-live]` | Replay the Event Log to OTLP traces + metrics — post-hoc, or `--otel-live` to stream live (any OpenTelemetry backend) |
+| `aoa version` | Print the build version, commit and date |
+
+Every subcommand takes `--path DIR` (default `.`) and `--help`. Flags come **before** positional text:
+`aoa goal --path ./ws "do the thing"`, not the other way round.
 
 ## Why this is different — the receipts
 
@@ -71,22 +242,18 @@ boring distributed-systems core, with proofs attached:
 > repo's existing tests and recovering on retry. That is the mechanism working, at a cost of one extra
 > attempt. It is not yet evidence that the Gate changes outcomes; two instances support no rate.
 
-## What it aims to be
+## Core Concepts
 
-The thesis: **verification, not intelligence, is the scaling constraint for agentic coding.** Most agent
-frameworks chase orchestration cleverness (role hierarchies, debate, consensus) — exactly the part that
-better models erode. `aoa` bets the opposite way: keep scheduling, state, merge, and done-ness as plain
-deterministic Go gated on objective signals (your build, your tests, the compiler), and let the LLM only
-ever emit a *candidate diff* that the Gate, not the agent, decides on. Better models then only sharpen the
-worker; the control plane is unchanged.
-
-The goal is to be a **tool engineers use daily on real repositories** — not a demo. That means: correct
-by construction (done), cost-bounded and observable so you can run it on real money and see what happened
-(done), adoptable into an existing project in minutes (done), and **empirically validated at scale** —
-which is the part still outstanding. The eval harness runs end-to-end against SWE-bench Lite through the
-official Docker scorer, but no run so far has had the Gate switched on, so the central claim is untested.
-Closing that is the next milestone, not a finished one.
-
+| Concept | What it is |
+|---|---|
+| **Goal** | What you want done, in plain English |
+| **Task** | A single piece of work derived from a Goal |
+| **Worker** | An AI agent working on one Task in an isolated git worktree |
+| **Event Log** | An append-only file that records everything that happens — the single source of truth |
+| **Scheduler** | The deterministic loop that reads the Event Log, finds ready work, and dispatches Workers |
+| **Gate** | Your build + test commands (e.g. `go build`, `go test`) that every change must pass |
+| **Merge Queue** | Runs the Gate on each Worker's output; only passing code reaches `main` |
+| **Backend** | The AI engine Workers use — `mock` for offline testing, `claudecode` for real work |
 
 ## Roadmap
 
@@ -103,154 +270,6 @@ Looking forward, the high-level roadmap and long-term items include:
 3. **A `$` Governor in the Control Plane:** The orchestrator currently has a *token* spend governor and a circuit breaker for eval loops. A true cross-run *dollar* circuit breaker is a planned follow-up.
 4. **Cross-Repo Dependency Management:** Currently, `aoa` handles tasks within a single repository workspace. Future enhancements will allow the orchestrator to manage goals spanning multiple repositories, orchestrating atomic merges across microservices.
 5. **Deferred Research Bets:** Speculative/batched merge with an adaptive window, best-of-N with the test suite as verifier, and SPRT early-stopping for live evals. These will be A/B tested against our SWE-bench baseline to measure their impact.
-
-## Core Concepts
-
-| Concept | What it is |
-|---|---|
-| **Goal** | What you want done, in plain English |
-| **Task** | A single piece of work derived from a Goal |
-| **Worker** | An AI agent working on one Task in an isolated git worktree |
-| **Event Log** | An append-only file that records everything that happens — the single source of truth |
-| **Scheduler** | The deterministic loop that reads the Event Log, finds ready work, and dispatches Workers |
-| **Gate** | Your build + test commands (e.g. `go build`, `go test`) that every change must pass |
-| **Merge Queue** | Runs the Gate on each Worker's output; only passing code reaches `main` |
-| **Backend** | The AI engine Workers use — `mock` for offline testing, `claudecode` for real work |
-
-## How It Works
-
-```
-1. You submit a Goal        →  "Add a greeting function"
-2. The Scheduler creates    →  Tasks (with dependency ordering)
-3. Workers execute          →  Each in its own isolated git worktree
-4. The Gate verifies        →  Your build + tests must pass
-5. The Merge Queue lands    →  Only verified code reaches main
-```
-
-Everything is recorded in the Event Log. State is rebuilt by replaying it — crash recovery, audit trails, and debugging come for free.
-
-## Quick Start
-
-### 1. Install the CLI
-
-Clone it and build (the repository is currently **private**, so `go install
-github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest` and the
-[Releases](https://github.com/bharadwaj6/ageOfAgents/releases) page only work for accounts with access —
-`make install` from a clone puts the binary on your `$PATH`):
-
-```bash
-git clone https://github.com/bharadwaj6/ageOfAgents.git
-cd ageOfAgents
-go build -o aoa ./cmd/aoa
-```
-
-### 2. Create a workspace
-
-```bash
-./aoa init --path ./workspace --repo ./demo      # scaffold a demo repo to try it out
-# — or — adopt your own repo (on whatever branch it's on), Gate auto-detected:
-./aoa init --path . --adopt /path/to/my-repo
-```
-
-`--repo` scaffolds a throwaway demo; `--adopt` points `aoa` at an existing repository as-is (no files
-written into your tree) and sniffs a starting Gate from the project (`go.mod` → `go build`/`go test`,
-`package.json` → `npm test`, Python → `pytest`, `Makefile` → `make test`). Either way you get an
-`aoa.toml` config and an Event Log under `.aoa/`.
-
-### 3. Submit a Goal
-
-```bash
-./aoa goal --path ./workspace "Add a greeting function"
-```
-
-### 4. Run the Scheduler
-
-```bash
-./aoa run --path ./workspace
-```
-
-By default the `mock` Backend runs everything offline — no API keys, no cost. It is a **fixture, not a
-tiny model**: it writes a placeholder file named after the Task and nothing else. So the demo above ends
-with a `g-….txt` committed to `main`. That is the point — it proves the machinery (worktree → Gate →
-serialized merge) end to end with no network. For actual code, set a real `backend` below.
-
-### 5. See what happened
-
-```bash
-./aoa status --path ./workspace       # Goals + Task states
-./aoa events --path ./workspace tail  # The Event Log
-```
-
-### Using a real AI agent
-
-Edit `aoa.toml` in your workspace:
-
-```toml
-backend = "grok"
-```
-
-Then run `./aoa run` again.
-
-| `backend` | Needs | Status |
-|---|---|---|
-| `mock` | nothing | the offline fixture; every hermetic test runs on it |
-| `grok` | the `grok` CLI on `$PATH` (local grok.com login, **no API key**) | **the one used to verify the loop end to end**; reports true tokens and cost from the CLI's JSON output |
-| `claudecode` | the `claude` CLI on `$PATH`, authenticated | real CLI harness; reports true tokens and cost from the CLI's JSON output |
-| `openai` | `OPENAI_API_KEY` | native HTTP, no CLI. Reports real tokens. **Not verified against the live API** |
-| `anthropic` | `ANTHROPIC_API_KEY` | native HTTP, no CLI. Reports real tokens. **Not verified against the live API** |
-
-A missing CLI is caught at startup, not after the retry budget is spent.
-## Configuration (`aoa.toml`)
-
-```toml
-repo                = "./demo"          # git repository for agents to work on
-backend             = "mock"            # "mock" (offline) | "openai" | "anthropic" | "claudecode" | "grok"
-concurrency         = 4                 # max Workers running at once
-max_attempts        = 2                 # retries before a Task fails
-best_of_n           = 1                 # concurrent attempts per Task; the Gate picks the winner
-conventions_file    = "CONVENTIONS.md"  # coding rules injected into every agent prompt
-require_approval     = false            # if true, park each verified proposal for `aoa approve`
-max_tokens_per_goal = 0                 # spend governor: per-goal token ceiling (0 = unlimited)
-max_usd_per_goal    = 0                 # spend governor: per-goal $ ceiling (needs [pricing])
-retry_backoff       = "0s"              # wait before re-dispatching a failed Task (grows per attempt)
-crash_loop_threshold = 3                # give up after N identical failures, even under max_attempts
-stall_timeout       = "2m"              # no-progress timeout before a Worker is restarted
-agent_timeout       = "30m"             # hard ceiling on one agent attempt (bounds runtime, not silence)
-max_passes          = 1000              # hard cap on reconcile passes in one run
-max_graph_depth     = 5                 # graph governor: emergent decomposition depth
-max_tickets_per_goal = 64               # graph governor: total Tasks one Goal may spawn
-max_fan_out         = 8                 # graph governor: children per decomposition
-sandbox             = ""                # "" (host) | "docker" — how the Gate's commands are isolated
-sandbox_image       = ""                # image for sandbox="docker" (default golang:1.26; set for non-Go gates)
-verify = [                              # the Gate — nothing merges unless this passes
-  ["go", "build", "./..."],
-  ["go", "test", "./..."],
-]
-regression_verify = []                  # optional broader set; measures the regression-escape rate
-                                        # (never blocks a merge — see docs/design/metrics.md)
-
-[pricing]                               # optional: $ per *million* tokens, by model — powers cost columns
-# claudecode = 15.0
-```
-
-Every field, with defaults and when to set it, is in the [configuration reference](docs/config-reference.md);
-a worked config and copy-paste runbook are in [`examples/`](examples/).
-
-## Commands
-
-| Command | What it does |
-|---------|--------------|
-| `aoa init [--repo \| --adopt PATH]` | Scaffold a demo, or adopt your own repo (Gate auto-detected) |
-| `aoa goal "…"` | Submit a Goal |
-| `aoa run [--once\|--interval D] [--otel\|--otel-live]` | Run the Scheduler (reconciles to settled, then exits `0`; `--once` for a single pass, `--interval` to keep going on a cadence). Safe to re-run any time — see [scheduling](docs/scheduling.md) |
-| `aoa status [--watch]` | Goals, Task states, per-ticket tokens, run cost, and a "needs human" handoff for failures |
-| `aoa amend <goal> "…"` | Append steering guidance to a Goal mid-run (future dispatches pick it up; ADR — `GoalAmended`) |
-| `aoa approve \| reject <ticket>` | Decide a proposal parked by the approval gate (ADR 008) |
-| `aoa events tail [--count N] \| replay` (`aoa feed` = deprecated alias) | Inspect the Event Log |
-| `aoa diagnose [--json]` | MAST-style failure-mode histogram for a run |
-| `aoa eval --tasks T [--price-file F] [--max-cost $] [--otel]` | Run end-to-end eval tasks; per-task success, tokens, `$` (with a cost ceiling), MAST |
-| `aoa bench [--json]` | The hermetic coordination benchmark |
-| `aoa otel export` · `aoa run --otel[-live]` | Replay the Event Log to OTLP traces + metrics — post-hoc, or `--otel-live` to stream live (any OpenTelemetry backend) |
 
 ## Project Layout
 
@@ -296,7 +315,7 @@ The `mock` Backend makes the full loop hermetic and offline in tests. Real agent
 - [`docs/design/loop_engineering.md`](docs/design/loop_engineering.md) — how `aoa` scores against the loop-engineering model, and what it refuses
 - [`docs/integrations/`](docs/integrations/README.md) — OpenTelemetry/OTLP (Honeycomb, etc.) + agent backends
 - [`examples/`](examples/) — a copy-paste runbook for adopting your own repo
-- [`docs/design/getting_started.md`](docs/design/getting_started.md) — step-by-step tutorial
+- [`docs/getting-started.md`](docs/getting-started.md) — step-by-step tutorial
 - [`docs/design/live_eval.md`](docs/design/live_eval.md) — running aoa with a real agent (smoke test + SWE-bench)
 - [`docs/design/adr/`](docs/design/adr/) — architecture decision records
 - [`docs/design/metrics.md`](docs/design/metrics.md) — success metrics

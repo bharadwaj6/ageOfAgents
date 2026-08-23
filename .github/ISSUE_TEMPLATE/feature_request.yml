@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a change to what aoa does
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `aoa` is deliberately narrow. Before proposing, please skim the
+        [ADRs](../../tree/main/docs/design/adr) — several ideas are already
+        recorded as **decided against** (multi-agent voting, debate, an LLM coordinator, role
+        hierarchies, agent-to-agent messaging). A proposal that reverses one of those is welcome, but it
+        needs to argue with the ADR.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to do today? Describe the situation, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like instead
+    validations:
+      required: true
+  - type: textarea
+    id: adr
+    attributes:
+      label: Does this contradict an existing ADR?
+      description: If so, which one, and why should it change?

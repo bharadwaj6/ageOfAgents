@@ -50,7 +50,7 @@ others are assessed from each system's documented architecture and may change as
 
 - **Gastown.** Its engineering core is sound distributed systems in disguise (event-sourced ledger,
   serializing merge queue, supervision tree, failure detector — see `docs/history/gastown_arch.md` and
-  `docs/claude.md`). `aoa` keeps exactly those load-bearing primitives and **deletes the org-chart layer**:
+  `docs/research/claude-report.md`). `aoa` keeps exactly those load-bearing primitives and **deletes the org-chart layer**:
   the personas (Mayor/Witness/Deacon/Polecats) are an anthropomorphic mapping of human-org limits onto
   aligned agents, and they put *LLMs in the coordination path* — which is where Gastown's reported chaos
   ($100/hr, auto-merged failing tests) comes from: a control failure, an under-strict gate. `aoa` makes
@@ -123,5 +123,5 @@ construction; the live numbers measure efficacy. We do not fold one into the oth
   failure (coordination/verification/idempotency), `aoa` holds invariants the others do not guarantee, and
   it does so *provably and hermetically*.
 - The competitor columns are **architectural assessments**, not measurements, and those systems move fast
-  (Gastown especially — see `docs/claude.md` caveats). Treat them as "what the design implies," to be
+  (Gastown especially — see `docs/research/claude-report.md` caveats). Treat them as "what the design implies," to be
   revised against live evidence if/when we run it.

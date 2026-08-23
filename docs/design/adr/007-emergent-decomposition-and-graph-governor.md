@@ -51,7 +51,7 @@ complete (a failed dep, or a decomposed subtree containing a dead descendant), s
   histories and is how the duplicate-key phantom-child liveness bug was found and fixed.
 
 ## Research basis
-LATTE emergent task graphs (`docs/gemini.md`); MAST's Step-Repetition (15.7%) → idempotency keys
-(`docs/claude.md`); the distributed-systems framing of failure/liveness guards (`docs/claude.md`).
+LATTE emergent task graphs (`docs/research/gemini.md`); MAST's Step-Repetition (15.7%) → idempotency keys
+(`docs/research/claude-report.md`); the distributed-systems framing of failure/liveness guards (`docs/research/claude-report.md`).
 Builds directly on ADR 001 (event-sourced truth), ADR 003 (flat deterministic Scheduler), and ADR 006
 (emergent graph + blackboard).
