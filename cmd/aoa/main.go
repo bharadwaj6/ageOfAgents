@@ -610,20 +610,43 @@ func cmdFeed(args []string) error {
 	return cmdEvents(append([]string{"tail", "--count", "0"}, args...))
 }
 
-func cmdEvents(args []string) error {
-	// Strip the subcommand before parsing. Go's flag package stops at the first
-	// non-flag argument, so parsing first made `aoa events tail --count 5`
-	// silently ignore --count and always print the default 20 — the very form
-	// the README documents. cmdOtel already does it in this order.
-	sub := "tail"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		sub, args = args[0], args[1:]
+// parseWithSubcommand parses flags that may appear on either side of a
+// positional subcommand, returning the subcommand (or def if absent).
+//
+// Go's flag package stops at the first non-flag argument, so a single Parse
+// handles at most one of `aoa events tail --count 5` and
+// `aoa events --path DIR tail --count 5`. Both are documented, and before this
+// both silently dropped --count and printed the default 20. Parsing in a loop —
+// consume flags, take the first positional, continue after it — accepts either.
+func parseWithSubcommand(fs *flag.FlagSet, args []string, def string) (string, error) {
+	sub := ""
+	for {
+		if err := fs.Parse(args); err != nil {
+			return "", err
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		if sub == "" {
+			sub = fs.Arg(0)
+		} else if fs.Arg(0) != sub {
+			return "", fmt.Errorf("unexpected argument %q", fs.Arg(0))
+		}
+		args = fs.Args()[1:]
 	}
+	if sub == "" {
+		sub = def
+	}
+	return sub, nil
+}
+
+func cmdEvents(args []string) error {
 	fs := flag.NewFlagSet("events", flag.ExitOnError)
 	path := fs.String("path", ".", "workspace root")
 	count := fs.Int("count", 20, "number of events for tail (0 = all)")
 	typ := fs.String("type", "", "filter by event type")
-	if err := fs.Parse(args); err != nil {
+	sub, err := parseWithSubcommand(fs, args, "tail")
+	if err != nil {
 		return err
 	}
 	ws, err := openWorkspace(*path)

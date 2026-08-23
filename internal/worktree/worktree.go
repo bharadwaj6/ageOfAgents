@@ -58,7 +58,13 @@ func InitRepo(ctx context.Context, dir string) (*Repo, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create repo dir: %w", err)
 	}
-	if _, err := git(ctx, dir, "init", "-b", DefaultBranch); err != nil {
+	// --template= (empty) keeps the user's global init.templateDir out of a repo
+	// that aoa itself creates. Otherwise their hooks land in it: a post-commit
+	// that forks a background indexer races teardown, and — worse — a failing
+	// pre-commit hook rejects every agent commit, surfacing as the useless
+	// "agent produced no changes". An adopted repo keeps its own hooks; those
+	// are the user's and legitimately apply.
+	if _, err := git(ctx, dir, "init", "--template=", "-b", DefaultBranch); err != nil {
 		return nil, err
 	}
 	readme := filepath.Join(dir, "README.md")
