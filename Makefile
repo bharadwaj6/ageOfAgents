@@ -8,7 +8,7 @@ TLA2TOOLS ?= tla2tools.jar
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-short race vet fmt fmt-check check bench chaos smoke formal clean
+.PHONY: help build install test test-short race vet fmt fmt-check check bench chaos smoke formal clean
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -37,6 +37,9 @@ fmt-check: ## Fail if any Go file is not gofmt-clean
 	if [ -n "$$out" ]; then echo "gofmt needed for:"; echo "$$out"; exit 1; fi
 
 check: build vet test fmt-check ## Full pre-commit gate (build + vet + test + gofmt)
+
+install: ## Build and install the aoa binary into $(GOBIN) (or $(GOPATH)/bin)
+	$(GO) install ./cmd/aoa
 
 bench: build ## Run the hermetic coordination benchmark suite
 	./$(BIN) bench

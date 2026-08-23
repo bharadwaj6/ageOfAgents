@@ -9,10 +9,13 @@ by your Gate, not by the agent. That inverts the usual bet: where most agent fra
 cleverness — which better models erode — `aoa`'s bet is that **verification, not intelligence, is the
 scaling constraint**. Better models only sharpen the worker; the control plane is unchanged.
 
-You give it a **Goal**. It breaks that into **Tasks**, dispatches each to a **Worker** (an agent in an
-isolated git worktree — i.e. a worker process that emits a candidate diff), and merges results into `main`
-**only if your build and tests pass**. One binary, one config file, git only — no database, no broker, no
-LLM coordinator.
+You give it a **Goal**. It becomes a **Task**, dispatched to a **Worker** (an agent in an isolated git
+worktree — i.e. a worker process that emits a candidate diff), and merged into `main` **only if your build
+and tests pass**. One binary, one config file, git only — no database, no broker, no LLM coordinator.
+
+There is no planner: a Goal becomes exactly one Task. The graph grows only when a **Worker itself** decides
+its Task is too large and emits subtasks (emergent decomposition, [ADR 007](docs/design/adr/007-emergent-decomposition-and-graph-governor.md)) —
+deliberately, because a deterministic control plane has no business guessing at decomposition.
 
 ## Why this is different — the receipts
 
@@ -39,6 +42,11 @@ boring distributed-systems core, with proofs attached:
   projection of the log, not hot-path instrumentation (ADR 012). See [`docs/integrations/`](docs/integrations/README.md).
 - **Adoptable and recoverable:** point it at your own repo on any branch (`aoa init --adopt`); on a
   terminal failure it preserves the agent's worktree and hands it back to you (`aoa status`).
+- **It does the job on a real repository.** On 2026-08-23, `aoa` was pointed at a real Go repo with the
+  `grok` backend and asked for a specific missing unit test. It produced a correct, idiomatic,
+  Gate-verified change and merged it on the **first attempt** (105s, one attempt); the full test suite was
+  green post-merge, and re-running on the settled workspace did no work and exited `0`. One task is not a
+  solve-rate — it is the claim that the loop closes end to end, which is the claim this README makes.
 
 > **SWE-bench Lite:** no headline solve-rate, and the reason is worth stating. Every run recorded in
 > `logs/run_evaluation/` (best: 10/11 with `grok`) was produced with **aoa's Gate disabled** — the eval
@@ -71,7 +79,11 @@ Closing that is the next milestone, not a finished one.
 
 ## Roadmap
 
-We've achieved the `v0.1` milestone, bringing dynamic DAG re-evaluation, multi-model fallbacks, log compaction, Docker sandboxing, and native GitHub Actions CI integration.
+`v0.1` brought dynamic DAG re-evaluation, multi-model fallbacks, Docker sandboxing, and native GitHub
+Actions CI integration. Log compaction was **removed** rather than fixed: it rewrote the log to a single
+snapshot that `metrics`, `diagnose`, `otel` and the invariant checker all silently read as zeros, and
+because a snapshot carries no attempt history, that is not fixable — a compacted log and replay-derived
+metrics are mutually exclusive. Replay won.
 
 Looking forward, the high-level roadmap and long-term items include:
 
@@ -110,7 +122,9 @@ Everything is recorded in the Event Log. State is rebuilt by replaying it — cr
 
 ### 1. Install the CLI
 
-Download the latest binary for your OS from the [GitHub Releases](https://github.com/bharadwaj6/ageOfAgents/releases) page, or build it yourself:
+Download the latest binary for your OS from the [GitHub Releases](https://github.com/bharadwaj6/ageOfAgents/releases)
+page, install it with Go (`go install github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest`, or `make install`
+from a clone), or build it yourself:
 
 ```bash
 git clone https://github.com/bharadwaj6/ageOfAgents.git
@@ -143,7 +157,10 @@ written into your tree) and sniffs a starting Gate from the project (`go.mod` �
 ./aoa run --path ./workspace
 ```
 
-By default, the `mock` Backend runs everything offline — no API keys, no cost. Great for trying things out.
+By default the `mock` Backend runs everything offline — no API keys, no cost. It is a **fixture, not a
+tiny model**: it writes a placeholder file named after the Task and nothing else. So the demo above ends
+with a `g-….txt` committed to `main`. That is the point — it proves the machinery (worktree → Gate →
+serialized merge) end to end with no network. For actual code, set a real `backend` below.
 
 ### 5. See what happened
 
@@ -157,10 +174,20 @@ By default, the `mock` Backend runs everything offline — no API keys, no cost.
 Edit `aoa.toml` in your workspace:
 
 ```toml
-backend = "openai"
+backend = "grok"
 ```
 
-Set the `OPENAI_API_KEY` environment variable, then run `./aoa run` again. The Scheduler will dispatch Tasks to a real coding agent natively without requiring external CLIs. You can also use `backend = "anthropic"` (set `ANTHROPIC_API_KEY`, no CLI needed), `"claudecode"`, or `"grok"`.
+Then run `./aoa run` again.
+
+| `backend` | Needs | Status |
+|---|---|---|
+| `mock` | nothing | the offline fixture; every hermetic test runs on it |
+| `grok` | the `grok` CLI on `$PATH` (local grok.com login, **no API key**) | **the one used to verify the loop end to end** — it also reports true token counts and cost via the CLI's JSON output |
+| `claudecode` | the `claude` CLI on `$PATH`, authenticated | real CLI harness; reports no usage, so the `$` governor is inert on it |
+| `openai` | `OPENAI_API_KEY` | native HTTP, no CLI. Reports real tokens. **Not verified against the live API** |
+| `anthropic` | `ANTHROPIC_API_KEY` | native HTTP, no CLI. Reports real tokens. **Not verified against the live API** |
+
+A missing CLI is caught at startup, not after the retry budget is spent.
 ## Configuration (`aoa.toml`)
 
 ```toml
@@ -221,7 +248,7 @@ a worked config and copy-paste runbook are in [`examples/`](examples/).
 | `internal/ledger` | Append-only JSONL Event Log |
 | `internal/state` | Replays events into current state (Task readiness, dependencies) |
 | `internal/orchestrator` | The Scheduler — the single control loop |
-| `internal/agent` | Backend interface + `mock` / `claudecode` / `grok` implementations |
+| `internal/agent` | Backend interface + `mock` / `grok` / `claudecode` / `openai` / `anthropic` |
 | `internal/worktree` | Git worktree management for isolated Worker sandboxes |
 | `internal/verify` | The Gate — runs your verification commands |
 | `internal/mergequeue` | The Merge Queue — verify then merge into `main` |
@@ -230,7 +257,7 @@ a worked config and copy-paste runbook are in [`examples/`](examples/).
 | `internal/bench` · `internal/liveeval` | Hermetic coordination benchmark + end-to-end live eval harness |
 | `internal/config` | `aoa.toml` loading |
 | `cmd/aoa` | CLI entry point |
-| `scripts/` | Helper scripts for sandboxing (gVisor injection) |
+| `scripts/` | Eval + benchmark harnesses (SWE-bench, live smoke, OTLP smoke) |
 
 ## Development
 
