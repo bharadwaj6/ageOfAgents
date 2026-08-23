@@ -16,6 +16,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
 	"github.com/bharadwaj6/ageOfAgents/internal/diagnose"
@@ -92,8 +94,23 @@ func RunTask(ctx context.Context, dir string, t Task, strat Strategy) (Result, e
 		return Result{}, err
 	}
 	gate := verify.Verifier{Commands: []verify.Command{{"true"}}} // fast hermetic gate
-	o := orchestrator.New(led, repo, buildMock(t, strat), mergequeue.New(repo, gate), orchestrator.Options{
-		Concurrency:  4,
+	const concurrency = 4
+	// MaxConcurrentWorkers is measured by replay as the overlap between
+	// WorkStarted and a terminal event. The mock returns in microseconds, so
+	// whether that overlap is *observable* was a race between goroutine start-up
+	// and the worker finishing — the benchmark reported real parallelism only if
+	// the scheduler happened to interleave them. It did so reliably enough while
+	// dispatch blocked on a whole wave, and became flaky on a loaded CI runner
+	// once dispatch stopped waiting.
+	//
+	// rendezvous removes the timing dependence: workers that could run together
+	// wait for each other, so the metric measures the parallelism the graph
+	// allows rather than how fast the machine happened to be. It always releases
+	// on a deadline, so a strategy with no parallelism (Single) still finishes
+	// and still reports 1.
+	backend := &rendezvousBackend{inner: buildMock(t, strat), width: concurrency}
+	o := orchestrator.New(led, repo, backend, mergequeue.New(repo, gate), orchestrator.Options{
+		Concurrency:  concurrency,
 		WorktreeBase: filepath.Join(dir, "wt"),
 	})
 
@@ -123,6 +140,44 @@ func RunTask(ctx context.Context, dir string, t Task, strat Strategy) (Result, e
 		r.Violations = append(r.Violations, v.String())
 	}
 	return r, nil
+}
+
+// rendezvousBackend holds each worker inside Run until either `width` workers
+// are in flight together or a short deadline passes, so concurrency that the
+// task graph permits is actually observable in the Event Log.
+type rendezvousBackend struct {
+	inner *agent.Mock
+	width int
+
+	mu      sync.Mutex
+	waiting []chan struct{}
+}
+
+// rendezvousWait bounds how long a worker waits for peers. It only costs
+// wall-clock when a strategy genuinely cannot fill the pool.
+const rendezvousWait = 150 * time.Millisecond
+
+func (b *rendezvousBackend) Name() string { return b.inner.Name() }
+
+func (b *rendezvousBackend) Run(ctx context.Context, task agent.Task) (agent.Result, error) {
+	b.mu.Lock()
+	ch := make(chan struct{})
+	b.waiting = append(b.waiting, ch)
+	if len(b.waiting) >= b.width {
+		for _, c := range b.waiting {
+			close(c)
+		}
+		b.waiting = nil
+	}
+	b.mu.Unlock()
+
+	select {
+	case <-ch:
+	case <-time.After(rendezvousWait):
+	case <-ctx.Done():
+		return agent.Result{}, ctx.Err()
+	}
+	return b.inner.Run(ctx, task)
 }
 
 // buildMock configures the deterministic Backend so the worker decomposes (or
