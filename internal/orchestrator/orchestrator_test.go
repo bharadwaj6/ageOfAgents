@@ -1092,3 +1092,54 @@ func TestRestartedAttemptCarriesItsReasonForward(t *testing.T) {
 		t.Errorf("SameFailCount = %d; identical repeated failures must accumulate", tk.SameFailCount)
 	}
 }
+
+// A ledger append failure inside decompose used to vanish: the bare `return` on
+// loadState, and three `_ = o.emit(...)`, meant the agent's tokens were spent,
+// its decomposition was dropped, and the ticket stayed claimed-and-running
+// forever — recoverable only by the Stall Detector. The recordDispatchErr
+// machinery existed by then; it just hadn't been applied here.
+func TestDecomposeSurfacesLedgerFailures(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions would not deny the write")
+	}
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	o, h := setup(t, agent.NewMock(), pass, Options{Concurrency: 1})
+	h.submitGoal(t, "g1", "split me")
+
+	// A readable-but-unwritable ledger: Read still folds state, Append fails.
+	ledgerPath := filepath.Join(h.base, "events.jsonl")
+	require.NoError(t, os.Chmod(ledgerPath, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(ledgerPath, 0o644) })
+
+	o.decompose(
+		dispatchJob{ticketID: "g1-impl", goalID: "g1", title: "t"},
+		"worker/g1-impl",
+		[]agent.Subtask{{LocalID: "a", Title: "first"}},
+		100, "m",
+	)
+
+	if err := o.takeDispatchErr(); err == nil {
+		t.Fatal("decompose swallowed a ledger append failure")
+	}
+}
+
+// Same for the rejection path: a parent whose decomposition is refused must not
+// be left running because the TicketFailed append was dropped.
+func TestFailDecomposeSurfacesLedgerFailures(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions would not deny the write")
+	}
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	o, h := setup(t, agent.NewMock(), pass, Options{Concurrency: 1})
+	h.submitGoal(t, "g1", "split me")
+
+	ledgerPath := filepath.Join(h.base, "events.jsonl")
+	require.NoError(t, os.Chmod(ledgerPath, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(ledgerPath, 0o644) })
+
+	o.failDecompose(dispatchJob{ticketID: "g1-impl", goalID: "g1"}, "worker/g1-impl", "would cycle")
+
+	if err := o.takeDispatchErr(); err == nil {
+		t.Fatal("failDecompose swallowed a ledger append failure")
+	}
+}

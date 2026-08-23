@@ -13,6 +13,13 @@ import (
 	"time"
 )
 
+// OpenAI drives an OpenAI-compatible Chat Completions endpoint directly over
+// HTTP — no CLI, no vendor SDK (AGENTS.md rule 6). It runs a bounded agentic
+// loop giving the model two tools, `bash` and `finish`, and returns the
+// transcript plus the provider's own token count.
+//
+// The same type backs every `[backends.X] type = "openai_compatible"` plugin;
+// only BaseURL, Model and APIKeyEnv differ.
 type OpenAI struct {
 	name      string
 	Model     string
@@ -20,6 +27,8 @@ type OpenAI struct {
 	APIKeyEnv string
 }
 
+// NewOpenAI returns the backend pointed at OpenAI's public endpoint,
+// authenticated from OPENAI_API_KEY.
 func NewOpenAI() *OpenAI {
 	return &OpenAI{
 		name:      "openai",
@@ -29,6 +38,9 @@ func NewOpenAI() *OpenAI {
 	}
 }
 
+// NewOpenAICompatible returns the backend pointed at any OpenAI-compatible
+// endpoint under a caller-chosen name. Empty arguments fall back to the OpenAI
+// defaults, so a plugin need only override what actually differs.
 func NewOpenAICompatible(name, model, baseURL, apiKeyEnv string) *OpenAI {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1/chat/completions"
@@ -42,6 +54,7 @@ func NewOpenAICompatible(name, model, baseURL, apiKeyEnv string) *OpenAI {
 	return &OpenAI{name: name, Model: model, BaseURL: baseURL, APIKeyEnv: apiKeyEnv}
 }
 
+// Name implements Backend.
 func (o *OpenAI) Name() string { return o.name }
 
 type openAIMessage struct {
@@ -81,6 +94,9 @@ type openAIResponse struct {
 	} `json:"usage"`
 }
 
+// Run implements Backend: it builds a prompt and drives the tool loop until the
+// model calls `finish` or the iteration cap is reached, with the worktree as the
+// working directory for every `bash` call.
 func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 	apiKey := os.Getenv(o.APIKeyEnv)
 	if apiKey == "" {

@@ -43,6 +43,9 @@ func main() {
 	args := os.Args[2:]
 	var err error
 	switch os.Args[1] {
+	case "version", "--version", "-v":
+		fmt.Println(versionString())
+		return
 	case "init":
 		err = cmdInit(args)
 	case "goal":
@@ -104,7 +107,35 @@ Usage:
   aoa otel export [--path DIR]            Replay the Event Log to OTLP traces + metrics
   aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
   aoa reject  [--path DIR] <ticket-id>    Reject a parked proposal (require_approval)
+  aoa version                             Print the build version
+
+New here? This runs entirely offline on a scaffolded demo repo:
+  aoa init --path ./workspace --repo ./demo
+  aoa goal --path ./workspace "add a greeting function"
+  aoa run  --path ./workspace
 `)
+}
+
+// Build metadata. version is overwritten at release time via -ldflags; a binary
+// built any other way reports "dev" rather than claiming a version it isn't.
+var (
+	version = "dev"
+	commit  = ""
+	date    = ""
+)
+
+// versionString renders the build for `aoa version`. Without this every
+// published binary was unable to say which build it was.
+func versionString() string {
+	s := "aoa " + version
+	if commit != "" {
+		s += " (" + commit
+		if date != "" {
+			s += ", " + date
+		}
+		s += ")"
+	}
+	return s
 }
 
 // workspace resolves the standard paths for a workspace root.
@@ -733,7 +764,7 @@ func cmdBench(args []string) error {
 func cmdEval(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
 	tasksPath := fs.String("tasks", "", "path to a TOML task file")
-	backendName := fs.String("backend", "mock", "agent backend: mock|claudecode")
+	backendName := fs.String("backend", "mock", "agent backend: mock|grok|claudecode|openai|anthropic (or a configured plugin)")
 	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
 	price := fs.Float64("price", 0, "flat USD per million tokens for the $ column (0 = unpriced)")
 	priceFile := fs.String("price-file", "", "TOML [pricing] file (model -> USD/Mtok) for per-model cost")
@@ -777,6 +808,19 @@ func cmdEval(args []string) error {
 	defer os.RemoveAll(base)
 
 	ctx := context.Background()
+	// The between-task --max-cost check below cannot stop a single runaway task,
+	// so hand the per-goal governors to each task's orchestrator too.
+	limits := liveeval.Limits{
+		Concurrency:      cfg.Concurrency,
+		MaxTokensPerGoal: cfg.MaxTokensPerGoal,
+		MaxUsdPerGoal:    cfg.MaxUsdPerGoal,
+		Pricing:          cfg.Pricing,
+		Conventions:      readConventions(".", cfg.ConventionsFile),
+	}
+	if priceMap != nil {
+		limits.Pricing = priceMap
+	}
+
 	reports := make([]liveeval.Report, 0, len(tasks))
 	var spent float64
 	skipped := 0
@@ -789,7 +833,7 @@ func cmdEval(args []string) error {
 			break
 		}
 		dir := filepath.Join(base, fmt.Sprintf("%02d-%s", i, t.Name))
-		rep, err := liveeval.Run(ctx, backend, dir, t)
+		rep, err := liveeval.Run(ctx, backend, dir, t, limits)
 		if err != nil {
 			return fmt.Errorf("%s: %w", t.Name, err)
 		}
@@ -991,6 +1035,20 @@ func printBenchTable(results []bench.Result) {
 
 // --- wiring ---------------------------------------------------------------
 
+// readConventions loads the coding rules injected into every agent prompt.
+// A missing or unreadable file is not an error: conventions are optional, and
+// failing a whole run over them would be worse than running without them.
+func readConventions(root, file string) string {
+	if file == "" {
+		return ""
+	}
+	b, err := os.ReadFile(resolve(root, file))
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger, error) {
 	cfg, err := config.Load(ws.configPath)
 	if err != nil {
@@ -1005,12 +1063,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	if err != nil {
 		return nil, nil, err
 	}
-	conventions := ""
-	if cfg.ConventionsFile != "" {
-		if b, err := os.ReadFile(resolve(ws.root, cfg.ConventionsFile)); err == nil {
-			conventions = string(b)
-		}
-	}
+	conventions := readConventions(ws.root, cfg.ConventionsFile)
 	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage}
 	var backoff time.Duration
 	if cfg.RetryBackoff != "" {

@@ -194,8 +194,8 @@ Then run `./aoa run` again.
 | `backend` | Needs | Status |
 |---|---|---|
 | `mock` | nothing | the offline fixture; every hermetic test runs on it |
-| `grok` | the `grok` CLI on `$PATH` (local grok.com login, **no API key**) | **the one used to verify the loop end to end** — it also reports true token counts and cost via the CLI's JSON output |
-| `claudecode` | the `claude` CLI on `$PATH`, authenticated | real CLI harness; reports no usage, so the `$` governor is inert on it |
+| `grok` | the `grok` CLI on `$PATH` (local grok.com login, **no API key**) | **the one used to verify the loop end to end**; reports true tokens and cost from the CLI's JSON output |
+| `claudecode` | the `claude` CLI on `$PATH`, authenticated | real CLI harness; reports true tokens and cost from the CLI's JSON output |
 | `openai` | `OPENAI_API_KEY` | native HTTP, no CLI. Reports real tokens. **Not verified against the live API** |
 | `anthropic` | `ANTHROPIC_API_KEY` | native HTTP, no CLI. Reports real tokens. **Not verified against the live API** |
 
@@ -221,7 +221,7 @@ max_graph_depth     = 5                 # graph governor: emergent decomposition
 max_tickets_per_goal = 64               # graph governor: total Tasks one Goal may spawn
 max_fan_out         = 8                 # graph governor: children per decomposition
 sandbox             = ""                # "" (host) | "docker" — how the Gate's commands are isolated
-sandbox_image       = ""                # image for sandbox="docker" (default golang:1.22; set for non-Go gates)
+sandbox_image       = ""                # image for sandbox="docker" (default golang:1.26; set for non-Go gates)
 verify = [                              # the Gate — nothing merges unless this passes
   ["go", "build", "./..."],
   ["go", "test", "./..."],

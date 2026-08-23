@@ -107,3 +107,23 @@ func TestEventsFlagsWorkOnEitherSideOfTheSubcommand(t *testing.T) {
 		t.Errorf("bare flags -> sub=%q count=%d err=%v, want tail/7/nil", sub, *count, err)
 	}
 }
+
+// Every published binary used to report nothing about which build it was —
+// there was no version command and no ldflags stamping.
+func TestVersionString(t *testing.T) {
+	if got := versionString(); !strings.HasPrefix(got, "aoa ") {
+		t.Errorf("versionString() = %q, want it to start with the binary name", got)
+	}
+	// Unstamped builds must say "dev", never claim a release they aren't.
+	if version != "dev" {
+		t.Errorf("default version = %q, want \"dev\" so an unstamped build cannot pose as a release", version)
+	}
+
+	old := version
+	defer func() { version, commit, date = old, "", "" }()
+	version, commit, date = "v0.2.0", "abc1234", "2026-08-24"
+	want := "aoa v0.2.0 (abc1234, 2026-08-24)"
+	if got := versionString(); got != want {
+		t.Errorf("stamped versionString() = %q, want %q", got, want)
+	}
+}

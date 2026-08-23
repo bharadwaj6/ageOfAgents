@@ -27,7 +27,13 @@ const maxFailureChars = 2000
 // would fail with "agent produced no changes". acceptEdits auto-approves file
 // edits within the worktree (the worktree is the agent's sandbox; the Gate, not
 // the agent, decides what merges).
-var defaultClaudeArgs = []string{"--permission-mode", "acceptEdits"}
+//
+// `--output-format json` is what makes cost accounting real on this backend.
+// The CLI reports its own true token counts, cost and model id; without it
+// stdout is prose and the only fallback is asking the model to self-report,
+// which produces a confident invented number. A fabricated cost is worse than
+// a missing one.
+var defaultClaudeArgs = []string{"--permission-mode", "acceptEdits", "--output-format", "json"}
 
 // ClaudeCode drives a real coding agent as a subprocess inside the task's
 // worktree. The exact CLI is configurable; by default it invokes
@@ -69,17 +75,66 @@ func (c *ClaudeCode) Run(ctx context.Context, task Task) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("claudecode: %w", err)
 	}
-	tokens, model := parseUsage(out)
+	text, tokens, model := parseClaudeOutput(out)
 	if model == "" {
 		model = c.Name()
 	}
 	return Result{
-		Trace:    strings.TrimSpace(out),
+		Trace:    strings.TrimSpace(text),
 		Summary:  task.Title,
-		Subtasks: parseSubtasks(out),
+		Subtasks: parseSubtasks(text),
 		Tokens:   tokens,
 		Model:    model,
 	}, nil
+}
+
+// claudeEnvelope is the subset of `claude --output-format json` we consume.
+// Deliberately not shared with grokEnvelope: the two CLIs report the same
+// concepts under different names — claude puts the agent's prose in `result`
+// (grok uses `text`) and reports no total at all, so the total has to be summed
+// here. Guessing that the shapes matched would have produced silent zeros.
+type claudeEnvelope struct {
+	Result  string `json:"result"`
+	IsError bool   `json:"is_error"`
+	Usage   struct {
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	} `json:"usage"`
+	ModelUsage map[string]struct {
+		InputTokens  int `json:"inputTokens"`
+		OutputTokens int `json:"outputTokens"`
+	} `json:"modelUsage"`
+}
+
+// total sums every token category the CLI bills for. Cache reads and cache
+// creation are real spend, and including them matches what grok reports as its
+// own `total_tokens`, so the two backends stay comparable.
+func (e claudeEnvelope) total() int {
+	u := e.Usage
+	return u.InputTokens + u.OutputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+}
+
+// parseClaudeOutput pulls the agent's prose, its true token count and the model
+// id out of the CLI's JSON envelope. Output that isn't that JSON (an older CLI,
+// or a future format change) is treated as plain prose, falling back to the
+// optional aoa:usage fence. Reporting zero is honest; inventing a number is not.
+func parseClaudeOutput(out string) (text string, tokens int, model string) {
+	var env claudeEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil || env.Result == "" {
+		tokens, model = parseUsage(out)
+		return out, tokens, model
+	}
+	// modelUsage is keyed by model id. One key is the norm; with several, take
+	// the busiest so the cost lands against the model that did the work.
+	best := -1
+	for id, u := range env.ModelUsage {
+		if n := u.InputTokens + u.OutputTokens; n > best {
+			best, model = n, id
+		}
+	}
+	return env.Result, env.total(), model
 }
 
 // parseUsage extracts token usage from an optional "aoa:usage" fenced block

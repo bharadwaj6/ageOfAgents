@@ -226,10 +226,10 @@ func (r *Repo) Remove(ctx context.Context, w *Worktree) error {
 	if err != nil {
 		return err
 	}
-	// Best-effort branch delete; ignore "not found" after a merge cleanup.
-	if _, err := git(ctx, r.Dir, "branch", "-D", w.Branch); err != nil {
-		// Ignore cleanup error
-	}
+	// Best-effort branch delete; "not found" is normal after a merge cleanup.
+	// Written as an explicit discard rather than an empty if-branch, which reads
+	// as an unfinished thought and is what staticcheck SA9003 flags.
+	_, _ = git(ctx, r.Dir, "branch", "-D", w.Branch)
 	// Best-effort removal of the now-empty worktree base dir, so a run does not
 	// leave behind empty `aoa-worktrees`/`wt` shells. os.Remove only succeeds on an
 	// empty dir, so a base still holding sibling worktrees is left untouched.

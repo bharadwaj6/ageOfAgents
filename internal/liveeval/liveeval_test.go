@@ -37,7 +37,7 @@ func TestRunEndToEndWithMockBackend(t *testing.T) {
 		Success: [][]string{{"test", "-f", "g-eval-impl.txt"}},
 	}
 
-	rep, err := Run(ctx, agent.NewMock(), filepath.Join(base, "ws"), task)
+	rep, err := Run(ctx, agent.NewMock(), filepath.Join(base, "ws"), task, Limits{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRejectedPatchesRecovered(t *testing.T) {
 		MaxAttempts: 1,                     // so the first rejection is terminal
 	}
 
-	rep, err := Run(ctx, agent.NewMock(), filepath.Join(base, "ws"), task)
+	rep, err := Run(ctx, agent.NewMock(), filepath.Join(base, "ws"), task, Limits{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -128,5 +128,53 @@ func TestRejectedPatchesRecovered(t *testing.T) {
 	}
 	if got.TicketID != "g-eval-impl" {
 		t.Errorf("ticket_id = %q, want g-eval-impl", got.TicketID)
+	}
+}
+
+// The eval path is the one designed to spend real money across many instances,
+// and it had no in-run circuit breaker: --max-cost is only checked *between*
+// tasks, so a single runaway task could burn straight past the ceiling. Limits
+// now reach each task's orchestrator.
+func TestRunAppliesTheSpendGovernor(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	if err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+
+	task := Task{
+		Name:    "budget",
+		RepoDir: repo.Dir,
+		Goal:    "produce the marker file",
+		Gate:    [][]string{{"true"}},
+		Success: [][]string{{"test", "-f", "g-eval-impl.txt"}},
+	}
+	// A backend that burns tokens and then produces nothing, so the attempt fails
+	// and the goal is retried. The governor bounds *further* dispatch — it cannot
+	// un-spend an attempt, so a ticket that succeeds first try is never stopped.
+	burner := &agent.Mock{Plan: map[string][]agent.File{"*": {}}, TokensPerTask: 5000}
+
+	rep, err := Run(ctx, burner, filepath.Join(base, "ws"), task, Limits{MaxTokensPerGoal: 100})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Success {
+		t.Error("the goal blew its token ceiling; the run should not report success")
+	}
+	if rep.Metrics.TokensTotal < 5000 {
+		t.Errorf("TokensTotal = %d; the burned attempt should still be charged", rep.Metrics.TokensTotal)
+	}
+
+	// The same backend with no ceiling exhausts its retries instead of being
+	// stopped early — proving the difference above is the governor, not the mock.
+	ungoverned, err := Run(ctx, burner, filepath.Join(base, "ws2"), task, Limits{})
+	if err != nil {
+		t.Fatalf("Run (ungoverned): %v", err)
+	}
+	if ungoverned.Metrics.TokensTotal <= rep.Metrics.TokensTotal {
+		t.Errorf("ungoverned spend %d should exceed governed spend %d",
+			ungoverned.Metrics.TokensTotal, rep.Metrics.TokensTotal)
 	}
 }
