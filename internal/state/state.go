@@ -441,6 +441,18 @@ func (s *State) Apply(e api.Event) error {
 			t.Worker = ""
 			t.Branch, t.Commit, t.Trace = "", "", ""
 			t.LastActivity = e.Timestamp
+			// Carry the failure forward: the next attempt gets to see what went
+			// wrong, and repeated identical failures trip the crash-loop breaker
+			// instead of quietly burning the whole attempt budget.
+			if p.Reason != "" {
+				if p.Reason == t.LastFailReason {
+					t.SameFailCount++
+				} else {
+					t.LastFailReason = p.Reason
+					t.SameFailCount = 1
+				}
+				t.LastFailOutput = p.Reason
+			}
 			s.chargeGoal(t, p.Tokens, p.Model)
 		}
 	case api.TicketInvalidated:

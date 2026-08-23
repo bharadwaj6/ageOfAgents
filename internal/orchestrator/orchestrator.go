@@ -867,16 +867,20 @@ func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, r
 	}
 
 	if isLastWorker && j.attempt >= o.opt.MaxAttempts {
-		_ = o.emit(api.TicketFailed, api.TicketFailedPayload{
+		if err := o.emit(api.TicketFailed, api.TicketFailedPayload{
 			TicketID: j.ticketID, Worker: worker, Reason: reason, Worktree: o.preserveWorktree(j.ticketID),
 			Tokens: u.tokens, Model: u.model,
-		})
+		}); err != nil {
+			o.recordDispatchErr(fmt.Errorf("fail %s: %w", j.ticketID, err))
+		}
 		return
 	}
 	o.cleanupWorktree(ctx, j.ticketID)
-	_ = o.emit(api.WorkerRestarted, api.WorkerRestartedPayload{
-		TicketID: j.ticketID, Worker: worker, Tokens: u.tokens, Model: u.model,
-	})
+	if err := o.emit(api.WorkerRestarted, api.WorkerRestartedPayload{
+		TicketID: j.ticketID, Worker: worker, Reason: reason, Tokens: u.tokens, Model: u.model,
+	}); err != nil {
+		o.recordDispatchErr(fmt.Errorf("restart %s: %w", j.ticketID, err))
+	}
 }
 
 // startHeartbeat appends a Heartbeat for the ticket on an interval until the

@@ -1048,3 +1048,47 @@ func TestCommitMessage(t *testing.T) {
 		})
 	}
 }
+
+// An abandoned attempt used to record nothing about why it failed: the reason
+// reached failAttempt and was dropped on the floor by WorkerRestarted. So the
+// retry re-ran an identical prompt, and crash-loop detection — which keys on
+// repeated identical reasons — could never fire on anything but a Gate
+// rejection, letting an agent that fails the same way every time burn the whole
+// attempt budget.
+func TestRestartedAttemptCarriesItsReasonForward(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	mock := &agent.Mock{FailTitles: map[string]bool{"Implement: explode": true}}
+	o, h := setup(t, mock, pass, Options{Concurrency: 1, MaxAttempts: 3})
+	h.submitGoal(t, "g1", "explode")
+
+	require.NoError(t, o.Run(context.Background()))
+
+	// The reason reaches the log.
+	events, err := h.led.Read()
+	require.NoError(t, err)
+	var restarts int
+	for _, e := range events {
+		if e.Type != api.WorkerRestarted {
+			continue
+		}
+		restarts++
+		var p api.WorkerRestartedPayload
+		require.NoError(t, e.DecodePayload(&p))
+		if p.Reason == "" {
+			t.Error("WorkerRestarted recorded no reason for abandoning the attempt")
+		}
+	}
+	if restarts == 0 {
+		t.Fatal("expected at least one restarted attempt")
+	}
+
+	// And onto the ticket, so the retry prompt and the crash-loop breaker see it.
+	tk := h.state(t).Tickets["g1-impl"]
+	require.NotNil(t, tk)
+	if tk.LastFailReason == "" {
+		t.Error("ticket carries no LastFailReason after an abandoned attempt")
+	}
+	if tk.SameFailCount < 2 {
+		t.Errorf("SameFailCount = %d; identical repeated failures must accumulate", tk.SameFailCount)
+	}
+}
