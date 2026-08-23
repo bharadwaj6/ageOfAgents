@@ -37,8 +37,8 @@ interface (`agent.Backend`, ADR 004); the control plane is identical across back
 | Backend | Needs | Use for |
 |---------|-------|---------|
 | `mock` | nothing (offline, deterministic) | trying `aoa` out, the hermetic test suite, CI |
-| `claudecode` | the `claude` CLI authenticated; network + API cost | real coding work |
-| `grok` | a Grok API key in the environment; network + API cost | real coding work / benchmarking |
+| `claudecode` | the `claude` CLI on `$PATH`, authenticated; network + subscription cost | real coding work |
+| `grok` | the `grok` CLI on `$PATH`, signed in to grok.com — **no API key**; network cost | real coding work / benchmarking |
 | `openai` | `OPENAI_API_KEY` in environment; network + API cost | real coding work natively with OpenAI |
 | `anthropic` | `ANTHROPIC_API_KEY` in environment; network + API cost | real coding work natively with Claude (no CLI) |
 

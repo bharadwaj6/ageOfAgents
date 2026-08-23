@@ -2,7 +2,10 @@ package verify
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -126,5 +129,25 @@ func TestCommandFailureIsAVerdict(t *testing.T) {
 	}
 	if res.Infra {
 		t.Error("a failing command is a verdict on the code, not an infrastructure fault")
+	}
+}
+
+// The default sandbox image must be able to run the default gate. When it fell
+// behind go.mod, every dockerised gate run had to GOTOOLCHAIN-download a newer
+// Go first — slow every time, and a hard failure in a network-restricted
+// container. Reading go.mod keeps the two from drifting again.
+func TestDefaultSandboxImageMatchesGoModToolchain(t *testing.T) {
+	mod, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	m := regexp.MustCompile(`(?m)^go (\d+)\.(\d+)`).FindSubmatch(mod)
+	if m == nil {
+		t.Fatal("no go directive in go.mod")
+	}
+	want := "golang:" + string(m[1]) + "." + string(m[2])
+	if DefaultSandboxImage != want {
+		t.Errorf("DefaultSandboxImage = %q, but go.mod needs %q — an older image "+
+			"forces a toolchain download on every gate run", DefaultSandboxImage, want)
 	}
 }

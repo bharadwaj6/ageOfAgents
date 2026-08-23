@@ -109,7 +109,24 @@ func LoadTasks(path string) ([]Task, error) {
 // workspace under baseDir, then evaluates the Success oracle on the resulting
 // `main`. Metrics, the MAST histogram, and invariant violations are all derived
 // from the run's Event Log.
-func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Report, error) {
+// Limits are the run-wide governors applied to every task's orchestrator. They
+// come from aoa.toml and the CLI, not from the task file, because they bound the
+// operator's wallet rather than describing the benchmark.
+//
+// Without these the eval path — the one designed to spend real money across many
+// instances — had no in-run circuit breaker at all: `--max-cost` is only checked
+// *between* tasks, so a single runaway task could burn past the ceiling
+// unopposed. The zero value keeps the orchestrator's own defaults.
+type Limits struct {
+	Concurrency      int
+	MaxTokensPerGoal int
+	MaxUsdPerGoal    float64
+	Pricing          map[string]float64
+	Conventions      string
+}
+
+// Run executes one eval task end to end and reports what happened.
+func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task, lim Limits) (Report, error) {
 	rep := Report{Task: t.Name, Backend: backend.Name()}
 
 	repo := worktree.OpenRepo(t.RepoDir)
@@ -127,10 +144,18 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 	gate := sandbox(t.Gate)
 	mq := mergequeue.New(repo, gate)
 	mq.Shadow = sandbox(t.Regression)
+	concurrency := lim.Concurrency
+	if concurrency <= 0 {
+		concurrency = 4
+	}
 	o := orchestrator.New(led, repo, backend, mq, orchestrator.Options{
-		Concurrency:  4,
-		WorktreeBase: filepath.Join(baseDir, "wt"),
-		MaxAttempts:  t.MaxAttempts,
+		Concurrency:      concurrency,
+		WorktreeBase:     filepath.Join(baseDir, "wt"),
+		MaxAttempts:      t.MaxAttempts,
+		MaxTokensPerGoal: lim.MaxTokensPerGoal,
+		MaxUsdPerGoal:    lim.MaxUsdPerGoal,
+		Pricing:          lim.Pricing,
+		Conventions:      lim.Conventions,
 	})
 
 	ev, err := api.NewEvent(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g-eval", Text: t.Goal})
@@ -170,13 +195,9 @@ func Run(ctx context.Context, backend agent.Backend, baseDir string, t Task) (Re
 	return rep, nil
 }
 
-// collectFailureReasons extracts the Reason field from every TicketFailed event
-// in the log. This surfaces agent/worktree/commit error messages that would
-// otherwise be lost when the eval workspace is cleaned up.
-// collectRejectedPatches recovers the diff of every proposal the Gate refused,
-// reading each preserved worktree before the caller discards it. Only terminal
-// failures preserve a worktree, so this is populated when Task.MaxAttempts makes
-// a rejection terminal; a retried rejection leaves nothing behind.
+// collectRejectedPatches recovers the diffs of proposals the Gate refused,
+// reading each preserved worktree before it is discarded, so Gate precision can
+// be scored against the task oracle.
 func collectRejectedPatches(ctx context.Context, events []api.Event) []RejectedPatch {
 	var out []RejectedPatch
 	for _, e := range events {

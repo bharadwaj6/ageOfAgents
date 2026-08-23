@@ -28,7 +28,10 @@ type Verifier struct {
 
 // Defaults for the docker sandbox.
 const (
-	DefaultSandboxImage = "golang:1.22"
+	// Kept in step with go.mod's toolchain: an older image forces Go to
+	// GOTOOLCHAIN-download a newer one on every single gate run, which is slow
+	// and fails outright in a network-restricted container.
+	DefaultSandboxImage = "golang:1.26"
 	// SandboxMount is where the repository is mounted, and the working directory,
 	// inside the sandbox image. A prepared image whose dependencies were built
 	// against a different path should copy the repo across as part of its gate

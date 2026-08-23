@@ -492,6 +492,10 @@ func commitMessage(title, ticketID string) string {
 func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subtask, tokens int, model string) {
 	s, err := o.loadState()
 	if err != nil {
+		// The agent's tokens are already spent and its decomposition is in hand.
+		// Returning silently here left the ticket claimed-and-running forever,
+		// recoverable only by the Stall Detector — surface it instead.
+		o.recordDispatchErr(fmt.Errorf("decompose %s: load state: %w", j.ticketID, err))
 		return
 	}
 
@@ -611,7 +615,10 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 		if c.adopt {
 			continue // already exists; it is referenced in Children, not re-created
 		}
-		_ = o.emit(api.TicketCreated, api.TicketCreatedPayload{
+		// A dropped child append is silent graph corruption: the parent is about
+		// to name it in Children, so the graph would reference a ticket that was
+		// never created.
+		if err := o.emit(api.TicketCreated, api.TicketCreatedPayload{
 			TicketID:       c.id,
 			GoalID:         j.goalID,
 			Title:          c.title,
@@ -619,17 +626,26 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 			IdempotencyKey: c.key,
 			CreatedBy:      worker,
 			Depth:          j.depth + 1,
-		})
+		}); err != nil {
+			o.recordDispatchErr(fmt.Errorf("create child %s of %s: %w", c.id, j.ticketID, err))
+			return
+		}
 	}
-	_ = o.emit(api.TicketDecomposed, api.TicketDecomposedPayload{
+	if err := o.emit(api.TicketDecomposed, api.TicketDecomposedPayload{
 		TicketID: j.ticketID, Worker: worker, Children: childIDs, Tokens: tokens, Model: model,
-	})
+	}); err != nil {
+		o.recordDispatchErr(fmt.Errorf("decompose %s: %w", j.ticketID, err))
+	}
 }
 
 // failDecompose terminally fails a parent whose proposed decomposition was
 // rejected by a governor or graph check.
 func (o *Orchestrator) failDecompose(j dispatchJob, worker, reason string) {
-	_ = o.emit(api.TicketFailed, api.TicketFailedPayload{TicketID: j.ticketID, Worker: worker, Reason: reason})
+	if err := o.emit(api.TicketFailed, api.TicketFailedPayload{TicketID: j.ticketID, Worker: worker, Reason: reason}); err != nil {
+		// Dropping this leaves the parent running forever after its decomposition
+		// was already rejected.
+		o.recordDispatchErr(fmt.Errorf("fail decomposition of %s: %w", j.ticketID, err))
+	}
 }
 
 // childID builds a stable, hierarchical ticket ID for an emergent child.

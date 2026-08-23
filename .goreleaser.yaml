@@ -6,6 +6,14 @@ builds:
     binary: aoa
     env:
       - CGO_ENABLED=0
+    # Stamp the build so `aoa version` can identify itself. Without these every
+    # published binary reported "dev" and there was no way to tell which release
+    # a given file came from.
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .CommitDate }}
     goos:
       - linux
       - windows
