@@ -1117,6 +1117,14 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		}
 		agentTimeout = d
 	}
+	var pollInterval time.Duration
+	if cfg.PollInterval != "" {
+		d, err := time.ParseDuration(cfg.PollInterval)
+		if err != nil {
+			return nil, nil, fmt.Errorf("poll_interval %q: %w", cfg.PollInterval, err)
+		}
+		pollInterval = d
+	}
 	opt := orchestrator.Options{
 		Concurrency:        cfg.Concurrency,
 		MaxAttempts:        cfg.MaxAttempts,
@@ -1132,6 +1140,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 		// Termination gates; zero means "Scheduler default" (orchestrator.New).
 		StallTimeout:      stall,
 		AgentTimeout:      agentTimeout,
+		PollInterval:      pollInterval,
 		MaxPasses:         cfg.MaxPasses,
 		MaxGraphDepth:     cfg.MaxGraphDepth,
 		MaxTicketsPerGoal: cfg.MaxTicketsPerGoal,

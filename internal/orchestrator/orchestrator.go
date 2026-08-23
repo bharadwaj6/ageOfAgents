@@ -39,6 +39,7 @@ type Options struct {
 	WorktreeBase       string             // where per-ticket worktrees live; default <repo>/.git/aoa-worktrees
 	StallTimeout       time.Duration      // no-progress timeout for the Stall Detector; default 2m
 	AgentTimeout       time.Duration      // hard ceiling on one agent attempt; default 30m
+	PollInterval       time.Duration      // how long Run waits between passes while workers are busy; default 100ms
 	HeartbeatInterval  time.Duration      // how often a running Worker signals liveness; default 30s
 	MaxPasses          int                // safety bound on Scheduler passes in Run; default 1000
 	MaxGraphDepth      int                // max emergent decomposition depth (graph governor); default 5
@@ -61,6 +62,22 @@ type Orchestrator struct {
 	backend agent.Backend
 	mq      *mergequeue.Queue
 	opt     Options
+
+	// workers tracks dispatch goroutines. Dispatch is asynchronous across passes
+	// (ADR 013), so the WaitGroup belongs to the Orchestrator rather than to one
+	// pass, and Run joins it before returning so no worker outlives the call.
+	workers sync.WaitGroup
+	// dispatching counts, per ticket, the dispatch goroutines currently running.
+	//
+	// Ticket.ActiveWorkers is not sufficient on its own: it is derived from the
+	// log, and a goroutine that has started but not yet appended TicketClaimed
+	// contributes nothing to it. With dispatch synchronous that window was
+	// invisible; asynchronous it is real, and it caused two distinct bugs the
+	// suite caught immediately — Run reporting a stall while a worker was
+	// starting, and the same ticket being dispatched twice because it still
+	// looked unclaimed. Entries are added synchronously, before the goroutine
+	// starts, so the window cannot exist.
+	dispatching map[string]int
 
 	mu        sync.Mutex
 	worktrees map[string]*worktree.Worktree
@@ -92,6 +109,9 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 	// it. This is the ceiling that stops a hung CLI hanging the run forever.
 	if opt.AgentTimeout <= 0 {
 		opt.AgentTimeout = 30 * time.Minute
+	}
+	if opt.PollInterval <= 0 {
+		opt.PollInterval = 100 * time.Millisecond
 	}
 	if opt.HeartbeatInterval <= 0 {
 		opt.HeartbeatInterval = 30 * time.Second
@@ -127,7 +147,22 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 }
 
 // Run reconciles repeatedly until the work is settled or no pass makes progress.
-func (o *Orchestrator) Run(ctx context.Context) error {
+//
+// Dispatch is asynchronous (ADR 013), so Run owns two things the old in-pass
+// barrier used to provide for free: it must not mistake "workers are still
+// running" for a stall, and it must join those workers before returning — on
+// every path, including errors, so a failed run never leaks goroutines into the
+// caller's process.
+func (o *Orchestrator) Run(ctx context.Context) (err error) {
+	defer func() {
+		o.workers.Wait()
+		// A worker that failed after the last pass read the log still has
+		// something to say.
+		if derr := o.takeDispatchErr(); derr != nil && err == nil {
+			err = derr
+		}
+	}()
+
 	for pass := 0; pass < o.opt.MaxPasses; pass++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -147,6 +182,13 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 			return nil
 		}
 		if s.LastSeq == before {
+			// No progress *yet* is not a stall while workers are still running:
+			// they simply have not reached their first event. Wait for them
+			// rather than declaring the run stuck.
+			if o.anyInFlight() || s.ActiveCount() > 0 {
+				o.opt.Sleep(o.opt.PollInterval)
+				continue
+			}
 			// No progress. If the only unsettled work is parked for human
 			// approval, pause cleanly — a later `aoa approve` + `aoa run` resumes.
 			if pausedForApproval(s) {
@@ -205,36 +247,39 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		}
 	}
 
-	// 3. Dispatch a wave of ready tickets under the concurrency governor.
+	// 3. Top the worker pool up to the concurrency governor with ready tickets.
 	if s, err = o.loadState(); err != nil {
 		return err
 	}
-	slots := o.opt.Concurrency - s.ActiveCount()
+	slots := o.opt.Concurrency - o.activeAttempts(s)
 	ready := o.dispatchable(s.ReadyTickets(), o.opt.Now())
 	n := min(slots, len(ready))
-	if n > 0 {
-		var wg sync.WaitGroup
-		for _, t := range ready[:n] {
-			job := dispatchJob{
-				ticketID: t.ID,
-				goalID:   t.GoalID,
-				title:    t.Title,
-				goalText: goalText(s, t),
-				depth:    t.Depth,
-				attempt:  t.Attempts + 1, // this dispatch is the next attempt
-				lastFail: t.LastFailOutput,
-				depCtx:   dependencyContext(s, t),
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				o.dispatch(ctx, job)
-			}()
+	for _, t := range ready[:max(n, 0)] {
+		job := dispatchJob{
+			ticketID: t.ID,
+			goalID:   t.GoalID,
+			title:    t.Title,
+			goalText: goalText(s, t),
+			depth:    t.Depth,
+			attempt:  t.Attempts + 1, // this dispatch is the next attempt
+			lastFail: t.LastFailOutput,
+			depCtx:   dependencyContext(s, t),
 		}
-		wg.Wait()
-		if err := o.takeDispatchErr(); err != nil {
-			return err
-		}
+		o.workers.Add(1)
+		o.markDispatching(job.ticketID, 1)
+		go func() {
+			defer o.workers.Done()
+			defer o.markDispatching(job.ticketID, -1)
+			o.dispatch(ctx, job)
+		}()
+	}
+	// Deliberately not joined here (ADR 013). Waiting for the whole wave made
+	// Concurrency a batch size rather than a pool, and made every proposal wait
+	// for its slowest sibling before the merge queue below could look at it.
+	// ActiveCount() above is the authoritative in-flight count, derived from the
+	// log, so the next pass tops the pool back up. Run joins the workers.
+	if err := o.takeDispatchErr(); err != nil {
+		return err
 	}
 
 	// 4. Drain the merge queue for proposed tickets (serialized writes to main).
@@ -316,6 +361,48 @@ type dispatchJob struct {
 	attempt  int
 	lastFail string // verifier output from the prior attempt; empty on the first try
 	depCtx   string // summaries of merged dependencies (blackboard read, ADR 006)
+}
+
+// markDispatching adjusts the in-flight count for a ticket.
+func (o *Orchestrator) markDispatching(ticketID string, delta int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.dispatching == nil {
+		o.dispatching = map[string]int{}
+	}
+	if o.dispatching[ticketID] += delta; o.dispatching[ticketID] <= 0 {
+		delete(o.dispatching, ticketID)
+	}
+}
+
+// inFlightFor reports how many dispatch goroutines are running for a ticket.
+func (o *Orchestrator) inFlightFor(ticketID string) int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.dispatching[ticketID]
+}
+
+// anyInFlight reports whether any dispatch goroutine is running.
+func (o *Orchestrator) anyInFlight() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.dispatching) > 0
+}
+
+// activeAttempts counts attempts in progress, reconciling the log against the
+// goroutines actually running. Per ticket the two can disagree in both
+// directions: a just-launched worker is in the map but not yet in the log, and a
+// worker lost to a crashed earlier run is in the log with no goroutine behind it
+// (which is what the Stall Detector exists to clean up). The larger of the two is
+// the honest count in both cases.
+func (o *Orchestrator) activeAttempts(s *state.State) int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	n := 0
+	for id, t := range s.Tickets {
+		n += max(len(t.ActiveWorkers), o.dispatching[id])
+	}
+	return n
 }
 
 // recordDispatchErr keeps the first error raised inside a dispatch goroutine so
@@ -828,10 +915,13 @@ func (o *Orchestrator) dispatchable(ready []*state.Ticket, now time.Time) []*sta
 	}
 	out := make([]*state.Ticket, 0, len(ready))
 	for _, t := range ready {
-		if len(t.ActiveWorkers) >= best {
+		// Count a launched-but-unclaimed dispatch, or this ticket is picked up
+		// again on the very next pass and runs twice.
+		active := max(len(t.ActiveWorkers), o.inFlightFor(t.ID))
+		if active >= best {
 			continue // ticket is fully saturated with workers
 		}
-		if o.opt.RetryBackoff > 0 && len(t.ActiveWorkers) == 0 {
+		if o.opt.RetryBackoff > 0 && active == 0 {
 			if d := backoffFor(o.opt.RetryBackoff, t.Attempts); d > 0 && now.Sub(t.LastActivity) < d {
 				continue
 			}

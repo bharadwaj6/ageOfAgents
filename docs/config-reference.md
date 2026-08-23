@@ -68,6 +68,7 @@ shown; setting it here only changes the value. Leave them alone unless a real ru
 
 | Field | Type | Default | What it does | Set it when |
 |-------|------|---------|--------------|-------------|
+| `poll_interval` | duration string | `"100ms"` | How long `aoa run` waits between reconcile passes while workers are still busy. Dispatch is asynchronous (ADR 013), so the loop polls; this trades responsiveness against wakeups. Rarely worth changing. | You are running very many short tasks and want tighter merge latency. |
 | `agent_timeout` | duration string | `"30m"` | Hard ceiling on a **single agent attempt**. Distinct from `stall_timeout`: a running Worker heartbeats, so that setting bounds *silence* while this bounds *runtime*. It is what stops a wedged agent CLI hanging the run forever, so keep it comfortably above how long a real task takes. | Your tasks are much larger or much smaller than the 30m default. |
 | `stall_timeout` | duration string | `"2m"` | How long a Worker may go without progress before the Stall Detector restarts it. Workers emit a `Heartbeat` while running, so this bounds *dead* work, not merely slow work. | Your agent legitimately runs long and a crashed process should still be reaped promptly. |
 | `max_passes` | int | `1000` | Hard cap on reconcile passes in one `aoa run`. | A pathological graph is churning and you want it to give up sooner. |

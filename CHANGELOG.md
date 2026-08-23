@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-08-24
+
+### Changed
+
+- **Dispatch is a worker pool, not a wave** ([ADR 013](docs/design/adr/013-worker-pool-not-dispatch-wave.md)).
+  `ReconcileOnce` used to launch up to `concurrency` workers, block on `wg.Wait()`, and only then drain
+  the merge queue. Three consequences, all gone:
+  - `concurrency` was a **batch size**, not a steady-state pool — a worker that finished early left its
+    slot idle until every sibling finished.
+  - **The slowest agent in a batch blocked every merge in it**, bounded only by `agent_timeout` (30m).
+    A proposal ready in one minute could wait half an hour for the queue to look at it.
+  - The Stall Detector could never observe a running worker, because it ran after the barrier.
+
+  Dispatch is now asynchronous across reconcile passes; `Run` tops the pool up each pass, drains the merge
+  queue every pass, and joins its workers before returning on every path including errors. **The merge
+  queue is unchanged and still the single serialized writer to `main` — ADR 002 is untouched.**
+
+  Pinned by a test asserting a fast ticket merges while a slow sibling is still running: it passes in
+  0.26s, and hangs into its 30s guard when the barrier is restored.
+
+### Added
+
+- `poll_interval` (default `100ms`) — how long `aoa run` waits between passes while workers are busy.
+
+### Fixed
+
+- Two races the change exposed and the existing suites caught immediately: `Run` reporting a stall while a
+  worker was still starting, and the same ticket being dispatched twice because the log did not yet show
+  it claimed. Both came from `Ticket.ActiveWorkers` lagging a launched goroutine; dispatch is now
+  reconciled against the goroutines actually running, taking the larger of the two counts so a worker
+  orphaned by an earlier crash still counts.
+- Dependencies: OpenTelemetry family to 1.45.0, `actions/setup-go` to v7.
+
 ## [0.2.0] — 2026-08-24
 
 The release where the claims and the code were made to agree.
@@ -93,8 +126,6 @@ repository usable by someone who has never seen it. **No new features.**
   [`SECURITY.md`](SECURITY.md) and [#101](https://github.com/bharadwaj6/ageOfAgents/issues/101).
 - **Gate precision is unmeasured** — [#103](https://github.com/bharadwaj6/ageOfAgents/issues/103).
 - The `openai` and `anthropic` backends have **never been run against the live APIs**.
-- `concurrency` is a dispatch **wave size**, not a worker pool —
-  [#102](https://github.com/bharadwaj6/ageOfAgents/issues/102).
 
 ## [0.1.0] — 2026-06-16
 
@@ -104,5 +135,6 @@ Docker sandboxing for the Gate, GitHub Actions integration, and a TLA+ model of 
 
 **Its release notes claim a SWE-bench result that this project cannot support.** See the 0.2.0 entry.
 
+[0.3.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/bharadwaj6/ageOfAgents/releases/tag/v0.1.0
