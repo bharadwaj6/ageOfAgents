@@ -416,8 +416,26 @@ func cmdRun(args []string) error {
 			return err
 		}
 	}
-	_, err = printStatus(led, cfg.Pricing)
-	return err
+	_, failed, err := printStatus(led, cfg.Pricing)
+	if err != nil {
+		return err
+	}
+	// A settled run is not a successful one. Every ticket can have failed and
+	// `aoa run` would still have exited 0, which made the cron / systemd /
+	// Actions recipes in docs/scheduling.md unalertable: "the backend isn't
+	// even installed" looked exactly like "all done".
+	if failed > 0 {
+		return fmt.Errorf("%s failed — run `aoa status` for the reason and the worktree to take over", plural(failed, "task"))
+	}
+	return nil
+}
+
+// plural renders "1 task" / "3 tasks".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // runEvery keeps the workspace converging on a fixed cadence: reconcile to
@@ -439,7 +457,7 @@ func runEvery(ctx context.Context, o *orchestrator.Orchestrator, led *ledger.Led
 			}
 			fmt.Fprintf(os.Stderr, "run: %v\n", err)
 		}
-		if _, err := printStatus(led, cfg.Pricing); err != nil {
+		if _, _, err := printStatus(led, cfg.Pricing); err != nil {
 			return err
 		}
 		fmt.Printf("\nnext pass in %s (ctrl-c to stop)\n", every)
@@ -565,7 +583,7 @@ func cmdStatus(args []string) error {
 	cfg, _ := config.Load(ws.configPath)
 
 	if !*watch {
-		_, err = printStatus(led, cfg.Pricing)
+		_, _, err = printStatus(led, cfg.Pricing)
 		return err
 	}
 	// Watch mode: clear + re-render each interval until settled. No daemon — just
@@ -573,7 +591,7 @@ func cmdStatus(args []string) error {
 	for {
 		fmt.Print("\033[H\033[2J") // clear screen, cursor home
 		fmt.Printf("aoa status — %s  (Ctrl-C to stop)\n\n", time.Now().Format("15:04:05"))
-		settled, err := printStatus(led, cfg.Pricing)
+		settled, _, err := printStatus(led, cfg.Pricing)
 		if err != nil {
 			return err
 		}
@@ -1055,18 +1073,23 @@ func buildBackend(cfg config.Config) (agent.Backend, error) {
 
 // printStatus renders the run's live state and reports whether all work has
 // settled (the signal --watch uses to stop polling).
-func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, err error) {
+func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, failed int, err error) {
 	events, err := led.Read()
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	s, err := state.Fold(events)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	if len(s.Goals) == 0 {
 		fmt.Println("no goals submitted")
-		return true, nil
+		return true, 0, nil
+	}
+	for _, t := range s.Tickets {
+		if t.Status == state.StatusFailed {
+			failed++
+		}
 	}
 
 	m := metrics.Compute(events)
@@ -1134,7 +1157,7 @@ func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, 
 	if settled {
 		fmt.Println("all work settled")
 	}
-	return settled, nil
+	return settled, failed, nil
 }
 
 func formatEvent(e api.Event) string {
