@@ -28,25 +28,37 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # Read the toolchain from go.mod rather than pinning: this action used to
+    # hardcode 1.22 while the module required a newer Go, so `go install` below
+    # failed outright and the published action could not install the tool.
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.22'
-    
+        go-version-file: ${{ github.action_path }}/go.mod
+
     - name: Install aoa
       shell: bash
       run: go install github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest
 
+    # Inputs reach the shell through the environment, never through `${{ }}`
+    # interpolation into the script body — a goal containing shell syntax would
+    # otherwise be executed rather than submitted.
     - name: Submit Goal
       if: ${{ inputs.goal != '' }}
       shell: bash
-      run: aoa goal --path ${{ inputs.path }} "${{ inputs.goal }}"
-    
+      env:
+        AOA_PATH: ${{ inputs.path }}
+        AOA_GOAL: ${{ inputs.goal }}
+      run: aoa goal --path "$AOA_PATH" "$AOA_GOAL"
+
     - name: Run Orchestrator
       shell: bash
+      env:
+        AOA_PATH: ${{ inputs.path }}
+        AOA_OTEL: ${{ inputs.otel }}
       run: |
-        if [ "${{ inputs.otel }}" == "true" ]; then
-          aoa run --path ${{ inputs.path }} --otel-live
+        if [ "$AOA_OTEL" = "true" ]; then
+          aoa run --path "$AOA_PATH" --otel-live
         else
-          aoa run --path ${{ inputs.path }}
+          aoa run --path "$AOA_PATH"
         fi
