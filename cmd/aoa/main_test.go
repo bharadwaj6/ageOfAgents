@@ -294,3 +294,46 @@ func TestRunEveryStopsOnCancel(t *testing.T) {
 		t.Fatal("runEvery did not return after cancel")
 	}
 }
+
+// A run in which every task failed must not exit 0. It used to: Orchestrator.Run
+// returns nil once the workspace settles, and a failed ticket counts as settled,
+// so "the backend isn't even installed" was indistinguishable from "all done" by
+// exit code — which is what every cron/systemd/Actions recipe keys on.
+func TestRunExitsNonZeroWhenTasksFailed(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	if err := cmdInit([]string{"--path", tmp, "--repo", "./demo"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	// A Gate that can never pass: every proposal is rejected, the ticket
+	// exhausts its attempts and ends terminally failed.
+	cfg := "repo = \"./demo\"\nbackend = \"mock\"\nconcurrency = 1\nmax_attempts = 1\nverify = [[\"false\"]]\n"
+	if err := os.WriteFile(filepath.Join(tmp, "aoa.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := cmdGoal([]string{"--path", tmp, "something", "that", "cannot", "pass"}); err != nil {
+		t.Fatalf("goal: %v", err)
+	}
+
+	err := cmdRun([]string{"--path", tmp})
+	if err == nil {
+		t.Fatal("cmdRun returned nil despite a failed task")
+	}
+	if !strings.Contains(err.Error(), "failed") {
+		t.Errorf("error should say a task failed, got %q", err)
+	}
+
+	// And the happy path must still exit 0.
+	ok := t.TempDir()
+	if err := cmdInit([]string{"--path", ok, "--repo", "./demo"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := cmdGoal([]string{"--path", ok, "Add", "a", "greeting"}); err != nil {
+		t.Fatalf("goal: %v", err)
+	}
+	if err := cmdRun([]string{"--path", ok}); err != nil {
+		t.Errorf("a clean run must still exit 0, got %v", err)
+	}
+}
