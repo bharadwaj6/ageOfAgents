@@ -127,6 +127,8 @@ deliberately, because a deterministic control plane has no business guessing at 
 | a worked config for a real repo | [`examples/`](examples/) |
 | run it on a schedule (cron, systemd, Actions) | [`docs/scheduling.md`](docs/scheduling.md) |
 | contribute a change | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| see what changed between releases | [`CHANGELOG.md`](CHANGELOG.md) |
+| know what it does to your machine | [`SECURITY.md`](SECURITY.md) |
 | understand the design | [`docs/design/architecture.md`](docs/design/architecture.md) + the [ADRs](docs/design/adr/) |
 
 ---
