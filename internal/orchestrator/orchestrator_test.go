@@ -1143,3 +1143,95 @@ func TestFailDecomposeSurfacesLedgerFailures(t *testing.T) {
 		t.Fatal("failDecompose swallowed a ledger append failure")
 	}
 }
+
+// slowThenFastBackend blocks the first task it sees until released, and returns
+// immediately for every other task.
+type slowThenFastBackend struct {
+	mu       sync.Mutex
+	slowID   string
+	release  chan struct{}
+	slowSeen chan struct{}
+	once     sync.Once
+}
+
+func (*slowThenFastBackend) Name() string { return "slow-then-fast" }
+
+func (b *slowThenFastBackend) Run(ctx context.Context, task agent.Task) (agent.Result, error) {
+	b.mu.Lock()
+	if b.slowID == "" {
+		b.slowID = task.TicketID
+	}
+	isSlow := b.slowID == task.TicketID
+	b.mu.Unlock()
+
+	if isSlow {
+		b.once.Do(func() { close(b.slowSeen) })
+		select {
+		case <-b.release:
+		case <-ctx.Done():
+			return agent.Result{}, ctx.Err()
+		}
+	}
+	dst := filepath.Join(task.Worktree, worktree.SanitizeBranch(task.TicketID)+".txt")
+	if err := os.WriteFile(dst, []byte(task.Title+"\n"), 0o644); err != nil {
+		return agent.Result{}, err
+	}
+	return agent.Result{Summary: task.Title}, nil
+}
+
+// A finished proposal must reach the merge queue while a slow sibling is still
+// running. Dispatch used to be a wave — ReconcileOnce launched every worker,
+// blocked on wg.Wait(), and only then drained the queue — so one straggler held
+// up every merge in its batch for up to AgentTimeout (ADR 013).
+func TestFastTicketMergesWhileSlowSiblingRuns(t *testing.T) {
+	backend := &slowThenFastBackend{release: make(chan struct{}), slowSeen: make(chan struct{})}
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	o, h := setup(t, backend, pass, Options{Concurrency: 2, PollInterval: time.Millisecond})
+
+	// Two independent goals, so both are ready at once and share a dispatch pass.
+	h.submitGoal(t, "slow", "the slow one")
+	h.submitGoal(t, "fast", "the fast one")
+
+	done := make(chan error, 1)
+	go func() { done <- o.Run(context.Background()) }()
+
+	// Wait until the slow worker is definitely blocked inside the backend.
+	select {
+	case <-backend.slowSeen:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the slow worker never started")
+	}
+
+	// While it is still blocked, the other ticket must get all the way to merged.
+	deadline := time.After(30 * time.Second)
+	for {
+		slowID := backend.slowID
+		var other string
+		for id := range h.state(t).Tickets {
+			if id != slowID {
+				other = id
+			}
+		}
+		if other != "" {
+			if tk := h.state(t).Tickets[other]; tk != nil && tk.Status == state.StatusMerged {
+				break // the point of the test
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the fast ticket never merged while its slow sibling ran — dispatch is still a wave")
+		case err := <-done:
+			t.Fatalf("Run returned early (%v) before the fast ticket merged", err)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	close(backend.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not finish after the slow worker was released")
+	}
+}

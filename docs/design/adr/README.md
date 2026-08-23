@@ -17,4 +17,4 @@ corpus under `docs/` (`research/claude-report.md`, `research/gemini.md`, `resear
 | [010](010-semantic-idempotency.md) | Semantic idempotency via worker-supplied keys (identity, not output) |
 | [011](011-debate-markets-as-offline-tools.md) | Debate/voting/markets rejected as a live control plane, not universally |
 | [012](012-observability-as-replay-projection.md) | Observability is a replay projection to OTLP (OpenTelemetry), off by default |
-
+| [013](013-worker-pool-not-dispatch-wave.md) | Dispatch is an asynchronous worker pool, not a per-pass wave |

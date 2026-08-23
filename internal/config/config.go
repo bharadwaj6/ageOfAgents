@@ -87,6 +87,11 @@ type Config struct {
 	// is what stops a wedged agent CLI hanging the run indefinitely, so it wants
 	// to be generous — well above how long a real task takes. Empty ⇒ default 30m.
 	AgentTimeout string `toml:"agent_timeout"`
+	// PollInterval is how long `aoa run` waits between reconcile passes while
+	// workers are still in flight, as a duration string. Dispatch is
+	// asynchronous (ADR 013) so the loop polls rather than blocking on a wave;
+	// this trades responsiveness against wakeups. Empty ⇒ default 100ms.
+	PollInterval string `toml:"poll_interval"`
 	// MaxPasses bounds how many reconcile passes a single `aoa run` may make
 	// before giving up — the backstop against a Scheduler that makes progress
 	// forever without settling. 0 ⇒ default 1000.

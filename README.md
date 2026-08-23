@@ -149,6 +149,7 @@ retry_backoff       = "0s"              # wait before re-dispatching a failed Ta
 crash_loop_threshold = 3                # give up after N identical failures, even under max_attempts
 stall_timeout       = "2m"              # no-progress timeout before a Worker is restarted
 agent_timeout       = "30m"             # hard ceiling on one agent attempt (bounds runtime, not silence)
+poll_interval       = "100ms"           # pause between passes while workers are busy (ADR 013)
 max_passes          = 1000              # hard cap on reconcile passes in one run
 max_graph_depth     = 5                 # graph governor: emergent decomposition depth
 max_tickets_per_goal = 64               # graph governor: total Tasks one Goal may spawn
