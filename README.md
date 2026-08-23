@@ -42,11 +42,22 @@ boring distributed-systems core, with proofs attached:
   projection of the log, not hot-path instrumentation (ADR 012). See [`docs/integrations/`](docs/integrations/README.md).
 - **Adoptable and recoverable:** point it at your own repo on any branch (`aoa init --adopt`); on a
   terminal failure it preserves the agent's worktree and hands it back to you (`aoa status`).
-- **It does the job on a real repository.** On 2026-08-23, `aoa` was pointed at a real Go repo with the
-  `grok` backend and asked for a specific missing unit test. It produced a correct, idiomatic,
-  Gate-verified change and merged it on the **first attempt** (105s, one attempt); the full test suite was
-  green post-merge, and re-running on the settled workspace did no work and exited `0`. One task is not a
-  solve-rate — it is the claim that the loop closes end to end, which is the claim this README makes.
+- **It does the job on a real repository.** Two runs on 2026-08-23, `grok` backend, each asked for a
+  specific missing unit test on a real Go repo:
+
+  | Gate | Result | Attempts | Wall | Tokens |
+  |---|---|---|---|---|
+  | `go build` + one package's tests | merged, correct | 1 | 105s | — *(usage was still unreported)* |
+  | `go build` + `go vet` + **the full suite** | merged, correct | **2** | 344s | 606,669 |
+
+  The second is the interesting one. Its first attempt burned 316k tokens and was **abandoned before it
+  ever produced a proposal** — the Gate never saw it — and the retry then passed the full suite and
+  merged, leaving `main` green. So the retry path works; what that run also showed is that an abandoned
+  attempt is expensive and, until this was fixed, recorded no reason anywhere. Re-running either settled
+  workspace does no work and exits `0`.
+
+  Two tasks are not a solve-rate. They are the claim that the loop closes end to end — which is the claim
+  this README makes, and no more than that.
 
 > **SWE-bench Lite:** no headline solve-rate, and the reason is worth stating. Every run recorded in
 > `logs/run_evaluation/` (best: 10/11 with `grok`) was produced with **aoa's Gate disabled** — the eval
