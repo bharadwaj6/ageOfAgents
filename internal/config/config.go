@@ -81,6 +81,12 @@ type Config struct {
 	// while running, so this bounds genuinely dead work, not merely slow work.
 	// Empty ⇒ default 2m.
 	StallTimeout string `toml:"stall_timeout"`
+	// AgentTimeout is the hard ceiling on a single agent attempt, as a duration
+	// string (e.g. "45m"). Distinct from StallTimeout: a running Worker
+	// heartbeats, so StallTimeout bounds silence while this bounds runtime. It
+	// is what stops a wedged agent CLI hanging the run indefinitely, so it wants
+	// to be generous — well above how long a real task takes. Empty ⇒ default 30m.
+	AgentTimeout string `toml:"agent_timeout"`
 	// MaxPasses bounds how many reconcile passes a single `aoa run` may make
 	// before giving up — the backstop against a Scheduler that makes progress
 	// forever without settling. 0 ⇒ default 1000.

@@ -962,3 +962,34 @@ func TestRegressionEscapeOnCoupledMultiFileChange(t *testing.T) {
 		t.Errorf("expected a regression escape; got escapes=%d rate=%v", m.RegressionEscapes, m.RegressionEscapeRate)
 	}
 }
+
+// A wedged agent must not hang the run. Before AgentTimeout existed there was no
+// context deadline anywhere between `aoa run` and exec.CommandContext, so a CLI
+// that never returned blocked the dispatch wave forever — and the Stall Detector
+// could not help, because it only runs after that wave joins.
+func TestAgentTimeoutCancelsAHungAttempt(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	// release is never closed: this backend blocks until its context is done.
+	backend := &blockingBackend{started: make(chan struct{}), release: make(chan struct{})}
+	o, h := setup(t, backend, pass, Options{
+		Concurrency:  1,
+		MaxAttempts:  1,
+		AgentTimeout: 50 * time.Millisecond,
+	})
+	h.submitGoal(t, "g1", "hangs forever")
+
+	done := make(chan error, 1)
+	go func() { done <- o.Run(context.Background()) }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run hung — the agent attempt was never bounded")
+	}
+
+	tk := h.state(t).Tickets["g1-impl"]
+	require.NotNil(t, tk)
+	require.Equal(t, state.StatusFailed, tk.Status, "a timed-out attempt must fail the ticket")
+	require.Contains(t, tk.LastFailReason, "timed out", "the reason should name the timeout, got %q", tk.LastFailReason)
+}
