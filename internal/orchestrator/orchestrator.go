@@ -435,7 +435,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	// charge them on either failure path so the spend governor sees the burn.
 	spent := usage{tokens: res.Tokens, model: res.Model}
 
-	sha, changed, err := wt.Commit(ctx, fmt.Sprintf("feat: %s (%s)", j.title, j.ticketID))
+	sha, changed, err := wt.Commit(ctx, commitMessage(j.title, j.ticketID))
 	if err != nil {
 		o.failAttempt(ctx, j, worker, fmt.Sprintf("commit: %v", err), spent)
 		return
@@ -452,6 +452,35 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	}); err != nil {
 		o.recordDispatchErr(fmt.Errorf("propose %s (diff is on branch %s): %w", j.ticketID, branch, err))
 	}
+}
+
+// subjectMax is the Conventional Commits subject ceiling this project holds
+// itself to (AGENTS.md), applied to the commits it writes for you.
+const subjectMax = 72
+
+// commitMessage renders a ticket into a readable Conventional Commit. A Goal
+// becomes a ticket titled "Implement: <the whole goal text>", so interpolating
+// that straight into the subject produced commits whose first line was an entire
+// multi-sentence paragraph plus a ticket id. These commits land in the user's
+// history and are the product's actual output, so the subject is trimmed to fit
+// and the full task text is preserved in the body.
+func commitMessage(title, ticketID string) string {
+	subject := strings.TrimSpace(strings.SplitN(strings.TrimPrefix(title, "Implement: "), "\n", 2)[0])
+	if subject == "" {
+		subject = ticketID
+	}
+	body := strings.TrimSpace(title)
+
+	subject = "feat: " + subject
+	if r := []rune(subject); len(r) > subjectMax {
+		// Cut back to the last word boundary that leaves room for the ellipsis.
+		cut := string(r[:subjectMax-1])
+		if i := strings.LastIndex(cut, " "); i > len("feat: ") {
+			cut = cut[:i]
+		}
+		subject = strings.TrimRight(cut, " ,;:-") + "…"
+	}
+	return fmt.Sprintf("%s\n\n%s\n\nTicket: %s", subject, body, ticketID)
 }
 
 // decompose turns a worker's proposed subtasks into child tickets on the Shared
