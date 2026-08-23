@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -127,8 +128,27 @@ func workspaceAt(path string) (workspace, error) {
 	}, nil
 }
 
-func loadWorkspace(path string) (workspace, *ledger.Ledger, error) {
+// openWorkspace resolves a path that must already be a workspace. ledger.Open
+// MkdirAll's its parent unconditionally, so without this check a mistyped
+// --path quietly minted <typo>/.aoa/ and printed "no goals submitted" rather
+// than saying that directory isn't a workspace. `aoa init` uses workspaceAt
+// directly — it is the one command that legitimately runs before any config.
+func openWorkspace(path string) (workspace, error) {
 	ws, err := workspaceAt(path)
+	if err != nil {
+		return ws, err
+	}
+	if _, err := os.Stat(ws.configPath); err != nil {
+		if os.IsNotExist(err) {
+			return workspace{}, fmt.Errorf("%s is not an aoa workspace (no %s) — run `aoa init --path %s` first", ws.root, config.FileName, path)
+		}
+		return workspace{}, err
+	}
+	return ws, nil
+}
+
+func loadWorkspace(path string) (workspace, *ledger.Ledger, error) {
+	ws, err := openWorkspace(path)
 	if err != nil {
 		return ws, nil, err
 	}
@@ -152,7 +172,7 @@ func cmdInit(args []string) error {
 	_ = fs.Parse(args)
 
 	ctx := context.Background()
-	ws, err := workspaceAt(*path)
+	ws, err := workspaceAt(*path) // init is the one command that predates the config
 	if err != nil {
 		return err
 	}
@@ -257,6 +277,20 @@ func gateString(verify [][]string) string {
 	return strings.Join(parts, " && ")
 }
 
+// rejectStrayFlags fails on a flag that landed after the positional text.
+// Go's flag package stops parsing at the first non-flag argument, so
+// `aoa goal "fix the parser" --path ./ws` used to submit the literal goal
+// "fix the parser --path ./ws" to the default workspace — no error, no warning,
+// and every doc example puts --path first, which hid it.
+func rejectStrayFlags(args []string) error {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") && a != "-" {
+			return fmt.Errorf("flag %q came after the text; put flags first: aoa <cmd> [flags] \"text\"", a)
+		}
+	}
+	return nil
+}
+
 func cmdGoal(args []string) error {
 	fs := flag.NewFlagSet("goal", flag.ExitOnError)
 	path := fs.String("path", ".", "workspace root")
@@ -266,7 +300,10 @@ func cmdGoal(args []string) error {
 	if text == "" {
 		return fmt.Errorf("goal text is required: aoa goal \"do the thing\"")
 	}
-	ws, err := workspaceAt(*path)
+	if err := rejectStrayFlags(fs.Args()); err != nil {
+		return err
+	}
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}
@@ -313,12 +350,15 @@ func cmdAmend(args []string) error {
 	if len(rest) < 2 {
 		return fmt.Errorf("usage: aoa amend <goal-id> \"new guidance\"")
 	}
+	if err := rejectStrayFlags(rest); err != nil {
+		return err
+	}
 	goalID := rest[0]
 	guidance := strings.TrimSpace(strings.Join(rest[1:], " "))
 	if guidance == "" {
 		return fmt.Errorf("amendment guidance is required: aoa amend %s \"...\"", goalID)
 	}
-	ws, err := workspaceAt(*path)
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}
@@ -361,7 +401,7 @@ func cmdRun(args []string) error {
 		return fmt.Errorf("--once and --interval are mutually exclusive")
 	}
 
-	ws, err := workspaceAt(*path)
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}
@@ -410,7 +450,10 @@ func cmdRun(args []string) error {
 		return nil // runEvery already printed status after each pass
 	}
 
-	cfg, _ := config.Load(ws.configPath)
+	cfg, err := config.Load(ws.configPath)
+	if err != nil {
+		return err
+	}
 	if *otelExport {
 		if err := exportOTel(ws, led, cfg); err != nil {
 			return err
@@ -449,7 +492,10 @@ func plural(n int, noun string) string {
 // (a flaky Gate, a rate-limited backend) should not end the loop. Returns nil
 // when interrupted.
 func runEvery(ctx context.Context, o *orchestrator.Orchestrator, led *ledger.Ledger, ws workspace, every time.Duration) error {
-	cfg, _ := config.Load(ws.configPath)
+	cfg, err := config.Load(ws.configPath)
+	if err != nil {
+		return err
+	}
 	for {
 		if err := o.Run(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -554,7 +600,7 @@ func cmdOtel(args []string) error {
 	if !otel.Enabled() {
 		return fmt.Errorf("no OTLP endpoint configured — set OTEL_EXPORTER_OTLP_ENDPOINT (see docs/integrations/honeycomb.md)")
 	}
-	ws, err := workspaceAt(*path)
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}
@@ -562,7 +608,10 @@ func cmdOtel(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, _ := config.Load(ws.configPath)
+	cfg, err := config.Load(ws.configPath)
+	if err != nil {
+		return err
+	}
 	return exportOTel(ws, led, cfg)
 }
 
@@ -572,7 +621,7 @@ func cmdStatus(args []string) error {
 	watch := fs.Bool("watch", false, "re-render until all work settles (poll the Event Log)")
 	interval := fs.Duration("interval", 2*time.Second, "refresh interval for --watch")
 	_ = fs.Parse(args)
-	ws, err := workspaceAt(*path)
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}
@@ -580,7 +629,10 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, _ := config.Load(ws.configPath)
+	cfg, err := config.Load(ws.configPath)
+	if err != nil {
+		return err
+	}
 
 	if !*watch {
 		_, _, err = printStatus(led, cfg.Pricing)
@@ -611,17 +663,22 @@ func cmdFeed(args []string) error {
 }
 
 func cmdEvents(args []string) error {
+	// Strip the subcommand before parsing. Go's flag package stops at the first
+	// non-flag argument, so parsing first made `aoa events tail --count 5`
+	// silently ignore --count and always print the default 20 — the very form
+	// the README documents. cmdOtel already does it in this order.
+	sub := "tail"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
 	fs := flag.NewFlagSet("events", flag.ExitOnError)
 	path := fs.String("path", ".", "workspace root")
 	count := fs.Int("count", 20, "number of events for tail (0 = all)")
 	typ := fs.String("type", "", "filter by event type")
-	_ = fs.Parse(args)
-
-	sub := "tail"
-	if fs.NArg() > 0 {
-		sub = fs.Arg(0)
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	ws, err := workspaceAt(*path)
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}
@@ -726,8 +783,18 @@ func cmdEval(args []string) error {
 			return err
 		}
 	}
-	cfg, _ := config.Load(config.FileName)
-	cfg.Backend = *backendName // override with flag if provided
+	cfg, err := config.Load(config.FileName)
+	if err != nil {
+		return err
+	}
+	// Only override when --backend was actually passed. This used to fire
+	// unconditionally with the flag's "mock" default, so a workspace configured
+	// for a real backend silently evaluated the mock and reported a clean run.
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "backend" {
+			cfg.Backend = *backendName
+		}
+	})
 	backend, err := buildBackend(cfg)
 	if err != nil {
 		return err
@@ -832,7 +899,10 @@ func cmdApprove(args []string, approve bool) error {
 	if ticketID == "" {
 		return fmt.Errorf("ticket id is required: aoa %s <ticket-id>", name)
 	}
-	ws, err := workspaceAt(*path)
+	if err := rejectStrayFlags(fs.Args()); err != nil {
+		return err
+	}
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}
@@ -885,7 +955,7 @@ func cmdDiagnose(args []string) error {
 	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
 	_ = fs.Parse(args)
 
-	ws, err := workspaceAt(*path)
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}
@@ -1023,6 +1093,17 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	return o, led, nil
 }
 
+// requireCLI fails fast when a CLI-driven backend's binary is missing. Without
+// this the run dispatched anyway, failed with an exec error, retried until the
+// attempt cap, reported the ticket failed — and (before the exit-code fix) still
+// exited 0. The answer belongs at startup, where it is one line.
+func requireCLI(bin, backend string) error {
+	if _, err := exec.LookPath(bin); err != nil {
+		return fmt.Errorf("backend %q needs the %q CLI on your PATH, but it was not found — install it, or set a different `backend` in %s", backend, bin, config.FileName)
+	}
+	return nil
+}
+
 func buildBackendSingle(name string, cfg config.Config) (agent.Backend, error) {
 	if bCfg, ok := cfg.Backends[name]; ok {
 		switch bCfg.Type {
@@ -1037,8 +1118,14 @@ func buildBackendSingle(name string, cfg config.Config) (agent.Backend, error) {
 	case "mock", "":
 		return agent.NewMock(), nil
 	case "claudecode":
+		if err := requireCLI("claude", name); err != nil {
+			return nil, err
+		}
 		return agent.NewClaudeCode(), nil
 	case "grok":
+		if err := requireCLI("grok", name); err != nil {
+			return nil, err
+		}
 		agent.EnsureGrokLeader()
 		return agent.NewGrok(), nil
 	case "openai":

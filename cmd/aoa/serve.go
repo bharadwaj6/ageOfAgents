@@ -91,7 +91,7 @@ func (r *runner) loop() {
 // submit writes a batch of queued goals to the Event Log. It opens the Ledger
 // only here, on the runner goroutine, so no other writer is live.
 func (r *runner) submit(batch []pendingGoal) error {
-	ws, err := workspaceAt(r.root)
+	ws, err := openWorkspace(r.root)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func cmdServe(args []string) error {
 	secret := fs.String("secret", "", "GitHub webhook secret")
 	_ = fs.Parse(args)
 
-	ws, err := workspaceAt(*path)
+	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
 	}

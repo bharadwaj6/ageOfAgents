@@ -993,3 +993,58 @@ func TestAgentTimeoutCancelsAHungAttempt(t *testing.T) {
 	require.Equal(t, state.StatusFailed, tk.Status, "a timed-out attempt must fail the ticket")
 	require.Contains(t, tk.LastFailReason, "timed out", "the reason should name the timeout, got %q", tk.LastFailReason)
 }
+
+// The commits aoa writes are its actual output and land in the user's history.
+// A Goal becomes a ticket titled "Implement: <whole goal text>", so the old
+// `fmt.Sprintf("feat: %s (%s)", title, id)` produced a subject line that was an
+// entire paragraph plus a ticket id.
+func TestCommitMessage(t *testing.T) {
+	longGoal := "Implement: Add table-driven unit tests for parseUsage in " +
+		"internal/agent/claudecode.go. It currently has zero test coverage. " +
+		"Do not change any non-test code."
+
+	for _, tc := range []struct {
+		name, title, ticket string
+		wantSubject         string
+	}{
+		{
+			name:        "short title is left alone",
+			title:       "Implement: add a greeting function",
+			ticket:      "g-1-impl",
+			wantSubject: "feat: add a greeting function",
+		},
+		{
+			name:        "untitled ticket falls back to its id",
+			title:       "Implement: ",
+			ticket:      "g-3-impl",
+			wantSubject: "feat: g-3-impl",
+		},
+		{
+			name:   "long title is cut at a word boundary",
+			title:  longGoal,
+			ticket: "g-2-impl",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := commitMessage(tc.title, tc.ticket)
+			subject, body, found := strings.Cut(msg, "\n")
+
+			if len([]rune(subject)) > subjectMax {
+				t.Errorf("subject is %d runes, over the %d cap:\n%s", len([]rune(subject)), subjectMax, subject)
+			}
+			if strings.HasPrefix(subject, "feat: Implement:") {
+				t.Errorf("the Implement: prefix should be stripped, got %q", subject)
+			}
+			if tc.wantSubject != "" && subject != tc.wantSubject {
+				t.Errorf("subject = %q, want %q", subject, tc.wantSubject)
+			}
+			// The full task text survives in the body, so nothing is lost.
+			if !found || !strings.Contains(body, strings.TrimSpace(tc.title)) {
+				t.Errorf("body should carry the full title, got %q", body)
+			}
+			if !strings.Contains(body, tc.ticket) {
+				t.Errorf("body should name the ticket %q, got %q", tc.ticket, body)
+			}
+		})
+	}
+}
