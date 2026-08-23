@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/verify"
@@ -323,5 +324,52 @@ func TestProcessRejectsOnMergeConflict(t *testing.T) {
 	require.NoError(t, err)
 	if string(got) != "version A\n" {
 		t.Errorf("main README = %q, want A", got)
+	}
+}
+
+// gitOut runs git in dir and returns combined output plus whether it succeeded.
+func gitOut(t *testing.T, dir string, args ...string) (string, bool) {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	return strings.TrimSpace(string(out)), err == nil
+}
+
+// A rejected merge must leave main byte-for-byte where it started — same HEAD,
+// no MERGE_HEAD, clean worktree. The older code trusted a best-effort
+// `merge --abort` inside worktree.Merge and discarded its error, so a failed
+// abort left main mid-merge while Process still returned a tidy rejection. The
+// queue now restores the pre-merge HEAD itself; this pins that it does.
+func TestProcessRestoresMainAfterMergeConflict(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, err := worktree.InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
+
+	a := proposeFile(t, repo, base, "a", "README.md", "version A\n")
+	b := proposeFile(t, repo, base, "b", "README.md", "version B\n")
+
+	q := New(repo, verify.Verifier{Commands: []verify.Command{{"true"}}})
+
+	out, err := q.Process(ctx, a)
+	require.NoError(t, err)
+	require.True(t, out.Merged, "first proposal should merge")
+
+	pre, err := repo.Head(ctx)
+	require.NoError(t, err)
+
+	out, err = q.Process(ctx, b)
+	require.NoError(t, err, "a conflict is a rejection, not an infrastructure error")
+	require.False(t, out.Merged, "conflicting proposal must be rejected")
+
+	post, err := repo.Head(ctx)
+	require.NoError(t, err)
+	require.Equal(t, pre, post, "HEAD moved despite a rejected merge")
+
+	if _, ok := gitOut(t, repo.Dir, "rev-parse", "-q", "--verify", "MERGE_HEAD"); ok {
+		t.Error("main left mid-merge after a rejected proposal")
+	}
+	if status, _ := gitOut(t, repo.Dir, "status", "--porcelain"); status != "" {
+		t.Errorf("main worktree dirty after a rejected proposal:\n%s", status)
 	}
 }

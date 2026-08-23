@@ -77,7 +77,15 @@ func (q *Queue) Process(ctx context.Context, p Proposal) (Outcome, error) {
 
 	mergeSHA, err := q.Repo.Merge(ctx, p.Branch, fmt.Sprintf("merge: %s", p.TicketID))
 	if err != nil {
-		// Conflict (or merge failure): main was aborted back to pre. Reject.
+		// Conflict (or merge failure). Merge attempts its own `merge --abort`, but
+		// that is best-effort and can itself fail (an `index.lock` under load is
+		// enough) — which would leave main mid-merge while we reported a tidy
+		// rejection. Restoring pre here is what actually makes "main is always
+		// green" true; if even that fails, main's state is unknown and the caller
+		// must hear about it as an error, not a verdict on the proposal.
+		if rbErr := q.Repo.ResetHard(ctx, pre); rbErr != nil {
+			return out, fmt.Errorf("rollback after failed merge (%v): %w", err, rbErr)
+		}
 		out.Reason = fmt.Sprintf("merge failed: %v", err)
 		return out, nil
 	}
@@ -123,7 +131,11 @@ func (q *Queue) DryRun(ctx context.Context, p Proposal) (Outcome, error) {
 
 	mergeSHA, err := q.Repo.Merge(ctx, p.Branch, fmt.Sprintf("merge: %s", p.TicketID))
 	if err != nil {
-		// Conflict: main was already aborted back to pre. Reject the candidate.
+		// Conflict. As in Process, restore pre ourselves rather than trusting the
+		// best-effort abort inside Merge.
+		if rbErr := q.Repo.ResetHard(ctx, pre); rbErr != nil {
+			return out, fmt.Errorf("rollback after failed merge (%v): %w", err, rbErr)
+		}
 		out.Reason = fmt.Sprintf("merge failed: %v", err)
 		return out, nil
 	}
