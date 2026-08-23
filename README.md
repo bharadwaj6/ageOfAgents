@@ -122,9 +122,10 @@ Everything is recorded in the Event Log. State is rebuilt by replaying it — cr
 
 ### 1. Install the CLI
 
-Download the latest binary for your OS from the [GitHub Releases](https://github.com/bharadwaj6/ageOfAgents/releases)
-page, install it with Go (`go install github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest`, or `make install`
-from a clone), or build it yourself:
+Clone it and build (the repository is currently **private**, so `go install
+github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest` and the
+[Releases](https://github.com/bharadwaj6/ageOfAgents/releases) page only work for accounts with access —
+`make install` from a clone puts the binary on your `$PATH`):
 
 ```bash
 git clone https://github.com/bharadwaj6/ageOfAgents.git

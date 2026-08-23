@@ -36,6 +36,8 @@ runs:
       with:
         go-version-file: ${{ github.action_path }}/go.mod
 
+    # NOTE: while the repository is private this needs a token with read access
+    # in GOPRIVATE/netrc; it works unauthenticated only once the repo is public.
     - name: Install aoa
       shell: bash
       run: go install github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest
