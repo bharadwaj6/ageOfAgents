@@ -79,8 +79,10 @@ func TestDockerArgs(t *testing.T) {
 		{
 			name:     "defaults to the Go image and /workspace",
 			verifier: Verifier{Sandbox: "docker"},
+			// Reference the constant rather than repeating its value: hardcoding
+			// it here is what broke CI when the default was bumped to match go.mod.
 			want: []string{"run", "--rm", "-v", "/repo:/workspace", "-w", "/workspace",
-				"golang:1.22", "python", "-m", "pytest", "-q"},
+				DefaultSandboxImage, "python", "-m", "pytest", "-q"},
 		},
 		{
 			name:     "prepared image keeps the standard mount",
