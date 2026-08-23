@@ -251,8 +251,14 @@ type WorkerStalledPayload struct {
 type WorkerRestartedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker"`
-	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the abandoned attempt consumed (0 when unknown)
-	Model    string `json:"model,omitempty"`  // model that consumed them, for per-model cost
+	// Reason is why the attempt was abandoned (agent error, no changes, commit
+	// failure, timeout). Without it a retried attempt recorded nothing about its
+	// own failure: the next attempt re-ran an identical prompt, and crash-loop
+	// detection — which keys on repeated identical reasons — could never fire on
+	// anything but a Gate rejection.
+	Reason string `json:"reason,omitempty"`
+	Tokens int    `json:"tokens,omitempty"` // LLM tokens the abandoned attempt consumed (0 when unknown)
+	Model  string `json:"model,omitempty"`  // model that consumed them, for per-model cost
 }
 
 // ApprovalRequestedPayload accompanies [ApprovalRequested]. Commit is the
