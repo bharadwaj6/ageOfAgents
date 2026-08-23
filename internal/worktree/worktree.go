@@ -158,13 +158,17 @@ func commitDir(ctx context.Context, dir, msg string) (sha string, changed bool, 
 }
 
 // Merge merges the given branch into the integration branch (no fast-forward,
-// preserving a merge record). On conflict it aborts and returns an error, so
-// `main` is never left in a broken state.
+// preserving a merge record).
+//
+// On failure the repository is left exactly as git left it — possibly mid-merge
+// with conflict markers on disk. Merge deliberately does not `merge --abort`:
+// that call is itself fallible, and silently dropping its error (as this once
+// did) meant a failed abort left `main` mid-merge while the caller reported a
+// clean rejection. Recovery is the caller's job and must be unconditional —
+// mergequeue.Queue restores the pre-merge HEAD with ResetHard, which subsumes
+// what an abort would have done and reports its own failure as an error.
 func (r *Repo) Merge(ctx context.Context, branch, msg string) (sha string, err error) {
 	if _, err := git(ctx, r.Dir, "merge", "--no-ff", "--no-edit", "-m", msg, branch); err != nil {
-		if _, abortErr := git(ctx, r.Dir, "merge", "--abort"); abortErr != nil {
-			// Ignore cleanup error
-		}
 		return "", err
 	}
 	out, err := git(ctx, r.Dir, "rev-parse", "HEAD")
