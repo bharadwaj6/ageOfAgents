@@ -18,3 +18,4 @@ corpus under `docs/` (`research/claude-report.md`, `research/gemini.md`, `resear
 | [011](011-debate-markets-as-offline-tools.md) | Debate/voting/markets rejected as a live control plane, not universally |
 | [012](012-observability-as-replay-projection.md) | Observability is a replay projection to OTLP (OpenTelemetry), off by default |
 | [013](013-worker-pool-not-dispatch-wave.md) | Dispatch is an asynchronous worker pool, not a per-pass wave |
+| [014](014-cli-backends-as-data.md) | A CLI backend is a table row, and the table is reachable from `aoa.toml` |

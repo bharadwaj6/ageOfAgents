@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -113,7 +114,7 @@ Usage:
   aoa serve  [--path DIR] [--port N] [--secret S]
                                           Run a GitHub webhook server (always set --secret)
   aoa eval   --tasks F [--backend B] [--price P | --price-file F] [--max-cost $] [--json] [--otel]
-                                          Run end-to-end tasks on real repos (mock|claudecode|grok)
+                                          Run end-to-end tasks on real repos (any backend value)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
   aoa otel export [--path DIR]            Replay the Event Log to OTLP traces + metrics
   aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
@@ -790,7 +791,7 @@ func cmdEval(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
 	describe(fs, "aoa eval \u2014 run end-to-end tasks against real repositories.\n\nReports per-task success, tokens, cost and a MAST failure-mode histogram.\nReads aoa.toml from the current directory for spend governors and pricing.", "aoa eval --tasks tasks.toml --backend grok --max-cost 5")
 	tasksPath := fs.String("tasks", "", "path to a TOML task file")
-	backendName := fs.String("backend", "mock", "agent backend: mock|grok|claudecode|openai|anthropic (or a configured plugin)")
+	backendName := fs.String("backend", "mock", "agent backend: mock|claudecode|codex|cursor|gemini|grok|openai|anthropic (or a configured plugin)")
 	asJSON := fs.Bool("json", false, "emit JSON instead of a markdown table")
 	price := fs.Float64("price", 0, "flat USD per million tokens for the $ column (0 = unpriced)")
 	priceFile := fs.String("price-file", "", "TOML [pricing] file (model -> USD/Mtok) for per-model cost")
@@ -1167,36 +1168,78 @@ func requireCLI(bin, backend string) error {
 }
 
 func buildBackendSingle(name string, cfg config.Config) (agent.Backend, error) {
+	// A [backends.<name>] block shadows a built-in of the same name. That is
+	// deliberate: it lets a user correct a preset's flags for a CLI whose
+	// interface has moved, without waiting for a release.
 	if bCfg, ok := cfg.Backends[name]; ok {
 		switch bCfg.Type {
 		case "openai_compatible":
 			return agent.NewOpenAICompatible(name, bCfg.Model, bCfg.BaseURL, bCfg.APIKeyEnv), nil
+		case "cli":
+			if bCfg.Bin == "" {
+				return nil, fmt.Errorf("backend %q: type = \"cli\" needs bin = \"<binary>\" in %s", name, config.FileName)
+			}
+			if err := requireCLI(bCfg.Bin, name); err != nil {
+				return nil, err
+			}
+			return agent.NewCLI(name, bCfg.Bin, bCfg.Args), nil
 		default:
-			return nil, fmt.Errorf("unknown plugin type %q for backend %q", bCfg.Type, name)
+			return nil, fmt.Errorf("unknown plugin type %q for backend %q (want openai_compatible|cli)", bCfg.Type, name)
 		}
+	}
+
+	// Every CLI-driven harness is one row of agent.cliPresets. The $PATH check
+	// must come *before* the preflight hook: grok's spawns a detached daemon,
+	// and the hermetic suite builds that backend with an empty PATH.
+	if b, ok := agent.CLIPreset(name); ok {
+		bin, _ := agent.CLIPresetBin(name)
+		if err := requireCLI(bin, name); err != nil {
+			return nil, err
+		}
+		if pf := agent.CLIPresetPreflight(name); pf != nil {
+			pf()
+		}
+		return b, nil
 	}
 
 	switch name {
 	case "mock", "":
 		return agent.NewMock(), nil
-	case "claudecode":
-		if err := requireCLI("claude", name); err != nil {
-			return nil, err
-		}
-		return agent.NewClaudeCode(), nil
-	case "grok":
-		if err := requireCLI("grok", name); err != nil {
-			return nil, err
-		}
-		agent.EnsureGrokLeader()
-		return agent.NewGrok(), nil
 	case "openai":
 		return agent.NewOpenAI(), nil
 	case "anthropic":
 		return agent.NewAnthropic(), nil
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want mock|claudecode|grok|openai|anthropic or a configured plugin)", name)
+		return nil, fmt.Errorf("unknown backend %q (want mock|%s|openai|anthropic or a configured plugin)",
+			name, strings.Join(agent.CLINames(), "|"))
 	}
+}
+
+// warnInertGovernors says out loud when a spend ceiling cannot be enforced. The
+// governors are driven by the token counts a Backend reports; a backend that
+// reports none leaves max_usd_per_goal and max_tokens_per_goal silently doing
+// nothing, and a governor you believe in but that does not run is worse than no
+// governor at all.
+func warnInertGovernors(cfg config.Config, w io.Writer) {
+	if cfg.MaxTokensPerGoal == 0 && cfg.MaxUsdPerGoal == 0 {
+		return
+	}
+	name := cfg.Backend
+	if name == "" || name == "mock" {
+		return
+	}
+	// A configured plugin shadows any preset, and neither plugin kind reports
+	// usage through the preset table.
+	if _, isPlugin := cfg.Backends[name]; !isPlugin {
+		if _, isPreset := agent.CLIPreset(name); isPreset && agent.UsageIsReported(name) {
+			return
+		}
+		if name == "openai" || name == "anthropic" {
+			return // native HTTP backends read usage straight off the API response
+		}
+	}
+	fmt.Fprintf(w, "aoa: backend %q does not report token usage, so max_tokens_per_goal/max_usd_per_goal cannot be enforced.\n", name)
+	fmt.Fprintf(w, "     Have the agent emit an ```%s fence to opt in, or use a backend that reports its own counts.\n", "aoa:usage")
 }
 
 func buildBackend(cfg config.Config) (agent.Backend, error) {
@@ -1204,6 +1247,7 @@ func buildBackend(cfg config.Config) (agent.Backend, error) {
 	if err != nil {
 		return nil, err
 	}
+	warnInertGovernors(cfg, os.Stderr)
 	if len(cfg.FallbackBackends) == 0 {
 		return primary, nil
 	}

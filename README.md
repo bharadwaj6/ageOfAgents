@@ -99,13 +99,18 @@ on. Edit `verify` in `workspace/aoa.toml` if the auto-detected one is wrong.
 
 Set `backend` in `aoa.toml`:
 
-| `backend` | Needs | Notes |
-|---|---|---|
-| `mock` | nothing | the offline fixture; every hermetic test runs on it |
-| `grok` | the `grok` CLI on `$PATH` (local grok.com login, **no API key**) | **used to verify the loop end to end**; reports true tokens and cost |
-| `claudecode` | the `claude` CLI on `$PATH`, authenticated | real CLI harness; reports true tokens and cost |
-| `openai` | `OPENAI_API_KEY` | native HTTP, no CLI. **Not verified against the live API** |
-| `anthropic` | `ANTHROPIC_API_KEY` | native HTTP, no CLI. **Not verified against the live API** |
+| `backend` | Needs | Reports cost? | Status |
+|---|---|---|---|
+| `mock` | nothing | n/a | the offline fixture; every hermetic test runs on it |
+| `claudecode` | the `claude` CLI, authenticated | ✅ | verified |
+| `codex` | the `codex` CLI, authenticated | ✅ | **verified end to end** |
+| `cursor` | the `cursor-agent` CLI, authenticated | ❌ | flags verified; no live run |
+| `grok` | the `grok` CLI (grok.com login, **no API key**) | ✅ | verified |
+| `gemini` | the `gemini` CLI, authenticated | ❌ | **unverified** |
+| `openai` · `anthropic` | the matching API key | ✅ | native HTTP. **Not verified against the live API** |
+| **anything else** | — | — | [BYOHarness](docs/harnesses/byo-cli.md): `type = "cli"` in `aoa.toml`, no Go code |
+
+Full detail, including what each flag is for and why: [`docs/harnesses/`](docs/harnesses/README.md).
 
 A missing CLI is caught at startup, not after your retry budget is spent.
 
