@@ -44,13 +44,13 @@ others are assessed from each system's documented architecture and may change as
 | **No step repetition** (idempotency keys) | ✓ proven (I4) | ~ "Nondeterministic Idempotence" via supervision, not idempotency keys | ✗ — re-runs repeat work | ✗ — no idempotency contract |
 | **Deterministic recovery** (one stall detector, crash-only restart) | ✓ (stall detector + restart-from-log) | ~ multi-tier escalation (Deacon→Mayor), heavier and LLM-driven | n/a (single agent) | ~ worker restarts, policy-dependent |
 | **Safe parallelism** (isolated worktrees + serial merge) | ✓ proven (bench parallelism; merges stay serial/green) | ✓ (worktrees + Refinery) | ✗ — single agent, no parallelism | ✓ — parallel workers (its core feature) |
-| **Small & portable** (one binary, JSONL, git only) | ✓ (1 dep; no DB/broker) | ✗ — Dolt DB, tmux, OTEL, plugin sidecars | ✓ (a workflow, not infra) | ~ part of the opencode app |
+| **Small & portable** (one binary, JSONL, git only) | ✓ (2 core deps + opt-in OTel; no DB/broker) | ✗ — Dolt DB, tmux, OTEL, plugin sidecars | ✓ (a workflow, not infra) | ~ part of the opencode app |
 
 ## Per-system reading
 
 - **Gastown.** Its engineering core is sound distributed systems in disguise (event-sourced ledger,
-  serializing merge queue, supervision tree, failure detector — see `docs/history/gastown_arch.md` and
-  `docs/research/claude-report.md`). `aoa` keeps exactly those load-bearing primitives and **deletes the org-chart layer**:
+  serializing merge queue, supervision tree, failure detector — see `docs/history/gastown_arch.md`).
+  `aoa` keeps exactly those load-bearing primitives and **deletes the org-chart layer**:
   the personas (Mayor/Witness/Deacon/Polecats) are an anthropomorphic mapping of human-org limits onto
   aligned agents, and they put *LLMs in the coordination path* — which is where Gastown's reported chaos
   ($100/hr, auto-merged failing tests) comes from: a control failure, an under-strict gate. `aoa` makes
@@ -90,8 +90,9 @@ a different question. Placing them precisely matters more than scoring them.
   append-only log rather than a plan file the agent edits, termination is bounded by explicit gates rather
   than a loop-detection heuristic, and nothing lands without passing the Gate.
 
-A caution worth carrying from the harness literature: the strong harnesses resolve 70–78% of SWE-bench
-Verified, but roughly 17–19% of **SWE-bench-Live**, whose issues are freshly opened and uncontaminated.
+A caution worth carrying: strong harnesses score far better on SWE-bench Verified than on
+[SWE-bench-Live](https://swe-bench-live.github.io/), whose issues are freshly opened and therefore
+uncontaminated by training data. The gap is large enough that SWE-bench-Live exists to measure it.
 Whatever the loop around them, agents are far better on known ground than on genuine ambiguity — an
 argument for a strict Gate and a human approval path, not for a longer leash. See
 [`loop_engineering.md`](loop_engineering.md).
@@ -123,5 +124,5 @@ construction; the live numbers measure efficacy. We do not fold one into the oth
   failure (coordination/verification/idempotency), `aoa` holds invariants the others do not guarantee, and
   it does so *provably and hermetically*.
 - The competitor columns are **architectural assessments**, not measurements, and those systems move fast
-  (Gastown especially — see `docs/research/claude-report.md` caveats). Treat them as "what the design implies," to be
-  revised against live evidence if/when we run it.
+  (Gastown especially). Treat them as "what the design implies", to be revised against live evidence if
+  and when we run it.

@@ -37,6 +37,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **The design docs stop citing raw LLM transcripts as research.** `docs/research/` holds five unedited
+  chat outputs from the exploratory phase; the design docs were citing them as evidence — one called a
+  Gemini chat window "an independent critique [that] validated these decisions". All 16 such citations
+  are gone, replaced by the paper where one exists or dropped where none does. `docs/research/links.md`
+  is now a verified bibliography that states which claim each source supports; the transcripts remain as
+  provenance, explicitly not as evidence.
+- **Numbers now match their sources.** The MAST category split was quoted from a transcript and
+  disagreed with the paper (44.2/32.3/23.5 → the paper's 41.8/36.9/21.3). A "+15.6% success" figure and
+  a "~80% coordination overhead" figure had no source and are gone. SWE-bench "70–78% vs 17–19%" could
+  not be sourced and is now a qualitative statement with a link. MAST is an arXiv preprint, not NeurIPS.
+- **`docs/design/roadmap.md`: 332 lines → 59.** It was an agent resume-anchor — ~50 checkboxes, ~51
+  PR/issue numbers, Track A–D / Phase E–F, and "a fresh agent should start here" — published as
+  documentation. It is now a roadmap: what is settled, the one open question that matters, what is
+  deferred and what would reopen it.
 - **The README is rewritten around what a prompt cannot do.** 325 lines to 185. The old lede — "runs
   your build and tests and merges only if they pass" — described something you get by typing "run the
   tests first" into any harness, and buried the actual problem: several agents at once, nobody watching,
@@ -46,6 +60,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Design docs that contradicted the code.** ADR 004 named `claudecode.go`, deleted by ADR 014, and
+  called two backends "the implementations". ADR 012 said observability was "post-hoc, not live" while
+  `--otel-live` shipped. ADR 006 credited idempotency keys to ADR 001 instead of ADR 010. ADR 002 listed
+  disjoint-file batching as future work after it shipped. `metrics.md` claimed a <30s recovery target
+  against a 2m `stall_timeout` default, and both `metrics.md` and `comparison.md` claimed "1 dependency"
+  against 11 direct requires. `architecture.md` described dispatch as a synchronous wave (superseded by
+  ADR 013), listed a CLI missing `doctor`/`quickstart`/`completion`/`version`, and pointed at the
+  deprecated `aoa feed`.
+- **`cross_repo.md` now says it is unimplemented.** Nothing on the page did, so its illustrative
+  `[workspace]` config read as real schema.
 - **`docs/cli.md`** — a command reference existed nowhere. The README's table was the closest thing and
   it was wrong: it omitted `quickstart`, `doctor` and `completion` entirely, missed several flags, and
   claimed "every subcommand takes `--path`" when `bench`, `eval`, `version` and `completion` reject it.

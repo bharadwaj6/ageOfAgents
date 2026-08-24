@@ -29,9 +29,9 @@ Treat observability as **another replay projection**, exactly like `metrics.Comp
 - **Off by default.** `otel.Enabled()` is true only when `OTEL_EXPORTER_OTLP_ENDPOINT` (or a
   signal-specific endpoint) is set; otherwise `Export` returns immediately. The hermetic suite never
   configures an endpoint, so it never opens a socket. Surfaced as `aoa otel export` and `aoa run --otel`.
-- **Post-hoc, not live.** The first cut projects the finished log after a run/eval. Live per-append
-  streaming (a ledger hook emitting spans in real time) is a deferred follow-up; it would reuse the same
-  span model.
+- **Post-hoc or live, same span model.** `aoa otel export` projects a finished log; `aoa run --otel-live`
+  streams spans as events are appended (`internal/otel/live.go`). Both are projections of the log, so
+  neither instruments the control loop.
 - **Vendor-agnostic via standard env vars.** Configuration is the OTel standard
   (`OTEL_EXPORTER_OTLP_ENDPOINT`, `_HEADERS`, `_PROTOCOL`, `OTEL_SERVICE_NAME`). Honeycomb is just an
   endpoint plus an `x-honeycomb-team` header — there is no vendor-specific code in the core.

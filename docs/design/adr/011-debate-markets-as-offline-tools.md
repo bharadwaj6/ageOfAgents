@@ -8,8 +8,8 @@ ADR 005 rejects markets, consensus voting, and multi-agent debate, and the archi
 forcefully. External review agreed with the decision for *this* system but flagged the wording as
 over-broad: the cited literature rejects these mechanisms as a **live coordination/selection** layer for
 aligned coding agents, not as techniques with no use anywhere. Notably, multi-agent debate is a useful
-**offline training-signal generator** (e.g. MACA-style internalization of self-consistency), even though
-it is a poor *runtime* coordinator. This ADR records that distinction so the claim is precise and ages
+**offline** technique — for generating training signal or exploring a design space away from the merge
+path — even though it is a poor *runtime* coordinator. This ADR records that distinction so the claim is precise and ages
 well.
 
 ## Decision
@@ -32,4 +32,5 @@ Keep the rejection, but scope it explicitly to the **live control plane**:
 
 ## Research basis
 Debate ≈ self-consistency (arXiv:2310.01798); ensemble popularity trap (arXiv:2510.21513); MAST
-(arXiv:2503.13657). Offline-use nuance noted in the external review corpus (MACA-style internalization).
+(arXiv:2503.13657). The offline-use carve-out is a scoping statement, not a claim backed by a source
+here.
