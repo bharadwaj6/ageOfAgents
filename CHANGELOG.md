@@ -19,8 +19,23 @@ All notable changes to this project are documented here. The format follows
 - **`aoa completion bash|zsh|fish`** — static completion scripts, no CLI framework. A test scans the
   dispatch switch in `main()` and fails if a subcommand is added without being completed.
 
+- **Four more harnesses, and a door for the rest.** `codex`, `cursor` and `gemini` join `claudecode` and
+  `grok` as built-in backends, and `[backends.<name>] type = "cli"` drives any coding-agent CLI with no
+  Go code ([ADR 014](docs/design/adr/014-cli-backends-as-data.md), [docs/harnesses/](docs/harnesses/README.md)).
+  DeepSeek needs no backend at all — it is an OpenAI-compatible endpoint, which already worked.
+  A CLI backend is now a table row rather than a file: `claudecode.go` and `grok.go` were line-for-line
+  copies, and three more would have been three more copies.
+- `aoa` warns at startup when `max_tokens_per_goal`/`max_usd_per_goal` are set on a backend that reports
+  no token usage. The governors were silently inert on such backends.
+
 ### Fixed
 
+- **`max_passes` was an accidental wall-clock timeout.** A reconcile pass spent purely *waiting* on an
+  in-flight worker consumed the pass budget, so the defaults (1000 passes x 100ms `poll_interval`)
+  capped a run at roughly 100 seconds of agent time. Every real backend exceeds that: a live `codex`
+  run took 183s and died with "orchestrator exceeded 1000 passes" while holding a perfectly good
+  proposal, which merged on a second `aoa run`. Waiting no longer counts as a pass; the bound still
+  stops a run that keeps emitting events without converging.
 - `aoa help` documented neither `init --adopt`/`--force`, `status --interval`, `eval --price`/`--json`,
   nor `serve --secret` — the last of which `docs/scheduling.md` says you must always set or anyone who
   can reach the port can queue work.

@@ -15,7 +15,7 @@ func TestParseGrokOutputReadsRealUsage(t *testing.T) {
 	  "total_cost_usd": 0.0074596,
 	  "modelUsage": {"grok-4.6-build": {"inputTokens": 20392, "modelCalls": 1}}
 	}`
-	text, tokens, model := parseGrokOutput(envelope)
+	text, tokens, model := parseCLIOutput(envelope)
 	if text != "done: added the tests" {
 		t.Errorf("text = %q, want the agent's prose", text)
 	}
@@ -30,7 +30,7 @@ func TestParseGrokOutputReadsRealUsage(t *testing.T) {
 func TestParseGrokOutputPicksBusiestModel(t *testing.T) {
 	const envelope = `{"text":"x","usage":{"total_tokens":5},
 	  "modelUsage":{"small":{"modelCalls":1},"big":{"modelCalls":7}}}`
-	_, _, model := parseGrokOutput(envelope)
+	_, _, model := parseCLIOutput(envelope)
 	if model != "big" {
 		t.Errorf("model = %q, want the model that did the most calls", model)
 	}
@@ -40,7 +40,7 @@ func TestParseGrokOutputPicksBusiestModel(t *testing.T) {
 // changed CLI still produces a usable Result.
 func TestParseGrokOutputFallsBackToProse(t *testing.T) {
 	const prose = "I edited the file.\n```aoa:usage\n{\"tokens\": 42, \"model\": \"m\"}\n```\n"
-	text, tokens, model := parseGrokOutput(prose)
+	text, tokens, model := parseCLIOutput(prose)
 	if text != prose {
 		t.Errorf("non-JSON output should pass through verbatim, got %q", text)
 	}
@@ -48,7 +48,7 @@ func TestParseGrokOutputFallsBackToProse(t *testing.T) {
 		t.Errorf("fence fallback = (%d, %q), want (42, \"m\")", tokens, model)
 	}
 	// And with neither JSON nor a fence: zero, honestly.
-	if _, tk, _ := parseGrokOutput("just prose"); tk != 0 {
+	if _, tk, _ := parseCLIOutput("just prose"); tk != 0 {
 		t.Errorf("unknown usage = %d, want 0 (never invented)", tk)
 	}
 }
@@ -58,7 +58,7 @@ func TestParseGrokOutputFindsSubtasksInsideEnvelope(t *testing.T) {
 	env := `{"text":"splitting this up\n` + "```aoa:subtasks\\n" +
 		`[{\"local_id\":\"a\",\"title\":\"first\",\"depends_on\":[]}]` + "\\n```" +
 		`\n","usage":{"total_tokens":1},"modelUsage":{"m":{"modelCalls":1}}}`
-	text, _, _ := parseGrokOutput(env)
+	text, _, _ := parseCLIOutput(env)
 	subs := parseSubtasks(text)
 	if len(subs) != 1 || subs[0].Title != "first" {
 		t.Fatalf("subtasks = %+v, want one titled \"first\"", subs)

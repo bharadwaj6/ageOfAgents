@@ -16,10 +16,19 @@ const FileName = "aoa.toml"
 
 // BackendConfig holds settings for a custom backend plugin.
 type BackendConfig struct {
+	// Type selects the plugin kind: "openai_compatible" for an HTTP endpoint
+	// that speaks the OpenAI chat API, or "cli" for any harness that edits files
+	// in place when invoked with a prompt.
 	Type      string `toml:"type"`
 	BaseURL   string `toml:"base_url"`
 	Model     string `toml:"model"`
 	APIKeyEnv string `toml:"api_key_env"`
+	// Bin is the binary to invoke, for type = "cli".
+	Bin string `toml:"bin"`
+	// Args are passed to Bin verbatim; the task prompt is appended as the final
+	// argument, as a single argv element (no shell). A harness that wants the
+	// prompt somewhere else is a three-line wrapper script on your PATH.
+	Args []string `toml:"args"`
 }
 
 // Config is the on-disk workspace configuration.
@@ -27,8 +36,11 @@ type Config struct {
 	// Repo is the path to the integration git repository, relative to the workspace
 	// root (the directory containing aoa.toml) or absolute.
 	Repo string `toml:"repo"`
-	// Backend selects the agent Backend: "mock", "claudecode", "grok", "openai",
-	// "anthropic", or a custom plugin defined in Backends.
+	// Backend selects the agent Backend. Built-in CLI harnesses: "claudecode",
+	// "codex", "cursor", "gemini", "grok". Built-in HTTP backends: "openai",
+	// "anthropic". "mock" is the offline fixture. Any other value must name a
+	// plugin defined in Backends — including type = "cli", which drives a
+	// harness aoa has no preset for.
 	Backend string `toml:"backend"`
 	// Concurrency caps the number of Workers in flight (the Concurrency Limit).
 	Concurrency int `toml:"concurrency"`
@@ -109,7 +121,11 @@ type Config struct {
 	// *million* tokens, used to turn token counts into a $ figure in `aoa status`.
 	// Absent ⇒ unpriced ($0). Example: [pricing] then claudecode = 15.0.
 	Pricing map[string]float64 `toml:"pricing"`
-	// Backends defines custom backend plugins (e.g. openrouter via openai_compatible).
+	// Backends defines custom backend plugins: type = "openai_compatible" for an
+	// OpenAI-shaped HTTP endpoint (OpenRouter, DeepSeek, a local gateway), or
+	// type = "cli" to drive any coding-agent CLI. A block here shadows a
+	// built-in of the same name, which is how a preset's flags get corrected
+	// without waiting for a release.
 	Backends map[string]BackendConfig `toml:"backends"`
 	// FallbackBackends specifies an ordered list of backend IDs to try if the
 	// primary Backend fails (e.g., rate limits or API errors).

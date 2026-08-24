@@ -11,8 +11,7 @@ import (
 // Compile-time checks that the backends satisfy the interface.
 var (
 	_ Backend = (*Mock)(nil)
-	_ Backend = (*ClaudeCode)(nil)
-	_ Backend = (*Grok)(nil)
+	_ Backend = (*CLI)(nil)
 	_ Backend = (*Anthropic)(nil)
 )
 
@@ -69,51 +68,6 @@ func TestMockForcedFailure(t *testing.T) {
 	}
 }
 
-func TestClaudeCodeInvokesInWorktree(t *testing.T) {
-	var gotDir, gotBin string
-	var gotArgs []string
-	c := &ClaudeCode{
-		Bin: "claude",
-		run: func(_ context.Context, dir, name string, args ...string) (string, error) {
-			gotDir, gotBin, gotArgs = dir, name, args
-			return "agent output", nil
-		},
-	}
-
-	task := Task{TicketID: "t1", Title: "add feature", Goal: "ship it", Worktree: "/tmp/wt", Conventions: "use tabs"}
-	res, err := c.Run(context.Background(), task)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if gotDir != "/tmp/wt" {
-		t.Errorf("dir = %q, want /tmp/wt", gotDir)
-	}
-	if gotBin != "claude" {
-		t.Errorf("bin = %q, want claude", gotBin)
-	}
-	if len(gotArgs) < 2 || gotArgs[len(gotArgs)-2] != "-p" {
-		t.Fatalf("expected -p <prompt>, got %v", gotArgs)
-	}
-	prompt := gotArgs[len(gotArgs)-1]
-	if !strings.Contains(prompt, "add feature") || !strings.Contains(prompt, "use tabs") {
-		t.Errorf("prompt missing title/conventions: %q", prompt)
-	}
-	if res.Trace != "agent output" {
-		t.Errorf("trace = %q", res.Trace)
-	}
-}
-
-func TestNewClaudeCodeAllowsEdits(t *testing.T) {
-	// Without a permission flag, headless `claude -p` runs but declines to write
-	// files, so every Task fails with "agent produced no changes". The default
-	// backend must pass acceptEdits.
-	c := NewClaudeCode()
-	joined := strings.Join(c.Args, " ")
-	if !strings.Contains(joined, "--permission-mode") || !strings.Contains(joined, "acceptEdits") {
-		t.Fatalf("NewClaudeCode args missing edit permission: %v", c.Args)
-	}
-}
-
 func TestBuildPromptIncludesContext(t *testing.T) {
 	p := BuildPrompt(Task{Title: "T", Goal: "G", Conventions: "C"})
 	for _, want := range []string{"T", "G", "C", "conventions", subtaskFence} {
@@ -166,14 +120,155 @@ func TestTailLinesKeepsBoundedTail(t *testing.T) {
 	}
 }
 
-func TestClaudeCodeParsesSubtaskDecomposition(t *testing.T) {
-	out := "I'll decompose this.\n\n```" + subtaskFence + "\n" +
+// capture returns a CLI whose runner records how it was invoked and replays out.
+func capture(name string, out string, got *[]string, dir, bin *string) *CLI {
+	c, _ := CLIPreset(name)
+	if c == nil {
+		c = NewCLI(name, name, nil)
+	}
+	c.run = func(_ context.Context, d, b string, args ...string) (string, error) {
+		*dir, *bin, *got = d, b, args
+		return out, nil
+	}
+	return c
+}
+
+// One table replaces the per-backend invocation tests. Adding a harness is a row
+// here, not a new test function — which is the point of making presets data.
+func TestCLIPresetArgv(t *testing.T) {
+	task := Task{TicketID: "t1", Title: "add feature", Goal: "ship it", Worktree: "/tmp/wt", Conventions: "use tabs"}
+	want := BuildPrompt(task)
+
+	for _, tc := range []struct {
+		backend string
+		bin     string
+		// mustContain are flags this harness cannot work without; each has a
+		// comment on the corresponding defaultXArgs saying why.
+		mustContain []string
+	}{
+		{"claudecode", "claude", []string{"--permission-mode", "acceptEdits"}},
+		{"grok", "grok", []string{"--permission-mode", "bypassPermissions"}},
+		{"codex", "codex", []string{"exec", "--sandbox", "workspace-write"}},
+		{"cursor", "cursor-agent", []string{"-p", "--force", "--trust"}},
+		{"gemini", "gemini", []string{"--approval-mode", "yolo"}},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			var gotArgs []string
+			var gotDir, gotBin string
+			c := capture(tc.backend, "agent output", &gotArgs, &gotDir, &gotBin)
+
+			res, err := c.Run(context.Background(), task)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if gotDir != task.Worktree {
+				t.Errorf("dir = %q, want %q", gotDir, task.Worktree)
+			}
+			if gotBin != tc.bin {
+				t.Errorf("bin = %q, want %q", gotBin, tc.bin)
+			}
+			if len(gotArgs) == 0 {
+				t.Fatal("no args passed")
+			}
+			// The prompt is always the final argv element — the one rule that
+			// lets flag-value and positional harnesses share this type.
+			if got := gotArgs[len(gotArgs)-1]; got != want {
+				t.Errorf("last arg is not the prompt:\n got %q\nwant %q", got, want)
+			}
+			joined := strings.Join(gotArgs[:len(gotArgs)-1], " ")
+			for _, flag := range tc.mustContain {
+				if !strings.Contains(joined, flag) {
+					t.Errorf("%s args missing %q: %v", tc.backend, flag, gotArgs)
+				}
+			}
+			if res.Trace != "agent output" {
+				t.Errorf("trace = %q", res.Trace)
+			}
+			if res.Model != tc.backend {
+				t.Errorf("model = %q, want the backend name as fallback", res.Model)
+			}
+		})
+	}
+}
+
+// codex's `-p` is --profile, not the prompt, and cursor's is a boolean --print.
+// Borrowing claude's "-p <prompt>" pattern for either would silently pass the
+// whole prompt as a flag value. Lock in that neither gets a trailing -p.
+func TestCLIPresetsDoNotAssumeDashPMeansPrompt(t *testing.T) {
+	for _, name := range []string{"codex", "cursor"} {
+		c, ok := CLIPreset(name)
+		if !ok {
+			t.Fatalf("no preset for %q", name)
+		}
+		if n := len(c.Args); n > 0 && c.Args[n-1] == "-p" {
+			t.Errorf("%s must not end with -p: for codex that is --profile, and for cursor a boolean", name)
+		}
+	}
+}
+
+// The prompt is handed to exec.Command as one []string element, never through a
+// shell. This invariant is load-bearing — a Goal is user text — and had no
+// coverage before.
+func TestCLIPromptIsOneArgvElement(t *testing.T) {
+	task := Task{
+		TicketID: "t1",
+		Title:    "fix `id`; rm -rf /; $(whoami) \"quoted\" && echo pwned",
+		Goal:     "line one\nline two",
+		Worktree: "/tmp/wt",
+	}
+	var gotArgs []string
+	var gotDir, gotBin string
+	c := capture("claudecode", "ok", &gotArgs, &gotDir, &gotBin)
+
+	if _, err := c.Run(context.Background(), task); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	last := gotArgs[len(gotArgs)-1]
+	if last != BuildPrompt(task) {
+		t.Fatal("the prompt was altered on its way to the CLI")
+	}
+	if !strings.Contains(last, "rm -rf /") || !strings.Contains(last, "$(whoami)") {
+		t.Error("shell metacharacters must survive verbatim, not be escaped or stripped")
+	}
+	for _, a := range gotArgs[:len(gotArgs)-1] {
+		if strings.Contains(a, "rm -rf") {
+			t.Errorf("prompt text leaked into another argv element: %q", a)
+		}
+	}
+}
+
+// The transcript belongs in Result.Trace and the Event Log. Anything written
+// into the worktree would be swept up by the orchestrator's `git add -A` and
+// committed into the proposal.
+func TestCLILeavesNoScratchInWorktree(t *testing.T) {
+	wt := t.TempDir()
+	c := NewCLI("claudecode", "claude", nil)
+	c.run = func(context.Context, string, string, ...string) (string, error) {
+		return "agent output", nil
+	}
+	if _, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "x", Worktree: wt}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	entries, err := os.ReadDir(wt)
+	if err != nil {
+		t.Fatalf("read worktree: %v", err)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("backend wrote scratch into the worktree: %v", names)
+	}
+}
+
+func TestCLIParsesSubtaskDecomposition(t *testing.T) {
+	out := "Decomposing.\n\n```" + subtaskFence + "\n" +
 		`[{"local_id":"types","title":"shared types","depends_on":[],"idempotency_key":"g:types"},` +
 		`{"local_id":"api","title":"the API","depends_on":["types"],"idempotency_key":"g:api"}]` +
-		"\n```\nDone.\n"
-	c := &ClaudeCode{run: func(context.Context, string, string, ...string) (string, error) {
-		return out, nil
-	}}
+		"\n```\n"
+	c := NewCLI("grok", "grok", nil)
+	c.run = func(context.Context, string, string, ...string) (string, error) { return out, nil }
 
 	res, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "big task", Worktree: "/wt"})
 	if err != nil {
@@ -187,109 +282,24 @@ func TestClaudeCodeParsesSubtaskDecomposition(t *testing.T) {
 	}
 }
 
-func TestClaudeCodeNoSubtasksWhenImplementing(t *testing.T) {
-	c := &ClaudeCode{run: func(context.Context, string, string, ...string) (string, error) {
-		return "edited main.go and added tests", nil
-	}}
+func TestCLINoSubtasksWhenImplementing(t *testing.T) {
+	c := NewCLI("claudecode", "claude", nil)
+	c.run = func(context.Context, string, string, ...string) (string, error) {
+		return "Edited three files and ran the tests.", nil
+	}
 	res, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "small task", Worktree: "/wt"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.Subtasks != nil {
-		t.Errorf("expected no subtasks for an implementation, got %+v", res.Subtasks)
+	if len(res.Subtasks) != 0 {
+		t.Errorf("plain prose must not decompose: %+v", res.Subtasks)
 	}
 }
 
-func TestGrokInvokesInWorktree(t *testing.T) {
-	var gotDir, gotBin string
-	var gotArgs []string
-	g := &Grok{
-		Bin:  "grok",
-		Args: defaultGrokArgs,
-		run: func(_ context.Context, dir, name string, args ...string) (string, error) {
-			gotDir, gotBin, gotArgs = dir, name, args
-			return "agent output", nil
-		},
-	}
-
-	task := Task{TicketID: "t1", Title: "add feature", Goal: "ship it", Worktree: "/tmp/wt", Conventions: "use tabs"}
-	res, err := g.Run(context.Background(), task)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if gotDir != "/tmp/wt" {
-		t.Errorf("dir = %q, want /tmp/wt", gotDir)
-	}
-	if gotBin != "grok" {
-		t.Errorf("bin = %q, want grok", gotBin)
-	}
-	if len(gotArgs) < 2 || gotArgs[len(gotArgs)-2] != "-p" {
-		t.Fatalf("expected -p <prompt>, got %v", gotArgs)
-	}
-	prompt := gotArgs[len(gotArgs)-1]
-	if !strings.Contains(prompt, "add feature") || !strings.Contains(prompt, "use tabs") {
-		t.Errorf("prompt missing title/conventions: %q", prompt)
-	}
-	if res.Trace != "agent output" {
-		t.Errorf("trace = %q", res.Trace)
-	}
-}
-
-func TestGrokLeavesNoScratchInWorktree(t *testing.T) {
-	// The agent's transcript is carried in Result.Trace (and the Event Log); it must
-	// not be dropped into the worktree, where the orchestrator's `git add -A` would
-	// commit it into the proposal.
-	wt := t.TempDir()
-	g := &Grok{run: func(context.Context, string, string, ...string) (string, error) {
-		return "agent output", nil
-	}}
-	if _, err := g.Run(context.Background(), Task{TicketID: "t1", Title: "x", Worktree: wt}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	entries, err := os.ReadDir(wt)
-	if err != nil {
-		t.Fatalf("read worktree: %v", err)
-	}
-	if len(entries) != 0 {
-		var names []string
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		t.Errorf("grok wrote scratch into the worktree: %v", names)
-	}
-}
-
-func TestNewGrokAllowsEdits(t *testing.T) {
-	// Like claudecode, headless `grok -p` declines to write files without a
-	// permission flag; grok uses bypassPermissions to let the agent edit its
-	// worktree sandbox (the Gate, not the agent, decides what merges).
-	g := NewGrok()
-	joined := strings.Join(g.Args, " ")
-	if !strings.Contains(joined, "--permission-mode") || !strings.Contains(joined, "bypassPermissions") {
-		t.Fatalf("NewGrok args missing edit permission: %v", g.Args)
-	}
-	if g.Bin != "grok" {
-		t.Errorf("NewGrok Bin = %q, want grok", g.Bin)
-	}
-}
-
-func TestGrokParsesSubtaskDecomposition(t *testing.T) {
-	out := "Decomposing.\n\n```" + subtaskFence + "\n" +
-		`[{"local_id":"types","title":"shared types","depends_on":[],"idempotency_key":"g:types"},` +
-		`{"local_id":"api","title":"the API","depends_on":["types"],"idempotency_key":"g:api"}]` +
-		"\n```\n"
-	g := &Grok{run: func(context.Context, string, string, ...string) (string, error) {
-		return out, nil
-	}}
-
-	res, err := g.Run(context.Background(), Task{TicketID: "t1", Title: "big task", Worktree: "/wt"})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if len(res.Subtasks) != 2 {
-		t.Fatalf("got %d subtasks, want 2", len(res.Subtasks))
-	}
-	if res.Subtasks[1].LocalID != "api" || len(res.Subtasks[1].DependsOn) != 1 || res.Subtasks[1].DependsOn[0] != "types" {
-		t.Errorf("second subtask malformed: %+v", res.Subtasks[1])
+func TestCLINamesAreSortedAndComplete(t *testing.T) {
+	got := CLINames()
+	want := []string{"claudecode", "codex", "cursor", "gemini", "grok"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("CLINames() = %v, want %v", got, want)
 	}
 }

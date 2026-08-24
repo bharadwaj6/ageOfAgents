@@ -9,7 +9,7 @@ config behaves exactly like the hermetic suite until you opt in.
 | Field | Type | Default | What it does |
 |-------|------|---------|--------------|
 | `repo` | string | `./repo` | Path to the integration git repo (relative to the workspace root, or absolute). `aoa init --adopt` sets this to your existing repo. |
-| `backend` | string | `"mock"` | AI engine: `mock` (offline) · `openai` · `anthropic` · `claudecode` · `grok` · a plugin named in `[backends]`. See [integrations](integrations/README.md). |
+| `backend` | string | `"mock"` | Which coding agent to drive: `mock` (offline fixture) · `claudecode` · `codex` · `cursor` · `gemini` · `grok` (CLI harnesses) · `openai` · `anthropic` (direct APIs) · a plugin named in `[backends]`. See [harnesses](harnesses/README.md). |
 | `concurrency` | int | `4` | Max Workers in flight (the Concurrency Limit). |
 | `max_attempts` | int | `2` | How many times a Task is retried before it fails. |
 | `best_of_n` | int | `1` | Concurrent attempts dispatched per Task (parallel generation). Each attempt consumes a concurrency slot, and the Gate — never a vote — picks the winner (ADR 002). |
@@ -22,7 +22,22 @@ config behaves exactly like the hermetic suite until you opt in.
 | Field | Type | Default | What it does |
 |-------|------|---------|--------------|
 | `fallback_backends` | list of string | `[]` | Ordered backend ids to try when the primary Backend returns an error (rate limits, API failures). The first success wins. |
-| `[backends.<name>]` | table | — | Defines a custom backend plugin usable as `backend = "<name>"`. Keys: `type` (only `"openai_compatible"` today), `base_url`, `model`, `api_key_env`. |
+| `[backends.<name>]` | table | — | Defines a backend plugin usable as `backend = "<name>"`. A block here **shadows a built-in of the same name**, which is how a preset's flags get corrected without waiting for a release. |
+| `[backends.<name>].type` | string | — | `"openai_compatible"` for an OpenAI-shaped HTTP endpoint, or `"cli"` to drive any coding-agent CLI ([BYOHarness](harnesses/byo-cli.md)). |
+| `[backends.<name>].base_url` · `.model` · `.api_key_env` | string | — | For `type = "openai_compatible"`. |
+| `[backends.<name>].bin` | string | — | For `type = "cli"`: the binary to invoke. Required. |
+| `[backends.<name>].args` | list of string | `[]` | For `type = "cli"`: passed verbatim, then the prompt is appended as the final argument, as a single argv element (no shell). |
+
+Drive a CLI aoa has no preset for:
+
+```toml
+backend = "mycoder"
+
+[backends.mycoder]
+type = "cli"
+bin  = "mycoder"
+args = ["run", "--yes"]     # -> mycoder run --yes "<prompt>"
+```
 
 ```toml
 backend           = "openrouter"

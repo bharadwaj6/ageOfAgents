@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bharadwaj6/ageOfAgents/internal/agent"
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
@@ -179,22 +180,47 @@ func checkOneBackend(name string, cfg config.Config) check {
 				}
 			}
 			return check{name: label, ok: true, detail: fmt.Sprintf("plugin %q, $%s set", bCfg.Type, bCfg.APIKeyEnv)}
+		case "cli":
+			if bCfg.Bin == "" {
+				return check{
+					name:   label,
+					detail: `type = "cli" with no bin`,
+					fix:    fmt.Sprintf(`set bin = "<binary>" under [backends.%s]`, name),
+				}
+			}
+			c := checkBinary(label, bCfg.Bin, fmt.Sprintf("install %q, or fix bin under [backends.%s]", bCfg.Bin, name))
+			if c.ok {
+				c.detail += " (BYO harness; reports no token usage unless it emits an aoa:usage fence)"
+			}
+			return c
 		default:
 			return check{
 				name:   label,
 				detail: fmt.Sprintf("unknown plugin type %q", bCfg.Type),
-				fix:    `set type = "openai_compatible" under [backends.` + name + `]`,
+				fix:    `set type = "openai_compatible" or type = "cli" under [backends.` + name + `]`,
 			}
 		}
+	}
+
+	// Built-in CLI harnesses are one table in internal/agent, so doctor learns
+	// about a new one for free.
+	if bin, ok := agent.CLIPresetBin(name); ok {
+		c := checkBinary(label, bin, fmt.Sprintf("install the %s CLI and authenticate it — see docs/harnesses/", bin))
+		if c.ok {
+			// Presence on $PATH is not authentication: every one of these CLIs
+			// exits non-zero on an unauthenticated run, and checking that
+			// properly would mean a paid API call per harness per doctor run.
+			c.detail += " (login not checked)"
+			if !agent.UsageIsReported(name) {
+				c.detail += "; reports no token usage, so the $ governors are inert"
+			}
+		}
+		return c
 	}
 
 	switch name {
 	case "mock", "":
 		return check{name: label, ok: true, detail: "offline fixture; no network, no key"}
-	case "claudecode":
-		return checkBinary(label, "claude", "install the claude CLI and authenticate it")
-	case "grok":
-		return checkBinary(label, "grok", "install the grok CLI and log in at grok.com")
 	case "openai":
 		return checkEnv(label, "OPENAI_API_KEY")
 	case "anthropic":
@@ -203,7 +229,8 @@ func checkOneBackend(name string, cfg config.Config) check {
 		return check{
 			name:   label,
 			detail: fmt.Sprintf("unknown backend %q", name),
-			fix:    "set `backend` in aoa.toml to one of: mock, claudecode, grok, openai, anthropic",
+			fix: fmt.Sprintf("set `backend` in aoa.toml to one of: mock, %s, openai, anthropic",
+				strings.Join(agent.CLINames(), ", ")),
 		}
 	}
 }

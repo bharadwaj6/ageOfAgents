@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bharadwaj6/ageOfAgents/internal/agent"
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 )
 
@@ -42,7 +43,7 @@ func TestOpenWorkspaceRejectsANonWorkspace(t *testing.T) {
 func TestBuildBackendPreflightsTheCLI(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no `grok`, no `claude`
 
-	for _, name := range []string{"grok", "claudecode"} {
+	for _, name := range agent.CLINames() {
 		_, err := buildBackendSingle(name, config.Config{})
 		if err == nil {
 			t.Errorf("backend %q built with no CLI on PATH", name)
@@ -56,6 +57,60 @@ func TestBuildBackendPreflightsTheCLI(t *testing.T) {
 	// mock needs nothing and must keep working offline.
 	if _, err := buildBackendSingle("mock", config.Config{}); err != nil {
 		t.Errorf("mock backend should never need a CLI, got %v", err)
+	}
+}
+
+// A BYOHarness backend gets the same startup check as a built-in — otherwise the
+// escape hatch would be the one path that fails late.
+func TestBuildBackendPreflightsAByoCLI(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	cfg := config.Config{Backends: map[string]config.BackendConfig{
+		"mycoder": {Type: "cli", Bin: "definitely-not-a-real-binary", Args: []string{"run"}},
+	}}
+	_, err := buildBackendSingle("mycoder", cfg)
+	if err == nil {
+		t.Fatal("a BYO CLI whose binary is missing must fail at startup")
+	}
+	if !strings.Contains(err.Error(), "PATH") {
+		t.Errorf("error should mention PATH, got %q", err)
+	}
+}
+
+// type = "cli" with no bin is a config mistake worth naming precisely: without
+// it the backend would try to exec the empty string.
+func TestByoCLIRequiresABin(t *testing.T) {
+	cfg := config.Config{Backends: map[string]config.BackendConfig{
+		"mycoder": {Type: "cli"},
+	}}
+	_, err := buildBackendSingle("mycoder", cfg)
+	if err == nil {
+		t.Fatal(`type = "cli" with no bin must be rejected`)
+	}
+	if !strings.Contains(err.Error(), "bin") {
+		t.Errorf("error should name the missing key, got %q", err)
+	}
+}
+
+// A [backends.<name>] block shadowing a preset is the documented way to correct
+// a harness whose flags have moved, without waiting for a release.
+func TestConfiguredBackendShadowsAPreset(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	cfg := config.Config{Backends: map[string]config.BackendConfig{
+		"codex": {Type: "cli", Bin: "codex", Args: []string{"exec", "--brand-new-flag"}},
+	}}
+	b, err := buildBackendSingle("codex", cfg)
+	if err != nil {
+		t.Fatalf("shadowing a preset should work: %v", err)
+	}
+	if b.Name() != "codex" {
+		t.Errorf("name = %q, want codex — it is the [pricing] key", b.Name())
 	}
 }
 
