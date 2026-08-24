@@ -1235,3 +1235,74 @@ func TestFastTicketMergesWhileSlowSiblingRuns(t *testing.T) {
 		t.Fatal("Run did not finish after the slow worker was released")
 	}
 }
+
+// slowBackend blocks until released, standing in for a real coding agent that
+// thinks for minutes rather than milliseconds.
+type slowBackend struct {
+	inner    agent.Backend
+	released chan struct{}
+}
+
+func (s *slowBackend) Name() string { return "slow" }
+
+func (s *slowBackend) Run(ctx context.Context, task agent.Task) (agent.Result, error) {
+	select {
+	case <-s.released:
+	case <-ctx.Done():
+		return agent.Result{}, ctx.Err()
+	}
+	return s.inner.Run(ctx, task)
+}
+
+// max_passes is documented as a safety bound against a livelock — a run that
+// keeps emitting events without converging. It was also, accidentally, a
+// wall-clock timeout: a pass spent purely *waiting* for an in-flight worker
+// consumed the budget, so the default 1000 passes x 100ms poll_interval capped a
+// run at ~100 seconds of agent time. Every real backend exceeds that; a live
+// codex run took 183s and died with "orchestrator exceeded 1000 passes" holding
+// a perfectly good proposal.
+func TestWaitingForAWorkerDoesNotConsumeThePassBudget(t *testing.T) {
+	slow := &slowBackend{inner: agent.NewMock(), released: make(chan struct{})}
+	// Release on a timer, never on the poll count: if the budget is consumed by
+	// waiting, Run returns early and a count-gated release would deadlock the
+	// dispatch goroutine instead of failing the test.
+	time.AfterFunc(200*time.Millisecond, func() { close(slow.released) })
+
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	// A budget far smaller than the number of polls this run needs.
+	o, h := setup(t, slow, pass, Options{Concurrency: 1, MaxPasses: 3, PollInterval: 5 * time.Millisecond})
+
+	var polls int
+	o.opt.Sleep = func(d time.Duration) {
+		polls++
+		time.Sleep(d)
+	}
+	h.submitGoal(t, "g1", "add greeting")
+
+	if err := o.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if polls <= 3 {
+		t.Errorf("expected polling past the 3-pass budget, got %d polls", polls)
+	}
+	if tk := h.state(t).Tickets["g1-impl"]; tk == nil || tk.Status != state.StatusMerged {
+		t.Fatalf("ticket = %+v, want merged", tk)
+	}
+}
+
+// The bound must still hold against real churn: a run that keeps making progress
+// without ever settling has to stop, or `aoa run` never returns.
+func TestMaxPassesStillBoundsProductivePasses(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	o, h := setup(t, agent.NewMock(), pass, Options{Concurrency: 1, MaxPasses: 1})
+	h.submitGoal(t, "g1", "add greeting")
+	h.submitGoal(t, "g2", "add farewell")
+
+	err := o.Run(context.Background())
+	if err == nil {
+		t.Fatal("a one-pass budget must not complete two goals — the bound is gone")
+	}
+	if !strings.Contains(err.Error(), "exceeded") {
+		t.Errorf("error should name the pass bound, got %v", err)
+	}
+}
