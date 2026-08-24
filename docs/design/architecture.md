@@ -124,7 +124,7 @@ actual → act (dispatch ready Tasks under the Concurrency Limit; run Stall Dete
 | `internal/ledger` | Append-only JSONL Event Log: `Append`, `Read`, `Replay`. |
 | `internal/state` | Replays events into `State` (Tasks, dependencies, Workers, Merge Queue). |
 | `internal/orchestrator` | The Scheduler: dispatch + Concurrency Limit + Stall Detector + Merge Queue driver. |
-| `internal/agent` | `Backend` interface (AI-provider abstraction) + `mock` and `claudecode` Backends. |
+| `internal/agent` | `Backend` interface (AI-provider abstraction) + `mock`, the CLI harness presets in `cli.go`, and the native `openai`/`anthropic` Backends. |
 | `internal/worktree` | Git worktree provisioning / cleanup for isolated Worker sandboxes. |
 | `internal/verify` | Run configured Gate commands; capture pass/fail + output. |
 | `internal/mergequeue` | Serialize Proposals → verify → merge to `main` or reject; emit events. Batches disjoint-file Proposals into one Gate run. |
@@ -135,8 +135,11 @@ actual → act (dispatch ready Tasks under the Concurrency Limit; run Stall Dete
 | `cmd/aoa` | Tiny standard-library CLI (no framework): `init`, `goal`, `amend`, `run`, `status`, `events`, `diagnose`, `eval`, `bench`, `otel`, `approve`/`reject`. |
 
 The **`agent.Backend`** interface is the only seam to the AI. Business logic never calls a provider SDK
-directly. A deterministic **`mock`** Backend lets the entire loop run offline in `go test`; the
-**`claudecode`** and **`grok`** Backends drive a real agent as a subprocess in the Task's worktree.
+directly. A deterministic **`mock`** Backend lets the entire loop run offline in `go test`; the CLI
+harness Backends (**`claudecode`**, **`codex`**, **`cursor`**, **`gemini`**, **`grok`**) drive a real
+agent as a subprocess in the Task's worktree, and **`openai`**/**`anthropic`** talk to an API directly.
+A CLI harness is a row in a preset table rather than a file of its own, and the same table is reachable
+from `aoa.toml` so an unlisted CLI needs no Go at all ([ADR 014](adr/014-cli-backends-as-data.md)).
 
 **Observability is a projection, not instrumentation.** `metrics`, `diagnose`, and `otel` all derive
 their output by replaying the Event Log — the same discipline as `state.Fold`. Nothing in the control

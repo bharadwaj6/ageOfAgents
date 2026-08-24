@@ -19,9 +19,35 @@ aoa diagnose: No MAST failure modes detected (clean run).
 
 This run also surfaced a real backend bug: headless `claude -p` runs but **declines to edit files**
 without a permission mode, so every Task failed with *"agent produced no changes."* Fixed by defaulting
-the `claudecode` backend to `--permission-mode acceptEdits` (`internal/agent/claudecode.go`); the worktree
-is the agent's sandbox and the Gate, not the agent, decides what merges. Regression-guarded by
-`TestNewClaudeCodeAllowsEdits`.
+the `claudecode` backend to `--permission-mode acceptEdits` (now a preset row in
+`internal/agent/cli.go`; ADR 014); the worktree is the agent's sandbox and the Gate, not the agent,
+decides what merges. Regression-guarded by `TestCLIPresetArgv`, which asserts the flag for every
+harness that needs one.
+
+## Two runs on a real Go repository (2026-08-23, `grok`)
+
+Beyond the seeded smoke test: two runs against an existing Go repo, each asked for a specific missing
+unit test.
+
+| Gate | Result | Attempts | Wall | Tokens |
+|---|---|---|---|---|
+| `go build` + one package's tests | merged, correct | 1 | 105s | — *(usage was unreported then)* |
+| `go build` + `go vet` + **the full suite** | merged, correct | **2** | 344s | 606,669 |
+
+The second is the interesting one. Its first attempt burned 316k tokens and was **abandoned before it
+produced a proposal** — the Gate never saw it — and the retry passed the full suite and merged, leaving
+`main` green. So the retry path works. What the run also showed is that an abandoned attempt is
+expensive and, until it was fixed, recorded no reason anywhere. Re-running either settled workspace does
+no work and exits `0`.
+
+**Two tasks are not a solve-rate.** They are evidence that the loop closes end to end, and no more.
+
+A third run on 2026-08-24 with the `codex` backend merged a correct change in one `aoa run`
+(590,623 tokens, 2 attempts, 141.7s) — and exposed a real bug while doing it: `max_passes` was an
+accidental wall-clock timeout that killed any run longer than ~100 seconds of agent time. The hermetic
+suite could not have found it, because the `mock` backend returns in milliseconds.
+
+## Run the smoke test yourself
 
 Run it yourself (needs `go` and an authenticated `claude` CLI):
 

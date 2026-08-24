@@ -21,6 +21,7 @@ $ aoa run
 - :material-download: **[Install](install.md)** — `go install`, a release binary, or from source
 - :material-robot: **[Harnesses](harnesses/README.md)** — drive Claude Code, Codex, Cursor, Grok, Gemini, or any CLI you already have
 - :material-tune: **[Configuration](config-reference.md)** — every `aoa.toml` field, with defaults
+- :material-console: **[CLI reference](cli.md)** — every command and flag
 
 </div>
 
@@ -60,5 +61,6 @@ No agent-to-agent messaging, no voting, no debate, no LLM coordinator, no role h
 The loop closes end to end on real repositories, with real backends, on real money — with cost
 accounting, spend governors and OpenTelemetry export. What is **not** yet established is whether the
 Gate changes outcomes at scale: the SWE-bench numbers recorded so far were produced with the Gate
-*disabled*. The project says so [in its own README](https://github.com/bharadwaj6/ageOfAgents#readme)
-rather than quoting a headline solve-rate it cannot stand behind.
+*disabled*, so those runs measure the backend agent rather than the merge queue. The numbers, and the
+caveats that go with them, are in [live evaluation](design/live_eval.md) rather than compressed into a
+headline solve-rate this project cannot stand behind.

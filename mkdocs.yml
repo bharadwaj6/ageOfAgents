@@ -73,6 +73,7 @@ nav:
       - DeepSeek & OpenAI-compatible: harnesses/deepseek.md
       - Bring your own CLI: harnesses/byo-cli.md
   - Guide:
+      - CLI reference: cli.md
       - Configuration: config-reference.md
       - Scheduling: scheduling.md
       - Observability: integrations/README.md

@@ -87,7 +87,7 @@ suite never makes network calls. Always keep it that way: tests must pass with n
 | `internal/ledger` | Append-only JSONL Event Log | Keep `Append` concurrency-safe |
 | `internal/state` | Replay events → state, Task Graph readiness | Pure functions only; no I/O |
 | `internal/orchestrator` | The Scheduler (single control loop) | Keep dispatch decoupled from the Merge Queue |
-| `internal/agent` | `Backend` interface + `mock`/`claudecode`/`grok` | New Backends implement `Backend`; keep `mock` deterministic |
+| `internal/agent` | `Backend` interface + CLI harness presets (`cli.go`: claudecode, codex, cursor, gemini, grok) + native `openai`/`anthropic` + `mock` | A CLI harness is a preset row, not a file (ADR 014); keep `mock` deterministic |
 | `internal/worktree` | Git repo + isolated worktrees | All git calls use the config-independent identity helper |
 | `internal/verify` | The Gate (objective verification) | Pure command runner; no orchestration logic |
 | `internal/mergequeue` | Verify → merge → rollback (+ disjoint-file batching) | Must leave `main` green and linearizable |
@@ -95,7 +95,8 @@ suite never makes network calls. Always keep it that way: tests must pass with n
 | `internal/otel` | Replay projection to OpenTelemetry (OTLP traces+metrics) | Off by default; never in the hot path; never networks in tests (ADR 012) |
 | `internal/bench`, `internal/liveeval` | Hermetic coordination benchmark + live eval harness | `liveeval` is networked only with a networked Backend (ADR 009) |
 | `internal/config` | `aoa.toml` loading | Add a field → set a default in `Default()` |
-| `cmd/aoa` | Tiny stdlib CLI | No CLI framework dependency |
+| `cmd/aoa` | Tiny stdlib CLI | No CLI framework dependency; document new commands in `docs/cli.md` |
+| `scripts/` | Eval + benchmark harnesses (SWE-bench, live smoke, OTLP smoke) | Not covered by `make check`; keep them runnable from a clean clone |
 
 ## Conventions & Go Best Practices
 

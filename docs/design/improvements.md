@@ -165,13 +165,13 @@ a new lifecycle concern and should land with its own ADR.
 
 - **Dollar circuit-breaker & cost dashboard.** A token governor (`max_tokens_per_goal`) and a `$` ceiling
   (`max_usd_per_goal`) exist, and both now count *every* attempt including failed ones; a true cross-run
-  dollar circuit breaker and a real-time burn view are on the README roadmap. Cost data is already
-  event-sourced (`tokens_by_model`, `metrics.USD`).
+  dollar circuit breaker and a real-time burn view are still open (see *Not yet scheduled* below). Cost
+  data is already event-sourced (`tokens_by_model`, `metrics.USD`).
 - **Heartbeat-based stall detection.** *Shipped* — workers emit `Heartbeat` on
   `Options.HeartbeatInterval` (30s) for the duration of every Backend call, so the Stall Detector
   distinguishes a slow agent from a dead one instead of inferring liveness from the dispatch timestamp.
-- **Multi-repo coordination & Firecracker sandboxing.** Already captured in `cross_repo.md` and the
-  README roadmap; not re-argued here.
+- **Multi-repo coordination & Firecracker sandboxing.** Captured in [`cross_repo.md`](cross_repo.md)
+  and under *Not yet scheduled* below; not re-argued here.
 
 ## Explicit non-goals (kept here so the recommendations stay credible)
 
@@ -187,3 +187,29 @@ None of the above reaches for the machinery the design deliberately rejects. We 
 2. **#2 Context pack** and **#3 flaky detection** next; both reuse the projection pattern and the data #1
    adds.
 3. **#4 blind-spot/post-merge safety** last — largest surface, needs its own ADR.
+
+## Not yet scheduled
+
+Moved here from the README, which now points at the docs rather than carrying a roadmap. These are
+directions, not commitments — nothing below has a date, and several may never be built.
+
+1. **Firecracker microVM sandboxing.** Docker isolates the Gate today. Firecracker would give stronger
+   multi-tenant isolation at lower overhead, and could cover the *agent* as well as the Gate — which is
+   the gap [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md) is candid
+   about.
+2. **Persistent server mode.** `aoa serve` handles GitHub webhooks. A durable server would add a
+   dashboard over the Event Log, live task graphs, and remote control of a running orchestrator.
+3. **A cross-run `$` circuit breaker.** `max_usd_per_goal` bounds one goal. Nothing bounds a week of
+   them.
+4. **Cross-repo dependency management.** One workspace is one repository. Atomic merges spanning several
+   is designed in [`cross_repo.md`](cross_repo.md) and unimplemented.
+
+Speculative merge, best-of-N with the suite as verifier, and SPRT early-stopping are tracked with
+explicit reopen gates in [the roadmap](roadmap.md) instead.
+
+### Why log compaction is not on this list
+
+It shipped, then was **removed rather than fixed**. Compaction rewrote the log to a single snapshot,
+which `metrics`, `diagnose`, `otel` and the invariant checker all read as zeros — and because a snapshot
+carries no attempt history, that is not fixable. A compacted log and replay-derived metrics are mutually
+exclusive; replay won. Recorded here so it is not proposed again.

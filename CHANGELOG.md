@@ -35,8 +35,26 @@ All notable changes to this project are documented here. The format follows
 - `aoa` warns at startup when `max_tokens_per_goal`/`max_usd_per_goal` are set on a backend that reports
   no token usage. The governors were silently inert on such backends.
 
+### Changed
+
+- **The README is rewritten around what a prompt cannot do.** 325 lines to 185. The old lede — "runs
+  your build and tests and merges only if they pass" — described something you get by typing "run the
+  tests first" into any harness, and buried the actual problem: several agents at once, nobody watching,
+  and `main` still green. It now leads on that, and answers the obvious objection head-on in a section
+  that concedes the case where a prompt is the right tool. Config, commands, concepts, layout and
+  roadmap moved to the docs site, which is where detail belongs now that it exists.
+
 ### Fixed
 
+- **`docs/cli.md`** — a command reference existed nowhere. The README's table was the closest thing and
+  it was wrong: it omitted `quickstart`, `doctor` and `completion` entirely, missed several flags, and
+  claimed "every subcommand takes `--path`" when `bench`, `eval`, `version` and `completion` reject it.
+  The new page is written from the flagsets in `cmd/aoa`, not from the old table.
+- Stale `internal/agent` descriptions in `AGENTS.md` and `docs/design/architecture.md`: they still named
+  `claudecode.go` and `grok.go`, which ADR 014 collapsed into preset rows in `cli.go`, and none of them
+  mentioned codex, cursor or gemini.
+- `docs/index.md` pointed at the README for the honest evaluation story, which the README no longer
+  carries; it now points at `design/live_eval.md`, where that story is more complete anyway.
 - **`max_passes` was an accidental wall-clock timeout.** A reconcile pass spent purely *waiting* on an
   in-flight worker consumed the pass budget, so the defaults (1000 passes x 100ms `poll_interval`)
   capped a run at roughly 100 seconds of agent time. Every real backend exceeds that: a live `codex`
