@@ -40,13 +40,17 @@ All notable changes to this project are documented here. The format follows
 - **The design docs stop citing raw LLM transcripts as research.** `docs/research/` holds five unedited
   chat outputs from the exploratory phase; the design docs were citing them as evidence — one called a
   Gemini chat window "an independent critique [that] validated these decisions". All 16 such citations
-  are gone, replaced by the paper where one exists or dropped where none does. `docs/research/links.md`
-  is now a verified bibliography that states which claim each source supports; the transcripts remain as
-  provenance, explicitly not as evidence.
+  are gone, replaced by the paper where one exists or dropped where none does.
 - **Numbers now match their sources.** The MAST category split was quoted from a transcript and
   disagreed with the paper (44.2/32.3/23.5 → the paper's 41.8/36.9/21.3). A "+15.6% success" figure and
   a "~80% coordination overhead" figure had no source and are gone. SWE-bench "70–78% vs 17–19%" could
   not be sourced and is now a qualitative statement with a link. MAST is an arXiv preprint, not NeurIPS.
+- **The research corpus is deleted, not archived.** `docs/research/` (five raw LLM transcripts, 2,488
+  lines) and `docs/history/` (origin prompt, Gas Town snapshot) are gone from the repo and the docs
+  site. They recorded how the design was arrived at, but they are not evidence, and keeping them behind
+  a disclaimer still made a reader work out which pages were load-bearing. Recoverable from git —
+  `git show 30fcc28 -- docs/research/` and `git show cac011b -- docs/history/`. The curated bibliography
+  survives as `docs/design/reading-list.md`.
 - **`docs/design/roadmap.md`: 332 lines → 59.** It was an agent resume-anchor — ~50 checkboxes, ~51
   PR/issue numbers, Track A–D / Phase E–F, and "a fresh agent should start here" — published as
   documentation. It is now a roadmap: what is settled, the one open question that matters, what is

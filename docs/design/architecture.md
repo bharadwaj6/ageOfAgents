@@ -13,7 +13,7 @@ coding agents.
 The design invests in verification, specification and idempotency, and refuses hierarchy, markets and
 debate. That is not a taste preference — it follows from what the evidence says goes wrong in
 multi-agent systems. Every figure below is quoted from the paper cited, and the
-[reading list](../research/links.md) says which claim each source supports.
+[reading list](reading-list.md) says which claim each source supports.
 
 - **Most multi-agent failures are coordination, design and verification failures — not model
   failures.** The MAST taxonomy (Cemri et al., *Why Do Multi-Agent LLM Systems Fail?*,
@@ -201,5 +201,5 @@ emitting ordinary `agent.Backend` work, never as a second coordinator (ADR 011).
 
 - [Metrics](metrics.md) — how we measure whether this design delivers.
 - [Comparison](comparison.md) — how it differs from Gastown, Spec Kit + plan, and opencode ultraworker.
-- [Reading list](../research/links.md) — every source the design rests on, and which claim each supports.
+- [Reading list](reading-list.md) — every source the design rests on, and which claim each supports.
 - [Decision records](adr/README.md) — the individual decisions and what was rejected.

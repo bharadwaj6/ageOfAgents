@@ -67,16 +67,19 @@ Not research, but the direct intellectual ancestry of the design:
   SWE-bench-Live exists because contamination inflates results on static sets; treat any headline
   resolve-rate accordingly.
 
-## Provenance, not evidence
+## What is not here
 
-`docs/research/` also holds five raw LLM transcripts from the exploratory phase, and
-`docs/history/` holds the origin prompt and a snapshot of the Gas Town architecture that prompted the
-work. They record **how the design was arrived at**. They are not evidence, they were not peer
-reviewed, and no design document should cite them in support of a claim — where one used to, it now
-cites the paper above or drops the claim.
+The design was arrived at partly through a long exploratory phase — LLM research transcripts, an origin
+prompt, a survey of swarm and market approaches (ant colony optimization, MAX-MIN Ant System, Contract
+Net). None of that backs the current architecture: those approaches were **rejected**
+([ADR 005](adr/005-no-markets-no-consensus.md), [ADR 011](adr/011-debate-markets-as-offline-tools.md)),
+and transcripts are not evidence in any case.
 
-That phase also surveyed swarm and market approaches — ant colony optimization, MAX-MIN Ant System,
-slime-mould models, Contract Net. None of it backs the current architecture, because those approaches
-were **rejected** ([ADR 005](../design/adr/005-no-markets-no-consensus.md),
-[ADR 011](../design/adr/011-debate-markets-as-offline-tools.md)). The transcripts remain for anyone who
-wants to see the road not taken.
+Those files used to live in `docs/research/` and `docs/history/`. They were removed rather than kept
+behind a disclaimer, because a reader should not have to work out which pages are load-bearing. They
+remain in git history if anyone wants the road not taken:
+
+```bash
+git show 30fcc28 -- docs/research/    # the five LLM transcripts
+git show cac011b -- docs/history/     # origin prompt + Gas Town snapshot
+```

@@ -49,8 +49,8 @@ others are assessed from each system's documented architecture and may change as
 ## Per-system reading
 
 - **Gastown.** Its engineering core is sound distributed systems in disguise (event-sourced ledger,
-  serializing merge queue, supervision tree, failure detector — see `docs/history/gastown_arch.md`).
-  `aoa` keeps exactly those load-bearing primitives and **deletes the org-chart layer**:
+  serializing merge queue, supervision tree, failure detector, wrapped in a persona layer of
+  Mayor / Witness / Deacon / Polecats). `aoa` keeps exactly those load-bearing primitives and **deletes the org-chart layer**:
   the personas (Mayor/Witness/Deacon/Polecats) are an anthropomorphic mapping of human-org limits onto
   aligned agents, and they put *LLMs in the coordination path* — which is where Gastown's reported chaos
   ($100/hr, auto-merged failing tests) comes from: a control failure, an under-strict gate. `aoa` makes
