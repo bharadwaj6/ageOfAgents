@@ -163,7 +163,13 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 		}
 	}()
 
-	for pass := 0; pass < o.opt.MaxPasses; pass++ {
+	// pass counts *productive* passes only. A pass spent waiting on an in-flight
+	// worker, or on a retry backoff, does no reconciliation and must not consume
+	// the budget: with the defaults that turned MaxPasses into an accidental
+	// wall-clock timeout of MaxPasses x PollInterval — 100 seconds — and every
+	// real agent takes longer than that. The bound still does its real job,
+	// which is to stop a run that keeps emitting events without converging.
+	for pass := 0; pass < o.opt.MaxPasses; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -187,7 +193,7 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 			// rather than declaring the run stuck.
 			if o.anyInFlight() || s.ActiveCount() > 0 {
 				o.opt.Sleep(o.opt.PollInterval)
-				continue
+				continue // waiting is not a pass
 			}
 			// No progress. If the only unsettled work is parked for human
 			// approval, pause cleanly — a later `aoa approve` + `aoa run` resumes.
@@ -198,10 +204,11 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 			// nearest ticket to become dispatchable rather than failing the run.
 			if wait, ok := o.nextBackoffWait(s, o.opt.Now()); ok {
 				o.opt.Sleep(wait)
-				continue
+				continue // waiting is not a pass
 			}
 			return fmt.Errorf("orchestrator made no progress but work is unsettled (seq %d)", s.LastSeq)
 		}
+		pass++
 	}
 	return fmt.Errorf("orchestrator exceeded %d passes", o.opt.MaxPasses)
 }
