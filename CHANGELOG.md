@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`aoa quickstart`** — scaffold a workspace, submit a goal and run it in one command, offline on the
+  mock backend. It is a wrapper over the four real commands, each printed as it runs, so what you have
+  just watched is a script you can retype.
+- **`aoa doctor`** — check that a workspace can actually run before a run proves it can't: git present,
+  `aoa.toml` parses, `repo` is a git repository, the configured backend (and every fallback) is usable
+  on this machine, each Gate command's binary resolves, docker is present when `sandbox = "docker"`,
+  and the Event Log replays. Every failure prints the one action that fixes it. Exits non-zero, so CI
+  can gate on it.
+- **`aoa completion bash|zsh|fish`** — static completion scripts, no CLI framework. A test scans the
+  dispatch switch in `main()` and fails if a subcommand is added without being completed.
+
+### Fixed
+
+- `aoa help` documented neither `init --adopt`/`--force`, `status --interval`, `eval --price`/`--json`,
+  nor `serve --secret` — the last of which `docs/scheduling.md` says you must always set or anyone who
+  can reach the port can queue work.
+
 ## [0.3.0] — 2026-08-24
 
 ### Changed
