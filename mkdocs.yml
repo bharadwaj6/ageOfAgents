@@ -104,18 +104,7 @@ nav:
       - Cross-repo (design only): design/cross_repo.md
       - Roadmap: design/roadmap.md
       - Proposals: design/improvements.md
-  - Research corpus:
-      - About: research/README.md
-      - ChatGPT: research/chatgpt.md
-      - Claude: research/claude-report.md
-      - Gemini: research/gemini.md
-      - Grok: research/grok.md
-      - Perplexity: research/perplexity.md
-      - Reading list: research/links.md
-      - History:
-          - About: history/README.md
-          - Origin prompt: history/prompt.md
-          - Gas Town architecture: history/gastown_arch.md
+      - Reading list: design/reading-list.md
 
 extra:
   social:

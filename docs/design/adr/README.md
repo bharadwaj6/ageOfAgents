@@ -3,10 +3,8 @@
 These ADRs record the load-bearing decisions for the orchestrator.
 
 Where a decision rests on external evidence, the ADR cites the paper directly and the
-[reading list](../../research/links.md) says which claim each source supports. Some decisions rest on
-ordinary engineering practice rather than research, and say so. The raw LLM transcripts under
-`docs/research/` are **provenance, not evidence** — they record how the design was arrived at and are
-not cited in support of any decision.
+[reading list](../reading-list.md) says which claim each source supports. Some decisions rest on
+ordinary engineering practice rather than research, and say so.
 
 | ADR | Decision |
 |-----|----------|
