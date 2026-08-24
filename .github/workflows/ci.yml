@@ -37,6 +37,21 @@ jobs:
       - name: Run tests under -race
         run: make race
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # docs/getting-started.md already tells *users* to put golangci-lint in
+      # their Gate; this repo did not run it on itself.
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

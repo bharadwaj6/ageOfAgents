@@ -239,7 +239,7 @@ func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 			if tc.Function.Name == "finish" {
 				if sum, ok := args["summary"].(string); ok {
 					finalSummary = sum
-					trace.WriteString(fmt.Sprintf("\n[tool: finish] %s\n", sum))
+					fmt.Fprintf(&trace, "\n[tool: finish] %s\n", sum)
 				}
 				finished = true
 
@@ -262,7 +262,7 @@ func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 					})
 					continue
 				}
-				trace.WriteString(fmt.Sprintf("\n[tool: bash] %s\n", cmdStr))
+				fmt.Fprintf(&trace, "\n[tool: bash] %s\n", cmdStr)
 
 				cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)
 				cmd.Dir = task.Worktree
@@ -278,7 +278,7 @@ func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 				if resultStr == "" {
 					resultStr = "Command executed successfully with no output."
 				}
-				trace.WriteString(fmt.Sprintf("[result]\n%s\n", resultStr))
+				fmt.Fprintf(&trace, "[result]\n%s\n", resultStr)
 
 				messages = append(messages, openAIMessage{
 					Role:       "tool",

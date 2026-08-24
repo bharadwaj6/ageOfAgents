@@ -197,7 +197,7 @@ func (a *Anthropic) Run(ctx context.Context, task Task) (Result, error) {
 					}
 					if err := json.Unmarshal(blk.Input, &args); err == nil {
 						finalSummary = args.Summary
-						trace.WriteString(fmt.Sprintf("\n[tool: finish] %s\n", args.Summary))
+						fmt.Fprintf(&trace, "\n[tool: finish] %s\n", args.Summary)
 					}
 					finished = true
 					results = append(results, toolResultBlock{Type: "tool_result", ToolUseID: blk.ID, Content: "Acknowledged."})
@@ -209,7 +209,7 @@ func (a *Anthropic) Run(ctx context.Context, task Task) (Result, error) {
 						results = append(results, toolResultBlock{Type: "tool_result", ToolUseID: blk.ID, Content: "Error: missing or invalid 'command' argument"})
 						continue
 					}
-					trace.WriteString(fmt.Sprintf("\n[tool: bash] %s\n", args.Command))
+					fmt.Fprintf(&trace, "\n[tool: bash] %s\n", args.Command)
 
 					cmd := exec.CommandContext(ctx, "bash", "-c", args.Command)
 					cmd.Dir = task.Worktree
@@ -224,7 +224,7 @@ func (a *Anthropic) Run(ctx context.Context, task Task) (Result, error) {
 					if resultStr == "" {
 						resultStr = "Command executed successfully with no output."
 					}
-					trace.WriteString(fmt.Sprintf("[result]\n%s\n", resultStr))
+					fmt.Fprintf(&trace, "[result]\n%s\n", resultStr)
 					results = append(results, toolResultBlock{Type: "tool_result", ToolUseID: blk.ID, Content: resultStr})
 				}
 			}

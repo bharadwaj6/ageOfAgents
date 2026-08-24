@@ -8,7 +8,7 @@ TLA2TOOLS ?= tla2tools.jar
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build install test test-short race vet fmt fmt-check check bench chaos smoke formal clean
+.PHONY: help build install test test-short race vet fmt fmt-check check bench chaos smoke formal clean lint
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -31,6 +31,10 @@ vet: ## Run go vet
 
 fmt: ## Format all Go code in place
 	gofmt -w $(FMT_DIRS)
+
+lint: ## Run golangci-lint (needs golangci-lint on PATH; CI runs it too)
+	@command -v golangci-lint >/dev/null || { echo "golangci-lint not found: https://golangci-lint.run/welcome/install/"; exit 1; }
+	golangci-lint run
 
 fmt-check: ## Fail if any Go file is not gofmt-clean
 	@out="$$(gofmt -l $(FMT_DIRS))"; \

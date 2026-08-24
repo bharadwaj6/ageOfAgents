@@ -191,15 +191,6 @@ func openWorkspace(path string) (workspace, error) {
 	return ws, nil
 }
 
-func loadWorkspace(path string) (workspace, *ledger.Ledger, error) {
-	ws, err := openWorkspace(path)
-	if err != nil {
-		return ws, nil, err
-	}
-	led, err := ledger.Open(ws.ledgerPath)
-	return ws, led, err
-}
-
 func resolve(root, p string) string {
 	if filepath.IsAbs(p) {
 		return p
