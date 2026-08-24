@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [ "main" ]
+  # Every pull request, not only those targeting main: a stacked PR based on
+  # another branch got no checks at all, so the gate was decorative exactly
+  # where review happens.
   pull_request:
-    branches: [ "main" ]
 
 jobs:
   check:
