@@ -139,11 +139,26 @@ When acting as an AI pair programming assistant for this backend project, abide 
 
 ## Common tasks
 
-- **Add an agent Backend:** implement `agent.Backend` (`Name`, `Run`), register it in
-  `cmd/aoa/main.go:buildBackend`, document the `backend` value in `README.md`/`aoa.toml`.
+- **Add a CLI harness:** add a row to `cliPresets` in `internal/agent/cli.go` (binary, args, whether it
+  reports usage) plus a row in `TestCLIPresetArgv`, and a page under `docs/harnesses/`. Only add a case
+  to `parseCLIOutput` if the CLI has its own output envelope. The prompt is appended as the **final
+  argv element**, so a harness taking it as a flag value puts that flag last (ADR 014). No Go change is
+  needed at all for a harness a user can describe with `[backends.<name>] type = "cli"`.
+- **Add a non-CLI Backend:** implement `agent.Backend` (`Name`, `Run`), register it in
+  `cmd/aoa/main.go:buildBackendSingle`, document it in `docs/harnesses/` and `README.md`.
 - **Add a lifecycle event:** add the constant + payload in `pkg/api/events.go`, handle it in
   `internal/state/state.go:Apply`, emit it from `internal/orchestrator`, and cover it with a test.
 - **Change the Gate:** edit `verify` in `aoa.toml`; the Merge Queue verifies the post-merge state.
 - **Add observability (metric/span):** extend the replay projection in `internal/otel` (and
   `internal/metrics` for a new number) — never add a span/metric call into the orchestrator or ledger.
   Keep it behind `Enabled()` so offline runs and tests stay silent.
+
+## Driving `aoa` from a harness
+
+`aoa` is a CLI, so any agent harness that can run commands can drive it — no plugin, no server. The
+usage contract lives in [`.claude/skills/aoa/SKILL.md`](.claude/skills/aoa/SKILL.md): when to reach for
+it, how to submit and watch a Goal, and what to report back. Claude Code loads that file automatically;
+for Codex, Cursor or anything else, read it as the instructions for using this tool.
+
+Short version: `aoa doctor` before blaming a failure, `aoa goal` then `aoa run`, `aoa status` for what
+happened. A merge means *the Gate passed* — say that, rather than that the change is good.

@@ -25,6 +25,10 @@ All notable changes to this project are documented here. The format follows
   DeepSeek needs no backend at all — it is an OpenAI-compatible endpoint, which already worked.
   A CLI backend is now a table row rather than a file: `claudecode.go` and `grok.go` were line-for-line
   copies, and three more would have been three more copies.
+- **A skill for driving `aoa` from an agent harness** (`.claude/skills/aoa/SKILL.md`), pointed at from
+  `AGENTS.md`. `aoa` is a CLI, so any harness that can run commands can already drive it — what was
+  missing was the contract for *when* to reach for it and what to report back. One file; Claude Code
+  loads it automatically, Codex and Cursor read it via `AGENTS.md`. No MCP server.
 - **A documentation site** at [bharadwaj6.github.io/ageOfAgents](https://bharadwaj6.github.io/ageOfAgents/),
   built from `docs/` with MkDocs Material and published on every push to `main`. CI builds it with
   `--strict`, so a broken cross-reference fails the build rather than rotting quietly.

@@ -27,3 +27,6 @@ scripts/astropy_5.json
 
 # MkDocs build output
 /site/
+
+# Local Claude Code settings (the shared skill under .claude/skills/ is tracked)
+.claude/settings.local.json
