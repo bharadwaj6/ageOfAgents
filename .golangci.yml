@@ -1,0 +1,29 @@
+# Deliberately small: `make check` already gates on `go build`, `go vet` and
+# `gofmt`, so this adds only what those three miss. Enabling the full default
+# set on a 13k-line codebase would produce a wall of findings nobody triages.
+version: "2"
+
+linters:
+  enable:
+    - errcheck     # AGENTS.md: "always handle errors explicitly — never assign to _"
+    - staticcheck
+    - unused
+    - ineffassign
+
+  settings:
+    errcheck:
+      # These have no actionable error. Excluding them by name is honest;
+      # sprinkling `_ =` at the call sites would satisfy the linter while
+      # violating the AGENTS.md rule that errcheck is here to enforce.
+      exclude-functions:
+        - (*os.File).Close          # read handles closed via defer
+        - (io.ReadCloser).Close     # HTTP response bodies, already drained
+        - os.RemoveAll              # temp-dir cleanup on the way out
+        - fmt.Fprintln              # writes to an http.ResponseWriter
+        - fmt.Fprintf
+
+  exclusions:
+    rules:
+      # Test helpers legitimately ignore errors on cleanup paths.
+      - path: _test\.go
+        linters: [ errcheck ]

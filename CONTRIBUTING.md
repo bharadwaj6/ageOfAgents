@@ -93,3 +93,5 @@ Open an issue. A failing test, or the `aoa events tail` output around the proble
 description — the Event Log is a complete record of what the system did.
 
 For anything with a security dimension, read [`SECURITY.md`](SECURITY.md) first.
+
+Participation in this project is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).

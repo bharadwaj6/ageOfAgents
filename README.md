@@ -29,14 +29,16 @@ green afterwards. See [the receipts](#why-this-is-different--the-receipts).
 **Prerequisites:** Go **1.26.4+** (see [`go.mod`](go.mod)) and `git`. Nothing else — the default backend
 runs offline with no API key.
 
-> The repository is currently **private**, so `go install …@latest` and the Releases page work only for
-> accounts with access. Clone and build:
+```bash
+go install github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest
+```
+
+Or grab a binary from [Releases](https://github.com/bharadwaj6/ageOfAgents/releases), or build from
+source:
 
 ```bash
 git clone https://github.com/bharadwaj6/ageOfAgents.git && cd ageOfAgents
 make install          # puts `aoa` in $GOBIN (or $GOPATH/bin)
-# or, without touching your PATH:
-go build -o aoa ./cmd/aoa
 ```
 
 Now run the whole loop offline, in about ten seconds:
@@ -126,7 +128,7 @@ deliberately, because a deterministic control plane has no business guessing at 
 | every `aoa.toml` field, with defaults | [`docs/config-reference.md`](docs/config-reference.md) |
 | a worked config for a real repo | [`examples/`](examples/) |
 | run it on a schedule (cron, systemd, Actions) | [`docs/scheduling.md`](docs/scheduling.md) |
-| contribute a change | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| contribute a change | [`CONTRIBUTING.md`](CONTRIBUTING.md) + [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
 | see what changed between releases | [`CHANGELOG.md`](CHANGELOG.md) |
 | know what it does to your machine | [`SECURITY.md`](SECURITY.md) |
 | understand the design | [`docs/design/architecture.md`](docs/design/architecture.md) + the [ADRs](docs/design/adr/) |
