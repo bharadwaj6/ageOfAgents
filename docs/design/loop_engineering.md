@@ -6,13 +6,13 @@ while: the practitioner stops prompting an agent turn by turn and instead builds
 **schedules** the next cycle. The framing is Addy Osmani's; the same five moves show up independently in
 Peter Steinberger's OpenClaw, Geoffrey Huntley's "Ralph" technique, and Stripe's internal Minions fleet.
 
-This document scores `aoa` against that model honestly: where it was already further along than the
-prescriptions, where it had real gaps, and — the part worth being explicit about — which of the model's
-recommendations `aoa` **refuses**, and why the refusal is a design position rather than an omission.
+This document scores `aoa` against that model, and — the part worth being explicit about — states which
+of the model's recommendations `aoa` **refuses**, and why each refusal is a design position rather than
+an omission.
 
-Short version: **`aoa` is not a system that should adopt loop engineering. It is a loop, built to a
-stricter standard than the model asks for on the three moves that are hard, and it was missing the two
-that are easy.** The gaps have since been closed or explicitly bounded; see the scorecard.
+Short version: **`aoa` is not a system that should adopt loop engineering. It is a loop**, built to a
+stricter standard than the model asks for on the three moves that are hard: handoff, verification and
+persistence.
 
 ## The five moves
 
@@ -110,23 +110,23 @@ would make an interesting A/B — it is the canonical minimal-scaffolding refere
 having a reproducible SWE-bench baseline to A/B *against*.
 
 One number from that literature is worth carrying: on SWE-bench Verified, the strong harnesses resolve
-70–78% of instances, but on **SWE-bench-Live** — freshly opened, uncontaminated issues — the same systems
-land around 17–19%. Whatever the loop around them, agents are far better at traversing known ground than
+well, but on [SWE-bench-Live](https://swe-bench-live.github.io/) — freshly opened, uncontaminated
+issues — the same systems score far lower. Whatever the loop around them, agents are better at known ground than
 at genuinely novel ambiguity. That is an argument for keeping the Gate strict and the human in the
 approval path, not for trusting a longer loop.
 
 ## Scorecard
 
-| | Before | Now |
-|---|---|---|
-| Discovery | webhook only, unsafe to leave running | webhook only, **hardened** (deduped, single-flight); autonomous sources explicitly deferred |
-| Handoff | worktrees + serializing gated merge queue | unchanged — already ahead |
-| Verification | deterministic Gate + measured blind spot | unchanged — already ahead |
-| Persistence | event log + replay + context pack | unchanged — already ahead |
-| Scheduling | nothing | cron/systemd/Actions recipes + `run --interval` |
-| Token blowout | governor blind to failed attempts | every attempt charged; USD ceiling completed |
-| Liveness | `Heartbeat` defined but never emitted | emitted during every agent run |
-| Termination gates | five hardcoded, unreachable from config | all configurable in `aoa.toml` |
+| Move | Where `aoa` stands |
+|---|---|
+| Discovery | Webhook only — deduped and single-flight. Autonomous sources are [deliberately deferred](roadmap.md#deliberately-deferred-with-reopen-conditions) |
+| Handoff | Per-attempt git worktrees plus a serializing, gated merge queue |
+| Verification | A deterministic Gate, with the blind spot itself measured (`regression_escape_rate`) |
+| Persistence | Append-only event log, replay, and a deterministic context pack |
+| Scheduling | `run --interval`, plus cron / systemd / GitHub Actions recipes |
+| Cost control | Every attempt charged, including failed ones; token and USD ceilings per goal |
+| Liveness | `Heartbeat` emitted throughout every agent run, so the Stall Detector measures silence |
+| Termination gates | All reachable from `aoa.toml` |
 
 ## See also
 

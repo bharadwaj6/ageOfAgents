@@ -16,14 +16,14 @@ Every unit of work carries an **idempotency key**, and identity is by key, not b
 - A worker proposing emergent children supplies an `IdempotencyKey` per `Subtask`
   (`internal/agent/agent.go`). The root ticket of a goal uses `<goalID>:impl`.
 - `state.Apply` dedupes on the key: a second `TicketCreated` for a key already mapped to a ticket is a
-  **no-op** (`internal/state/state.go`, `keyToTicket`). The Event Log can therefore carry redundant
+  **no-op** (`internal/state/state.go`, `KeyToTicket`). The Event Log can therefore carry redundant
   creation events without creating phantom tickets.
 - The Scheduler resolves a re-proposed child whose key already names a ticket by **adopting** the existing
   ticket rather than creating a new one (`orchestrator.decompose` via `state.TicketForKey`). This is what
   makes re-decomposition after a crash safe: the same logical graph collapses onto the same tickets.
 - Duplicate keys *within a single decomposition batch* collapse to one canonical child, so the emitted
   `Children` list never references a ticket that was deduped away (a liveness bug the chaos harness found
-  and this rule fixed — see roadmap Track B).
+  and this rule fixed).
 - The invariant `NoDuplicateMergedKey` (I4) asserts no two distinct merged tickets ever share a key, and
   the TLA+ model (`docs/design/formal`) proves it exhaustively for the merge path.
 
@@ -36,7 +36,7 @@ Gate's job (ADR 002), not idempotency's.
 ## Consequences
 - Crash recovery, duplicated dispatch, and re-decomposition are no-ops at the application layer — directly
   attacking the #1 MAST failure mode.
-- Keys are part of the worker contract: the `claudecode` prompt asks for an `idempotency_key` per subtask,
+- Keys are part of the worker contract: the shared agent prompt (`agent.BuildPrompt`) asks for an `idempotency_key` per subtask,
   and a worker that omits stable keys forfeits adoption (it may create siblings). Stable, goal-scoped keys
   (`<goal>:<component>`) are the documented convention.
 - This is a behavioral contract over the existing code; no code change accompanies this ADR.

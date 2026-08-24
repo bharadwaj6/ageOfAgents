@@ -6,7 +6,7 @@ Accepted
 ## Context
 The system must survive agent crashes, support audit/replay, and let multiple workers progress without
 a shared mutable database that they race to read and write. Prior `aoa` retained Dolt as a CQRS read
-model; the research (`docs/research/claude-report.md`, `docs/research/gemini.md`) shows multi-agent memory must be treated as a
+model; distributed-systems practice is that shared multi-agent memory must be treated as a
 distributed-systems problem — giving agents full read/write to a monolithic store causes coherence decay
 and "exponential coupling."
 
@@ -24,4 +24,4 @@ separate authoritative mutable store. Each event has an envelope `{seq, type, ts
 
 ## Research basis
 Event sourcing / log-as-truth (Kleppmann, *DDIA*); MAST Step-Repetition findings (Cemri et al.,
-arXiv:2503.13657); distributed-memory critique in `docs/research/gemini.md`.
+arXiv:2503.13657).

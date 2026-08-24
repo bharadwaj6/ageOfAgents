@@ -1,6 +1,12 @@
-# Cross-Repository Orchestration Design (Drill-Down)
+# Cross-repository orchestration (design sketch)
 
-This document outlines the high-level architecture for expanding Age of Agents (`aoa`) from a single-repository orchestrator to a cross-repository workspace manager.
+!!! warning "Not implemented"
+    This is a design sketch, not a description of how `aoa` works. One workspace is one repository
+    today. The `[workspace]` block below is illustrative future syntax and is **not** valid `aoa.toml` —
+    see the [configuration reference](../config-reference.md) for the real schema.
+
+This outlines how Age of Agents (`aoa`) could expand from a single-repository orchestrator to a
+cross-repository workspace manager.
 
 ## The Problem
 Modern distributed architectures rarely fit into a single repository. A single objective (e.g., "Add a new `discount_code` field to the Checkout API") often requires coordinated changes across:
@@ -8,7 +14,7 @@ Modern distributed architectures rarely fit into a single repository. A single o
 - The **Backend Repo** (implementing the API and database migrations).
 - The **Frontend Repo** (consuming the new field in the UI).
 
-Currently, `aoa` clones a single `repo` specified in `aoa.toml` into an isolated `git worktree` and runs the verification `Gate`.
+Today `aoa` cuts an isolated `git worktree` from `HEAD` of the single local `repo` named in `aoa.toml`, and runs the verification `Gate` there.
 
 ## The Combined Worktree Solution
 To support cross-repo edits without losing the core "single source of truth" and "isolated sandbox" tenets, `aoa` will adopt a **Combined Worktree** model.

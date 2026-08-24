@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-The original vision (`prompt.md`) and `docs/research/perplexity.md` lean toward market-based allocation (Contract
+The original vision for this project leaned toward market-based allocation (Contract
 Net Protocol, bidding), reputation/trust, and stochastic multi-agent consensus (β-horizons, council
 voting). Prior `aoa` implemented all of these. The newer empirical research argues these are the wrong
 tools for *aligned, cooperative* coding agents.
@@ -22,6 +22,7 @@ load-based dispatch (ADR 003); correctness comes from an objective verifier (ADR
   best-of-N-with-verifier (no voting) are the natural, narrow re-introductions.
 
 ## Research basis
-Markets assume self-interested agents (coding is pure coordination) — `docs/research/claude-report.md`; popularity trap
-(arXiv:2510.21513); debate ≈ self-consistency (arXiv:2310.01798); `docs/research/gemini.md` concludes
+Markets assume self-interested agents, and coding under one goal is pure coordination — Shapley-Coop
+(arXiv:2506.07388) frames credit assignment for *self-interested* agents, which is not this case; popularity trap
+(arXiv:2510.21513); unreliable self-correction without external feedback (arXiv:2310.01798). This project concludes
 game-theoretic primitives are "overkill and often detrimental" for software development.

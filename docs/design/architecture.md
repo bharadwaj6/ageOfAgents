@@ -8,37 +8,34 @@ coding agents.
 > **Design thesis.** The bottleneck in multi-agent coding is **verification + specification +
 > idempotency**, not hierarchy, markets, or multi-agent debate. So we invest there and nowhere else.
 
-## 1. Why this design (and what it replaced)
+## 1. Why this design
 
-An earlier implementation (~9.7k LOC) went all-in on a game-theory vision: a Contract Net Protocol
-market, consensus voting, four-dimensional trust, digital pheromones, and role-hierarchy coordination
-(a central coordinator LLM, watchdog daemons, lifecycle managers). It worked, but was large and invested
-heavily in mechanisms that recent empirical work shows are counterproductive for aligned coding agents.
+The design invests in verification, specification and idempotency, and refuses hierarchy, markets and
+debate. That is not a taste preference — it follows from what the evidence says goes wrong in
+multi-agent systems. Every figure below is quoted from the paper cited, and the
+[reading list](../research/links.md) says which claim each source supports.
 
-The research corpus (`docs/research/claude-report.md`, `docs/research/gemini.md`, `docs/research/grok.md`, `docs/research/perplexity.md`,
-`docs/research/links.md`) converges on a sharper picture:
-
-- **Most multi-agent failures are coordination/design/verification failures, not model failures.** The
-  MAST taxonomy (Cemri et al., *Why Do Multi-Agent LLM Systems Fail?*, NeurIPS 2025; 1,642 traces;
-  41–86.7% failure rates) attributes failures to **System Design 44.2%**, **Inter-Agent Misalignment
-  32.3%**, **Task Verification 23.5%**. The single largest individual mode is **Step Repetition 15.7%**
-  — an idempotency/state problem. Adding objective verification yields ~**+15.6%** success.
-- **Consensus voting has a "popularity trap."** Vallecillos-Ruiz, Hort & Moonen (arXiv:2510.21513): a
-  diversity-based selector reaches ~95% of the ensemble's potential while consensus selection "amplifies
-  common but incorrect outputs." Majority voting is the wrong selector for code.
-- **Multi-agent debate ≈ self-consistency at equal cost** (Huang et al., ICLR 2024, arXiv:2310.01798).
-  Self-correction without an external signal is unreliable; an **objective Gate (tests)** is what
-  actually works.
-- **Multi-agent is weak for interdependent tasks** and costs ~15× the tokens of a single agent
-  (Anthropic, *How we built our multi-agent research system*). Coding is highly interdependent — so
-  parallelism must be paired with hard gates and good decomposition, not raw agent count.
-- **Coordinate via shared state, not direct messaging.** The shared-log model yields ~80% token savings
-  vs. agent-to-agent chat (`docs/research/grok.md`). Workers read and write a shared Event Log instead of
-  messaging each other.
-
-An independent critique (`docs/research/gemini.md`) validated these decisions — and concluded the
-game-theoretic primitives are "overkill and often detrimental" for software development — while flagging
-two scalability caveats we address in §5.
+- **Most multi-agent failures are coordination, design and verification failures — not model
+  failures.** The MAST taxonomy (Cemri et al., *Why Do Multi-Agent LLM Systems Fail?*,
+  arXiv:2503.13657) analysed 1,642 traces across 7 frameworks and found a **41%–86.7% failure rate**.
+  It splits failures into **System Design 41.8%**, **Inter-Agent Misalignment 36.9%** and **Task
+  Verification 21.3%**. The single largest individual mode is **Step Repetition (FM-1.3), 15.7%** — a
+  state-identity problem, which is why idempotency keys are load-bearing here ([ADR 010](adr/010-semantic-idempotency.md)).
+- **Consensus voting has a "popularity trap."** Vallecillos-Ruiz, Hort & Moonen (arXiv:2510.21513)
+  find that consensus selection "fall[s] into a 'popularity trap,' amplifying common but incorrect
+  outputs", while a diversity-based selector reaches up to 95% of the ensemble's potential. Majority
+  voting is the wrong selector for code — and a Gate is not a vote ([ADR 005](adr/005-no-markets-no-consensus.md)).
+- **Self-correction without external feedback is unreliable.** Huang et al. (ICLR 2024,
+  arXiv:2310.01798) find that LLMs "struggle to self-correct their responses without external feedback,
+  and at times, their performance even degrades after self-correction." A second opinion from the same
+  model is not an oracle; a compiler and a test suite are ([ADR 002](adr/002-verifier-gated-merge-queue.md),
+  [ADR 011](adr/011-debate-markets-as-offline-tools.md)).
+- **Multi-agent is weak for interdependent tasks, and costs far more tokens than a single agent**
+  (Anthropic, *How we built our multi-agent research system*). Coding is highly interdependent, so
+  parallelism has to be paired with hard gates and good decomposition rather than raw agent count.
+- **Coordinate through shared state, not direct messaging.** Workers read and write a shared Event Log
+  instead of messaging each other, which removes inter-agent misalignment — the second-largest MAST
+  category — as a class ([ADR 006](adr/006-emergent-task-graph-blackboard.md)).
 
 ## 2. Design principles
 
@@ -113,8 +110,10 @@ flowchart TD
   controls whether a Proposal is merged.
 
 **The Scheduler loop** (`internal/orchestrator`): `read(Event Log) → replay to state → diff desired vs
-actual → act (dispatch ready Tasks under the Concurrency Limit; run Stall Detector; drive Merge Queue)
-→ append resulting events → repeat`. One controller, not eleven.
+actual → act (top the worker pool up to the Concurrency Limit; run Stall Detector; drive Merge Queue)
+→ append resulting events → repeat`. Dispatch is asynchronous across passes — a worker that finishes
+early frees its slot immediately rather than waiting for its siblings ([ADR 013](adr/013-worker-pool-not-dispatch-wave.md)).
+There is exactly one control loop.
 
 ## 4. Components (Go packages)
 
@@ -132,7 +131,7 @@ actual → act (dispatch ready Tasks under the Concurrency Limit; run Stall Dete
 | `internal/otel` | Replay projection to OpenTelemetry (OTLP traces + metrics), post-hoc or live; off by default (ADR 012). |
 | `internal/bench`, `internal/liveeval` | Hermetic coordination benchmark; backend-agnostic end-to-end eval harness (ADR 009). |
 | `internal/config` | One TOML config: repo path, Gate commands, concurrency, Backend, governors, pricing, Conventions. |
-| `cmd/aoa` | Tiny standard-library CLI (no framework): `init`, `goal`, `amend`, `run`, `status`, `events`, `diagnose`, `eval`, `bench`, `otel`, `approve`/`reject`. |
+| `cmd/aoa` | Tiny standard-library CLI, no framework. Full command and flag reference: [CLI reference](../cli.md). |
 
 The **`agent.Backend`** interface is the only seam to the AI. Business logic never calls a provider SDK
 directly. A deterministic **`mock`** Backend lets the entire loop run offline in `go test`; the CLI
@@ -146,7 +145,7 @@ their output by replaying the Event Log — the same discipline as `state.Fold`.
 loop emits a metric or span; `internal/otel` turns a finished (or streaming) log into OTLP and is inert
 unless an OTLP endpoint is configured, so the offline guarantee holds (ADR 012).
 
-## 5. Two scalability refinements
+## 5. Why this does not bottleneck
 
 1. **No central-planner bottleneck.** The Scheduler is deterministic code (sub-millisecond), so it is
    not a cognitive bottleneck the way a centralized planning LLM would be. We further avoid a rigid
@@ -178,9 +177,7 @@ there is no separate mutable store to keep consistent.
 | Rejected | Why (research) |
 |----------|----------------|
 | Markets + strategic bidding | Markets assume self-interested agents; aligned coding agents are a *pure coordination* problem. |
-| Digital pheromone simulation | Only pays under task locality; pollution/convergence/debugging costs; unnecessary given an objective Gate. We keep the *Shared Log* form of coordination, not pheromones. |
-| Multi-agent consensus / voting | Debate ≈ self-consistency at equal cost; voting hits the popularity trap. Objective Gate instead. |
-| Trust registry | We control the agents — instrument, don't incentivize. A simple pass-rate can be added later if needed. |
+| Multi-agent consensus / voting | Consensus selection hits the popularity trap (arXiv:2510.21513), and self-correction without external feedback is unreliable (arXiv:2310.01798). An objective Gate instead. |
 | Separate CQRS database | Extra moving parts; the JSONL Event Log already gives queryable, replayable truth. |
 | Multi-tier escalation, federation, gossip, leader election | Single-node MVP; one Stall Detector + crash-only restart covers recovery. Defer until genuinely multi-node. |
 
@@ -195,16 +192,14 @@ emitting ordinary `agent.Backend` work, never as a second coordinator (ADR 011).
 - **Set up:** `go build` → one binary; `aoa init` scaffolds a repo + `aoa.toml`; zero required external
   services (git only).
 - **Use:** `aoa goal "…"` then `aoa run` drives Goal → decompose → dispatch Workers → verify → merge,
-  with a live `aoa feed`.
+  with a live view from `aoa status --watch`.
 - **Validate:** the deterministic `mock` Backend runs the whole loop in `go test` with no network; the
   Gate is the correctness mechanism; the Event Log replays for debugging.
 - **Port:** static Go binary, plain JSONL events, no DB, one config file.
 
-## 9. Advanced: research references
+## 9. Further reading
 
-How we measure whether this design delivers: [`docs/design/metrics.md`](metrics.md); how it compares to other
-approaches (Gastown, Spec Kit + plan, opencode ultraworker): [`docs/design/comparison.md`](comparison.md). See
-`docs/research/links.md` for the full source list. Load-bearing citations: Cemri et al.
-(arXiv:2503.13657, MAST); Vallecillos-Ruiz et al. (arXiv:2510.21513, ensemble popularity trap); Huang
-et al. (arXiv:2310.01798, debate ≈ self-consistency); Anthropic multi-agent research engineering post;
-LATTE (emergent task graphs); shared-log coordination synthesis (`docs/research/grok.md`).
+- [Metrics](metrics.md) — how we measure whether this design delivers.
+- [Comparison](comparison.md) — how it differs from Gastown, Spec Kit + plan, and opencode ultraworker.
+- [Reading list](../research/links.md) — every source the design rests on, and which claim each supports.
+- [Decision records](adr/README.md) — the individual decisions and what was rejected.

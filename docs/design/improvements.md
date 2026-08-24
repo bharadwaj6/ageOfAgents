@@ -24,90 +24,27 @@ Ratings: **leverage** = expected impact on success/quality; **effort** = rough i
 
 ---
 
-## 1. Verification feedback loop — *the failing-build iteration every engineer relies on*
+## 1. Verification feedback loop — **shipped**
 
-**Priority: P0 · Leverage: high · Effort: small · Status: shipped**
+A human engineer fixes code by reading the build error and trying again; blind retries waste a whole
+attempt. The Gate's combined output now flows through `VerificationFailed` → the ticket's
+`LastFailOutput` → `agent.Task.{Attempt, LastFailure}` → the retry prompt, tail-bounded so a long build
+log cannot blow up the token budget.
 
-> Implemented: the Gate's combined output now flows through `VerificationFailed` → ticket
-> `LastFailOutput` → `agent.Task.{Attempt,LastFailure}` → the retry prompt (tail-bounded). The
-> design rationale below is retained for context.
+Codex and Claude Code get this for free inside one session, from live context. Doing it *across isolated
+retries in separate worktrees* is the thing a fleet orchestrator has to build deliberately.
 
-**The need.** A human engineer fixes code by reading the build/test error and trying again. `aoa`
-currently throws that signal away. When a proposal fails the Gate, `rejectOrFail`
-(`internal/orchestrator/orchestrator.go`) emits `VerificationFailed` with only a short `Reason`; the
-verifier's full combined output — captured in `verify.Result.Output` and carried out of the merge queue
-as `Outcome.Output` — is **not** persisted into the event (the `Output` field on
-`api.VerificationFailedPayload` exists but is left unset). The worktree is then cleaned up, and the next
-attempt runs an **identical** prompt (`agent.BuildPrompt`): `agent.Task` has no field for prior-attempt
-failure. Retries are blind.
+## 2. Richer shared-log context pack — **shipped (dependencies)**
 
-**Why Codex/Claude Code don't cover it by default.** They keep error output in the live context of a
-single session. `aoa`'s differentiated value is doing the same thing *across isolated retries and
-distinct workers, durably, by replaying the log* — so a fresh process (or a different worker) picks up
-exactly where the last attempt failed. That is a control-plane capability, not a prompt trick.
+ADR 006 says agents coordinate through shared state, which only means something if a worker can read it.
+Each dispatch now carries a deterministic pack of the ticket's already-merged **dependencies** — title,
+the worker's one-line summary, and the short merge commit — read from the Shared Log via
+`dependencyContext` and injected by `BuildPrompt`. This delivers ADR 006 rather than deciding anything
+new, so it carries no ADR of its own.
 
-**Mechanism (all event-sourced; no new control loop, no LLM in coordination).**
-1. Plumb `Outcome.Output` through `applyMergeOutcome` → `rejectOrFail` into
-   `VerificationFailedPayload.Output` (the field is already defined in `pkg/api/events.go`).
-2. Project the most-recent failure onto the ticket in `internal/state/state.go`, next to the existing
-   `LastFailReason` / `SameFailCount`: add a (truncated) `LastFailOutput`.
-3. Add `Attempt int` and `LastFailure string` to `agent.Task` (`internal/agent/agent.go`), populated at
-   dispatch from ticket state.
-4. Extend `agent.BuildPrompt` to surface it: *"Attempt N. Your previous attempt failed the Gate with the
-   following output: <truncated output>. Fix the cause; keep the change minimal."*
-
-**ADR fit.** Pure projection of the event log (ADR 001), strengthening the Gate-driven loop (ADR 002),
-delivered through the single `agent.Backend` seam (ADR 004). Nothing here is stochastic coordination.
-
-**Tension to settle in design.** Retries currently `cleanupWorktree` (fresh checkout each time).
-Forwarding the *failing diff* as well as the output is possible but adds state and ambiguity;
-recommend **output-first** (simplest, YAGNI) and revisit only if measurement shows agents repeatedly
-re-deriving the same wrong diff.
-
-**Measurement.** Expect `mean_attempts_to_merge` and `retry_churn` (already computed in
-`internal/metrics` / `internal/diagnose`) to fall once the loop is informed.
-
----
-
-## 2. Richer shared-log context pack — *realize the blackboard the design already promises*
-
-**Priority: P1 · Leverage: high · Effort: medium · Status: shipped (dependencies)**
-
-> Implemented (first slice): each dispatch now carries a deterministic context pack of the ticket's
-> already-merged **dependencies** — title, the worker's one-line `Summary`, and the short merge commit —
-> read from the Shared Log via `dependencyContext` and injected by `BuildPrompt`. This required plumbing
-> the previously-dropped `Result.Summary` through `ProposalSubmitted` onto ticket state. No new ADR: it
-> *delivers* ADR 006 rather than deciding anything new. Sibling/graph status was deliberately left out
-> (YAGNI — merged dependencies are the high-signal blackboard read; siblings add noise). The rationale
-> below is retained for context.
-
-**The need.** Before touching code, an engineer reads the surrounding code, the tickets it depends on,
-and what already landed. ADR 006 says agents "coordinate through shared state, not messaging" — but today
-an agent receives only five `Task` fields (`TicketID`, `Title`, `Goal`, `Worktree`, `Conventions`) and
-has no structured view of the blackboard it is supposed to read. The shared log is the coordination
-medium, yet workers cannot actually read it.
-
-**Why Codex/Claude Code don't cover it by default.** A per-task brief, assembled **deterministically by
-replaying a shared coordination log** across many parallel agents, is fundamentally different from one
-assistant's chat history. It is the blackboard model (ADR 006) made real.
-
-**Mechanism.** A deterministic, `state`-derived *context pack* built at dispatch and injected into the
-prompt — no messaging, no new store:
-- Summaries/traces of this ticket's **dependencies** (already on the log as `ProposalSubmitted.Summary`
-  and the reasoning `trace`).
-- This ticket's **prior failed approaches** (overlaps with #1; share the projection).
-- Relevant **sibling/graph status** so the agent understands where its task sits.
-
-Keep it bounded and deterministic; the pack is a pure function of the event log, mirroring the projection
-pattern in `internal/metrics` / `internal/diagnose`.
-
-**ADR fit.** Delivers ADR 006's promise without violating ADR 003 (still one deterministic scheduler) or
-ADR 001 (still derived from the log). Likely warrants a short ADR documenting the context-pack contract.
-
-**Note.** Watch token cost (context size scales with graph fan-in); cap the pack and prefer summaries
-over raw diffs. This is the same scaling concern flagged for cross-repo work in `cross_repo.md`.
-
----
+Deterministic assembly from replayed state, not semantic similarity: the same ticket produces the same
+brief every time. Sibling and graph status were deliberately left out — merged dependencies are the
+high-signal read, siblings are noise.
 
 ## 3. Flaky / nondeterministic-test detection — *the top real-world CI pain*
 

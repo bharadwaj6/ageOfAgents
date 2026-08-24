@@ -3,9 +3,8 @@
 How we measure whether the design thesis holds: *a minimal, **Gate-verified** orchestrator coordinates
 aligned coding agents more reliably and far more simply than role-hierarchy or market/consensus designs.*
 
-This is an **eval-first** document — define what "working" means before optimizing. It deliberately
-drops the metrics that belonged to the rejected design (pheromone convergence, trust discrimination,
-stability-horizon rounds) and treats **setup simplicity as a goal, not an anti-goal**.
+This is an **eval-first** document — define what "working" means before optimizing. It treats
+**setup simplicity as a goal, not an anti-goal**.
 
 ## Experiment design
 
@@ -21,7 +20,7 @@ by replaying the Event Log, not by bespoke instrumentation.
 | **Merge correctness** | % of merges to `main` that keep the Gate green | **100%** | The Gate makes this an invariant, not a hope (ADR 002). |
 | **Rejected-Proposal rate** | % of Proposals the Gate rejects before merge | low, and *falling* | A rising rate signals poor decomposition/locality — re-decompose before adding agents. |
 | **Step-repetition rate** | duplicate/repeated work units | **~0** | Idempotency Keys make re-runs no-ops; MAST's single largest failure mode (15.7%). |
-| **Recovery time** | stall detected → Task re-dispatched | **< 30s** (heartbeat/no-progress timeout) | Deterministic Stall Detector vs. patrol agents. |
+| **Recovery time** | stall detected → Task re-dispatched | bounded by `stall_timeout` (default **2m**); a live Worker heartbeats every 30s, so the timeout measures silence, not runtime | Deterministic Stall Detector vs. patrol agents. |
 | **Throughput per Worker** | merged Tasks / hour / Worker | ≥ baseline | Measures useful work, not raw agent count (Anthropic: more agents ≠ better). |
 
 ## Secondary metrics
@@ -40,7 +39,7 @@ The design thesis is that simplicity *is* the feature. Track it explicitly:
 | Metric | Target |
 |---|---|
 | Required external services to run | **0** (git only) |
-| Third-party dependencies | minimal (currently 1) |
+| Third-party dependencies | 2 in the core path (`BurntSushi/toml`, `stretchr/testify`), plus the opt-in OpenTelemetry cluster (ADR 012) |
 | Time-to-first-run (`init` → first merged Goal, mock Backend) | seconds, offline |
 | Test suite hermeticity | **100% offline** — no API keys, no network (mock Backend) |
 
@@ -116,6 +115,6 @@ are **measured, not assumed**. All are **0** on a healthy, settled run.
 
 ## What we explicitly do NOT measure
 
-Pheromone convergence, trust-score discrimination, and stability-horizon round counts — these belonged to
-the market/consensus design that was rejected (see `docs/design/adr/005-no-markets-no-consensus.md`).
-Correctness comes from an objective Gate, not from agent voting or reputation.
+Anything that would score agents against each other — reputation, trust, per-agent win rates. Correctness
+comes from an objective Gate, not from agent voting or reputation
+([ADR 005](adr/005-no-markets-no-consensus.md)).

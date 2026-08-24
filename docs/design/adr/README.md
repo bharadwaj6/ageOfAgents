@@ -1,14 +1,19 @@
 # Architecture Decision Records — Age of Agents
 
-These ADRs record the load-bearing decisions for the orchestrator. Each is grounded in the research
-corpus under `docs/` (`research/claude-report.md`, `research/gemini.md`, `research/grok.md`, `research/perplexity.md`, `research/links.md`).
+These ADRs record the load-bearing decisions for the orchestrator.
+
+Where a decision rests on external evidence, the ADR cites the paper directly and the
+[reading list](../../research/links.md) says which claim each source supports. Some decisions rest on
+ordinary engineering practice rather than research, and say so. The raw LLM transcripts under
+`docs/research/` are **provenance, not evidence** — they record how the design was arrived at and are
+not cited in support of any decision.
 
 | ADR | Decision |
 |-----|----------|
 | [001](001-event-sourced-truth.md) | Event Log is truth, not a mutable store |
 | [002](002-verifier-gated-merge-queue.md) | A serializing Merge Queue gated by an objective Gate |
 | [003](003-flat-orchestrator-worker.md) | Flat Scheduler–Worker topology, one deterministic control loop |
-| [004](004-pluggable-agent-backend.md) | Pluggable agent Backend (mock + claudecode) behind one interface |
+| [004](004-pluggable-agent-backend.md) | Pluggable agent Backend behind one interface (extended by 014) |
 | [005](005-no-markets-no-consensus.md) | No markets, no multi-agent consensus/voting for aligned coding agents |
 | [006](006-emergent-task-graph-blackboard.md) | Emergent Task Graph + Shared Log coordination (not messaging) |
 | [007](007-emergent-decomposition-and-graph-governor.md) | Emergent decomposition mechanics + cycle/depth/fan-out governor |

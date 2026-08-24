@@ -4,8 +4,10 @@
 **single-writer, Gate-verified merge queue** with **idempotency keys** and the optional
 **human-in-the-loop approval gate** (ADRs 002 and 008). It exists so the invariants the Go suite checks
 *dynamically* (over event histories, in `internal/invariant`) are also pinned down *statically*, by
-exhaustive model checking — and so they stay pinned when the merge path changes (e.g. speculative
-batching later).
+exhaustive model checking, so they stay pinned as the merge path changes.
+
+The model covers the **serial** merge path. Disjoint-file batching (`mergequeue.ProcessBatch`) is not
+modelled; extending the spec to cover it is open work.
 
 ## Invariants proven
 
