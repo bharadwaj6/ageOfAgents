@@ -3,12 +3,12 @@
 This guide walks you through your first run of **Age of Agents** (`aoa`) — from zero to a verified,
 merged code change in a few minutes.
 
-> If you just want the commands, the [README Quick Start](../README.md#quick-start) is the same
+> If you just want the commands, the [README Quick Start](https://github.com/bharadwaj6/ageOfAgents/blob/main/README.md#quick-start) is the same
 > path in a third of the space. This page explains what each step is doing and why.
 
 ## Prerequisites
 
-- **Go 1.26.4+** — [install Go](https://go.dev/doc/install) (the version in [`go.mod`](../go.mod);
+- **Go 1.26.4+** — [install Go](https://go.dev/doc/install) (the version in [`go.mod`](https://github.com/bharadwaj6/ageOfAgents/blob/main/go.mod);
   an older toolchain fails on the first build)
 - **git** — any recent version
 
@@ -122,7 +122,7 @@ Then submit a new goal and run again:
 
 The Scheduler invokes the `grok` Backend, which drives a real coding agent as a subprocess in the Task's isolated worktree. Its changes are merged only if they pass your Gate. `grok` authenticates from your local grok.com login — no API key — and reports its own true token counts, which is why it is the backend the loop was verified end to end on. `claudecode` works the same way with the `claude` CLI.
 
-> **Before you point a real backend at a repo you care about:** the agent runs commands the model chooses, as your user. `sandbox = "docker"` isolates the *Gate*, not the agent. See [`../SECURITY.md`](../SECURITY.md).
+> **Before you point a real backend at a repo you care about:** the agent runs commands the model chooses, as your user. `sandbox = "docker"` isolates the *Gate*, not the agent. See [`https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
 
 ## Step 7: Customize the Gate
 
@@ -154,5 +154,5 @@ This is how `aoa` guarantees that `main` is always green — no change lands wit
 ## Next Steps
 
 - **[Architecture](design/architecture.md)** — how the Scheduler, Event Log, and Merge Queue fit together
-- **[Architecture Decision Records](design/adr/)** — the design decisions and the research behind them
+- **[Architecture Decision Records](design/adr/README.md)** — the design decisions and the research behind them
 - **[Success Metrics](design/metrics.md)** — how we measure whether the design works

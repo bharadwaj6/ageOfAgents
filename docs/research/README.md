@@ -3,7 +3,7 @@
 **Raw LLM research transcripts — kept for provenance, not as current documentation.**
 
 These six files are unedited output from ChatGPT, Claude, Gemini, Grok and Perplexity, produced in June
-2026 while the architecture was being argued out. They are cited by the [ADRs](../design/adr/) and by
+2026 while the architecture was being argued out. They are cited by the [ADRs](../design/adr/README.md) and by
 [`architecture.md`](../design/architecture.md) as the sources those decisions were weighed against.
 
 **Do not read these as descriptions of how `aoa` works.** They are long, contradictory by design (that was
@@ -14,7 +14,7 @@ For what the system actually does:
 
 - [`../getting-started.md`](../getting-started.md) — the tutorial
 - [`../design/architecture.md`](../design/architecture.md) — the design
-- [`../design/adr/`](../design/adr/) — the decisions, with their reasoning
+- [`../design/adr/`](../design/adr/README.md) — the decisions, with their reasoning
 
 | File | Source | Note |
 |---|---|---|

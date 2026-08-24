@@ -42,4 +42,4 @@ codex = 10.0   # USD per million tokens
 ## Sandboxing
 
 `--sandbox workspace-write` is codex's own sandbox, and it is not the same thing as `aoa`'s `sandbox`
-setting — that one isolates the **Gate**, not the agent. See [`SECURITY.md`](../../SECURITY.md).
+setting — that one isolates the **Gate**, not the agent. See [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).

@@ -94,4 +94,19 @@ description — the Event Log is a complete record of what the system did.
 
 For anything with a security dimension, read [`SECURITY.md`](SECURITY.md) first.
 
+## Documentation
+
+The site at [bharadwaj6.github.io/ageOfAgents](https://bharadwaj6.github.io/ageOfAgents/) is built from
+`docs/` with MkDocs Material and published by `.github/workflows/docs.yml` on every push to `main`.
+
+```bash
+pip install -r docs/requirements.txt
+mkdocs serve                # http://127.0.0.1:8000, live-reloads
+mkdocs build --strict       # what CI runs — a broken cross-reference fails the build
+```
+
+A new page must be added to `nav:` in `mkdocs.yml`, or `--strict` will fail. Links to files outside
+`docs/` (`README.md`, `SECURITY.md`, `go.mod`) have to be absolute GitHub URLs — a relative one works on
+github.com and 404s on the site.
+
 Participation in this project is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).

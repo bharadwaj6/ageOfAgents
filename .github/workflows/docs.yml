@@ -1,0 +1,51 @@
+name: docs
+
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ "docs/**", "mkdocs.yml", ".github/workflows/docs.yml" ]
+  pull_request:
+    paths: [ "docs/**", "mkdocs.yml", ".github/workflows/docs.yml" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r docs/requirements.txt
+      # --strict turns a broken cross-reference into a failed build. The docs
+      # tree is deep enough (ADRs, harnesses, a research corpus) that link rot
+      # is the failure mode worth gating on.
+      - run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy
+    # Only main publishes; a pull request gets the build check and no more.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

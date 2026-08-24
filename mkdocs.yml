@@ -1,0 +1,122 @@
+site_name: Age of Agents
+site_description: A merge queue whose author is a language model. Runs AI coding agents in isolated git worktrees and merges only what passes your build and tests.
+site_url: https://bharadwaj6.github.io/ageOfAgents/
+repo_url: https://github.com/bharadwaj6/ageOfAgents
+repo_name: bharadwaj6/ageOfAgents
+edit_uri: edit/main/docs/
+copyright: MIT licensed
+
+theme:
+  name: material
+  icon:
+    logo: material/source-merge
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle: { icon: material/weather-night, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle: { icon: material/weather-sunny, name: Switch to light mode }
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed: { alternate_style: true }
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+# An explicit nav: docs/ holds a research corpus and a design archive that must
+# not sit next to the user-facing pages, and `mkdocs build --strict` fails on
+# anything reachable but unlisted.
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Get started: getting-started.md
+  - Harnesses:
+      - Overview: harnesses/README.md
+      - Claude Code: harnesses/claude-code.md
+      - Codex: harnesses/codex.md
+      - Cursor: harnesses/cursor.md
+      - Grok: harnesses/grok.md
+      - Gemini: harnesses/gemini.md
+      - OpenAI: harnesses/openai.md
+      - Anthropic: harnesses/anthropic.md
+      - DeepSeek & OpenAI-compatible: harnesses/deepseek.md
+      - Bring your own CLI: harnesses/byo-cli.md
+  - Guide:
+      - Configuration: config-reference.md
+      - Scheduling: scheduling.md
+      - Observability: integrations/README.md
+      - Honeycomb: integrations/honeycomb.md
+  - Design:
+      - Architecture: design/architecture.md
+      - Decision records:
+          - Index: design/adr/README.md
+          - 001 Event-sourced truth: design/adr/001-event-sourced-truth.md
+          - 002 Verifier-gated merge queue: design/adr/002-verifier-gated-merge-queue.md
+          - 003 Flat orchestrator/worker: design/adr/003-flat-orchestrator-worker.md
+          - 004 Pluggable agent backend: design/adr/004-pluggable-agent-backend.md
+          - 005 No markets, no consensus: design/adr/005-no-markets-no-consensus.md
+          - 006 Emergent task graph: design/adr/006-emergent-task-graph-blackboard.md
+          - 007 Emergent decomposition: design/adr/007-emergent-decomposition-and-graph-governor.md
+          - 008 Human-in-the-loop gate: design/adr/008-human-in-the-loop-approval-gate.md
+          - 009 Live eval outside the suite: design/adr/009-live-evaluation-out-of-hermetic-suite.md
+          - 010 Semantic idempotency: design/adr/010-semantic-idempotency.md
+          - 011 Debate & markets offline: design/adr/011-debate-markets-as-offline-tools.md
+          - 012 Observability as projection: design/adr/012-observability-as-replay-projection.md
+          - 013 Worker pool, not a wave: design/adr/013-worker-pool-not-dispatch-wave.md
+          - 014 CLI backends as data: design/adr/014-cli-backends-as-data.md
+      - Metrics: design/metrics.md
+      - Live evaluation: design/live_eval.md
+      - Formal model (TLA+): design/formal/README.md
+      - Comparison: design/comparison.md
+      - Loop engineering: design/loop_engineering.md
+      - Cross-repo (design only): design/cross_repo.md
+      - Roadmap: design/roadmap.md
+      - Proposals: design/improvements.md
+  - Research corpus:
+      - About: research/README.md
+      - ChatGPT: research/chatgpt.md
+      - Claude: research/claude-report.md
+      - Gemini: research/gemini.md
+      - Grok: research/grok.md
+      - Perplexity: research/perplexity.md
+      - Reading list: research/links.md
+      - History:
+          - About: history/README.md
+          - Origin prompt: history/prompt.md
+          - Gas Town architecture: history/gastown_arch.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/bharadwaj6/ageOfAgents
