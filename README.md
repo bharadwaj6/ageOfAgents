@@ -44,9 +44,16 @@ make install          # puts `aoa` in $GOBIN (or $GOPATH/bin)
 Now run the whole loop offline, in about ten seconds:
 
 ```bash
+aoa quickstart --path ./workspace
+```
+
+That is a wrapper over four ordinary commands, each printed as it runs:
+
+```bash
 aoa init --path ./workspace --repo ./demo     # scaffolds a demo git repo + aoa.toml
 aoa goal --path ./workspace "add a greeting function"
 aoa run  --path ./workspace
+aoa status --path ./workspace
 ```
 
 ```
@@ -57,6 +64,14 @@ goal g-acedd614: add a greeting function
 
 total: tokens=0  wall=0.9s
 all work settled
+```
+
+If something looks wrong, ask before you debug — `aoa doctor` checks the things that otherwise fail
+deep inside a run (a backend CLI that isn't installed, a Gate command that isn't on `$PATH`, an Event
+Log that won't replay) and prints the fix for each:
+
+```bash
+aoa doctor --path ./workspace
 ```
 
 Then look at what happened:

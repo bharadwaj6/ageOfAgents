@@ -46,6 +46,12 @@ func main() {
 	case "version", "--version", "-v":
 		fmt.Println(versionString())
 		return
+	case "doctor":
+		err = cmdDoctor(args)
+	case "quickstart":
+		err = cmdQuickstart(args)
+	case "completion":
+		err = cmdCompletion(args)
 	case "init":
 		err = cmdInit(args)
 	case "goal":
@@ -91,28 +97,32 @@ func usage() {
 	fmt.Print(`aoa - Age of Agents orchestrator
 
 Usage:
-  aoa init   [--path DIR] [--repo PATH]   Scaffold a workspace + integration repo
+  aoa quickstart [--path DIR]             Scaffold, submit a goal and run it — offline, one command
+  aoa doctor [--path DIR]                 Check this workspace can actually run
+  aoa init   [--path DIR] [--repo PATH | --adopt PATH] [--force]
+                                          Scaffold a workspace, or adopt an existing repo
   aoa goal   [--path DIR] "objective"     Submit a goal
   aoa amend  [--path DIR] <goal-id> "..."  Append steering guidance to a goal mid-run
   aoa run    [--path DIR] [--once | --interval D] [--otel | --otel-live]
                                           Run the reconciler (to settled by default)
-  aoa status [--path DIR] [--watch]       Show goals and tickets (--watch to live-refresh)
+  aoa status [--path DIR] [--watch] [--interval D]
+                                          Show goals and tickets (--watch to live-refresh)
   aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
-  aoa serve  [--path DIR] [--port N]      Run a GitHub webhook server
-  aoa eval   --tasks F [--backend B] [--price-file F] [--max-cost $] [--otel]
+  aoa serve  [--path DIR] [--port N] [--secret S]
+                                          Run a GitHub webhook server (always set --secret)
+  aoa eval   --tasks F [--backend B] [--price P | --price-file F] [--max-cost $] [--json] [--otel]
                                           Run end-to-end tasks on real repos (mock|claudecode|grok)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
   aoa otel export [--path DIR]            Replay the Event Log to OTLP traces + metrics
   aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
   aoa reject  [--path DIR] <ticket-id>    Reject a parked proposal (require_approval)
   aoa version                             Print the build version
+  aoa completion bash|zsh|fish            Print a shell completion script
 
-New here? This runs entirely offline on a scaffolded demo repo:
-  aoa init --path ./workspace --repo ./demo
-  aoa goal --path ./workspace "add a greeting function"
-  aoa run  --path ./workspace
+New here? One command, entirely offline, about ten seconds:
+  aoa quickstart --path ./workspace
 `)
 }
 
