@@ -1240,8 +1240,13 @@ func TestFastTicketMergesWhileSlowSiblingRuns(t *testing.T) {
 // thinks for minutes rather than milliseconds.
 type slowBackend struct {
 	inner    agent.Backend
+	once     sync.Once
 	released chan struct{}
 }
+
+// release unblocks Run. Safe to call from both the poll counter and the
+// backstop timer.
+func (s *slowBackend) release() { s.once.Do(func() { close(s.released) }) }
 
 func (s *slowBackend) Name() string { return "slow" }
 
@@ -1263,27 +1268,43 @@ func (s *slowBackend) Run(ctx context.Context, task agent.Task) (agent.Result, e
 // a perfectly good proposal.
 func TestWaitingForAWorkerDoesNotConsumeThePassBudget(t *testing.T) {
 	slow := &slowBackend{inner: agent.NewMock(), released: make(chan struct{})}
-	// Release on a timer, never on the poll count: if the budget is consumed by
-	// waiting, Run returns early and a count-gated release would deadlock the
-	// dispatch goroutine instead of failing the test.
-	time.AfterFunc(200*time.Millisecond, func() { close(slow.released) })
+	// Backstop: if the budget is consumed by waiting, Run returns early, the
+	// poll count never reaches its target, and the dispatch goroutine would
+	// block forever. Release on a timer too, so a regression fails rather
+	// than hangs.
+	timer := time.AfterFunc(10*time.Second, func() { slow.release() })
+	defer timer.Stop()
 
 	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
-	// A budget far smaller than the number of polls this run needs.
-	o, h := setup(t, slow, pass, Options{Concurrency: 1, MaxPasses: 3, PollInterval: 5 * time.Millisecond})
+	// A budget far below the number of polls this run needs.
+	o, h := setup(t, slow, pass, Options{Concurrency: 1, MaxPasses: 5})
 
+	// The injected Sleep does not actually sleep. That keeps the loop spinning
+	// at CPU speed so almost no wall-clock time elapses, which in turn keeps
+	// the worker's heartbeats — real events, and therefore genuinely productive
+	// passes — from making this test a race between two clocks. It was exactly
+	// that race that made an earlier version of this test flaky under -race.
+	var mu sync.Mutex
 	var polls int
-	o.opt.Sleep = func(d time.Duration) {
+	o.opt.Sleep = func(time.Duration) {
+		mu.Lock()
 		polls++
-		time.Sleep(d)
+		n := polls
+		mu.Unlock()
+		if n == 200 {
+			slow.release()
+		}
 	}
 	h.submitGoal(t, "g1", "add greeting")
 
 	if err := o.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if polls <= 3 {
-		t.Errorf("expected polling past the 3-pass budget, got %d polls", polls)
+	mu.Lock()
+	got := polls
+	mu.Unlock()
+	if got < 200 {
+		t.Errorf("run stopped after %d polls; waiting is still consuming the %d-pass budget", got, 5)
 	}
 	if tk := h.state(t).Tickets["g1-impl"]; tk == nil || tk.Status != state.StatusMerged {
 		t.Fatalf("ticket = %+v, want merged", tk)
