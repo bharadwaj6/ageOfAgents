@@ -3,7 +3,7 @@
 This guide walks you through your first run of **Age of Agents** (`aoa`) — from zero to a verified,
 merged code change in a few minutes.
 
-> If you just want the commands, the [README Quick Start](https://github.com/bharadwaj6/ageOfAgents/blob/main/README.md#quick-start) is the same
+> If you just want the commands, the [README Quick Start](https://github.com/bharadwaj6/ageOfAgents/blob/main/README.md#quickstart) is the same
 > path in a third of the space. This page explains what each step is doing and why.
 
 ## Prerequisites
@@ -145,6 +145,7 @@ This is how `aoa` guarantees that `main` is always green — no change lands wit
 | **Goal** | What you want done |
 | **Task** | A piece of work, auto-created from a Goal |
 | **Worker** | An AI agent executing one Task in isolation |
+| **Proposal** | What a Worker returns — a candidate change plus a reasoning trace. The Merge Queue, not the Worker, decides its fate |
 | **Event Log** | Append-only record of everything — the single source of truth |
 | **Scheduler** | Deterministic loop: reads log → dispatches workers → drives merges |
 | **Gate** | Your build/test commands that every change must pass |
