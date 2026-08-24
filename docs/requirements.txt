@@ -1,0 +1,2 @@
+# Pinned so a docs build cannot break on somebody else's release.
+mkdocs-material==9.7.7

@@ -3,6 +3,7 @@
 [![CI](https://github.com/bharadwaj6/ageOfAgents/actions/workflows/ci.yml/badge.svg)](https://github.com/bharadwaj6/ageOfAgents/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8.svg)](go.mod)
+[![Docs](https://img.shields.io/badge/docs-bharadwaj6.github.io-blue.svg)](https://bharadwaj6.github.io/ageOfAgents/)
 
 **Point an AI coding agent at your repo and it might write something broken. `aoa` runs the agent in a
 throwaway git worktree, runs *your* build and tests on the result, and merges it only if they pass.**
@@ -152,6 +153,7 @@ deliberately, because a deterministic control plane has no business guessing at 
 | see what changed between releases | [`CHANGELOG.md`](CHANGELOG.md) |
 | know what it does to your machine | [`SECURITY.md`](SECURITY.md) |
 | understand the design | [`docs/design/architecture.md`](docs/design/architecture.md) + the [ADRs](docs/design/adr/) |
+| read all of it on one site | **[bharadwaj6.github.io/ageOfAgents](https://bharadwaj6.github.io/ageOfAgents/)** |
 
 ---
 

@@ -106,4 +106,4 @@ table as a standalone file.
 
 ## Example
 
-A worked config is in [`examples/`](../examples/). To regenerate the default, run `aoa init`.
+A worked config is in [`examples/`](https://github.com/bharadwaj6/ageOfAgents/blob/main/examples/). To regenerate the default, run `aoa init`.

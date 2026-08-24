@@ -1,9 +1,9 @@
 # Improvement Roadmap — Quality & Agent Coordination
 
 This is a **proposals** document: a prioritized set of bets to improve project quality and the
-coordination between agents. It is not a record of decisions (those are [ADRs](adr/)) nor the execution
+coordination between agents. It is not a record of decisions (those are [ADRs](adr/README.md)) nor the execution
 tracker (that is [`roadmap.md`](roadmap.md)). Each item earns its place against a *measured failure mode*
-or a concrete missing capability, and is checked against the [golden rules](../../AGENTS.md) so nothing
+or a concrete missing capability, and is checked against the [golden rules](https://github.com/bharadwaj6/ageOfAgents/blob/main/AGENTS.md) so nothing
 here smuggles in an LLM coordinator, a second mutable store, or runtime voting.
 
 ## Framing: lean into the substrate, not into orchestration cleverness

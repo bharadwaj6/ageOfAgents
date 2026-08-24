@@ -25,6 +25,9 @@ All notable changes to this project are documented here. The format follows
   DeepSeek needs no backend at all — it is an OpenAI-compatible endpoint, which already worked.
   A CLI backend is now a table row rather than a file: `claudecode.go` and `grok.go` were line-for-line
   copies, and three more would have been three more copies.
+- **A documentation site** at [bharadwaj6.github.io/ageOfAgents](https://bharadwaj6.github.io/ageOfAgents/),
+  built from `docs/` with MkDocs Material and published on every push to `main`. CI builds it with
+  `--strict`, so a broken cross-reference fails the build rather than rotting quietly.
 - `aoa` warns at startup when `max_tokens_per_goal`/`max_usd_per_goal` are set on a backend that reports
   no token usage. The governors were silently inert on such backends.
 
