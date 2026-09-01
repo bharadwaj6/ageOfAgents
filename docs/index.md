@@ -35,6 +35,25 @@ Scheduling, state, merge and done-ness are plain deterministic Go, gated on obje
 build, your tests, your compiler. The LLM only ever emits a *candidate diff*; whether it lands is
 decided by your Gate, not by the agent. Better models sharpen the worker; the control plane is unchanged.
 
+## Three things a prompt can't do
+
+**If you're supervising one agent on one change: just tell it to run the tests.** You don't need this.
+`aoa` is for the other case — several agents at once, or none of them watched.
+
+**1. The agent grades its own homework.** "Only commit if the tests pass" is a *request*. The agent
+decides whether it ran them, which ones it ran, and what passing meant — and it's the same system that
+was just confident about the code. `aoa` runs your Gate itself, in its own process, against the tree on
+disk. What the agent claims isn't an input to the decision.
+
+**2. Two agents that each pass alone can still break together.** A's change is green on A's branch, B's
+is green on B's, and the merge of the two is red. Neither agent could see the other, so no prompt to
+either one catches it. This is a *semantic merge conflict*, and it is the entire reason merge queues
+exist. `aoa` merges first, runs the Gate on the **merged** state, and reverts if it's red.
+
+**3. Nobody is watching.** State is a replay of an append-only log, so a run survives a crash — kill it,
+re-run, it picks up. It stops before it burns a budget you set. It gives up on a task failing the same
+way three times instead of retrying forever. A context window survives none of that.
+
 ## The shape of it
 
 ```mermaid

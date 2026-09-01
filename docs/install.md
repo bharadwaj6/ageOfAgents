@@ -1,9 +1,20 @@
 # Install
 
-**Prerequisites:** Go **1.26.4+** (see [`go.mod`](https://github.com/bharadwaj6/ageOfAgents/blob/main/go.mod))
-and `git`. Nothing else — the default backend runs offline with no API key.
+You need `git`. Nothing else — the default backend runs offline with no API key.
+
+## One line (macOS, Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bharadwaj6/ageOfAgents/main/scripts/install.sh | sh
+```
+
+Detects your OS and architecture, verifies the release checksum, and installs to `~/.local/bin`. Set
+`AOA_INSTALL_DIR` to put it elsewhere, or `AOA_VERSION=vX.Y.Z` to pin a release.
 
 ## go install
+
+Needs Go **1.26.4+** (see [`go.mod`](https://github.com/bharadwaj6/ageOfAgents/blob/main/go.mod)). This is
+the path for Windows.
 
 ```bash
 go install github.com/bharadwaj6/ageOfAgents/cmd/aoa@latest
