@@ -1,5 +1,5 @@
 ---
-name: aoa
+name: delegating-work-to-aoa
 description: Use when the user wants a code change made under a verification gate rather than applied directly — "run this through aoa", "have aoa do it", delegating a task to an isolated worktree, or checking on goals already submitted. aoa runs a coding agent in a throwaway git worktree and merges only if the build and tests pass.
 ---
 

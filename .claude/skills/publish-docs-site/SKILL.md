@@ -1,5 +1,5 @@
 ---
-name: aoa-docs-site
+name: publish-docs-site
 description: Use when editing anything under docs/, adding a documentation page, or fixing an MkDocs build failure in this repo. Covers the strict build, the required nav entry, and the relative-vs-absolute link rule that breaks the published site.
 ---
 
@@ -34,6 +34,6 @@ Inside `docs/`, use ordinary relative links (`design/adr/README.md`) — `--stri
 | A command or flag | `docs/cli.md` |
 | An `aoa.toml` field | `docs/config-reference.md` |
 | A backend/harness | `docs/harnesses/<name>.md` + the README table |
-| A design decision | an ADR under `docs/design/adr/` (see `aoa-design-decisions`) |
+| A design decision | an ADR under `docs/design/adr/` (see `change-architecture`) |
 
 Keep the README lean: it is the pitch and the first five minutes, not a manual. Detail goes to the site.

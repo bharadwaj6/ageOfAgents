@@ -74,8 +74,8 @@ Step-by-step for specific jobs lives in `.claude/skills/` — read the matching 
 
 | Skill | Read it when |
 |---|---|
-| `aoa-design-decisions` | making a structural change, adding a dependency, or asking whether `aoa` should do X |
-| `aoa-backends` | adding or changing an agent backend or CLI harness |
-| `aoa-events-and-state` | adding a lifecycle event, state field, metric or span |
-| `aoa-docs-site` | editing `docs/`, adding a page, or fixing an MkDocs build |
-| `aoa` | driving the `aoa` CLI itself to get a change gated |
+| `change-architecture` | making a structural change, adding a dependency, or asking whether `aoa` should do X |
+| `add-agent-backend` | adding or changing an agent backend or CLI harness |
+| `add-event-or-metric` | adding a lifecycle event, state field, metric or span |
+| `publish-docs-site` | editing `docs/`, adding a page, or fixing an MkDocs build |
+| `delegating-work-to-aoa` | driving the `aoa` CLI itself to get a change gated |
