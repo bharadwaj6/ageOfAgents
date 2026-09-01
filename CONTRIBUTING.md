@@ -1,7 +1,7 @@
 # Contributing to Age of Agents
 
-Thanks for looking. This file is for **humans**. [`AGENTS.md`](AGENTS.md) is the same material written for
-AI coding agents; if you are one, read that instead.
+Thanks for looking. This file is for **humans**. If you are an AI coding agent, read
+[`AGENTS.md`](AGENTS.md) — the short version, with the task recipes in `.claude/skills/`.
 
 ## Before you write code
 
