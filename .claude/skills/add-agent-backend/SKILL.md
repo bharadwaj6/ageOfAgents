@@ -1,5 +1,5 @@
 ---
-name: aoa-backends
+name: add-agent-backend
 description: Use when adding or changing an agent backend for aoa — supporting a new coding CLI (claude, codex, cursor, gemini, grok and friends), adding a native API backend, or debugging how a backend's argv and token usage are built. Covers internal/agent/cli.go presets, agent.Backend, and the zero-code aoa.toml path.
 ---
 
@@ -39,7 +39,7 @@ Then:
 
 1. Add a row to `TestCLIPresetArgv` in `internal/agent/agent_test.go` — that test is the contract for the
    argv a preset produces.
-2. Add a page under `docs/harnesses/` and a `nav:` entry in `mkdocs.yml` (see `aoa-docs-site`), plus a row
+2. Add a page under `docs/harnesses/` and a `nav:` entry in `mkdocs.yml` (see `publish-docs-site`), plus a row
    in the README table. Mark it *verified* only if a real Goal actually went through it to a merge.
 3. Touch `parseCLIOutput` **only** if the CLI wraps its output in its own envelope (JSON with a usage
    block, say). Plain stdout needs no case.

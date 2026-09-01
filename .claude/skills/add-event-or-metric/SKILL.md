@@ -1,5 +1,5 @@
 ---
-name: aoa-events-and-state
+name: add-event-or-metric
 description: Use when adding or changing anything the aoa Event Log carries — a new lifecycle event type, a field of replayed state, a run metric, or an OpenTelemetry span. Covers the pkg/api → state.Apply → orchestrator → test sequence, the token-accounting trap, and why observability is a replay projection.
 ---
 

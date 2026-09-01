@@ -1,5 +1,5 @@
 ---
-name: aoa-design-decisions
+name: change-architecture
 description: Use before making a structural change to aoa — adding a dependency or external service, a new control loop or coordination mechanism, changing how state is stored, or answering "should aoa do X". Explains what the design already refused and why, and how to record a decision that contradicts one.
 ---
 
@@ -47,4 +47,4 @@ module.
 5. Cite evidence where the decision rests on it, and say plainly when it rests on ordinary engineering
    judgement instead — `docs/design/reading-list.md` maps each source to the claim it supports.
 
-New pages under `docs/` also need a `nav:` entry — see the `aoa-docs-site` skill.
+New pages under `docs/` also need a `nav:` entry — see the `publish-docs-site` skill.

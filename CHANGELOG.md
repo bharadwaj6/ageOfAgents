@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **A leaner agent brief, with the recipes as skills.** `CLAUDE.md` is now a pointer and `AGENTS.md` keeps
+  only what every session needs — vocabulary, the golden rules, the repo map, conventions. The per-job
+  detail moved into project skills that cost nothing until they fire: `change-architecture`,
+  `add-agent-backend`, `add-event-or-metric` and `publish-docs-site`. Always-loaded context went from 183
+  lines to 84.
+- **A one-line installer** (`scripts/install.sh`): detects OS and architecture, verifies the release
+  checksum before unpacking, and installs to `~/.local/bin`. `go install` remains the path on Windows.
 - **`aoa quickstart`** — scaffold a workspace, submit a goal and run it in one command, offline on the
   mock backend. It is a wrapper over the four real commands, each printed as it runs, so what you have
   just watched is a script you can retype.
@@ -25,7 +32,7 @@ All notable changes to this project are documented here. The format follows
   DeepSeek needs no backend at all — it is an OpenAI-compatible endpoint, which already worked.
   A CLI backend is now a table row rather than a file: `claudecode.go` and `grok.go` were line-for-line
   copies, and three more would have been three more copies.
-- **A skill for driving `aoa` from an agent harness** (`.claude/skills/aoa/SKILL.md`), pointed at from
+- **A skill for driving `aoa` from an agent harness** (`.claude/skills/delegating-work-to-aoa/SKILL.md`), pointed at from
   `AGENTS.md`. `aoa` is a CLI, so any harness that can run commands can already drive it — what was
   missing was the contract for *when* to reach for it and what to report back. One file; Claude Code
   loads it automatically, Codex and Cursor read it via `AGENTS.md`. No MCP server.
