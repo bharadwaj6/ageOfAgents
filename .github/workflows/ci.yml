@@ -50,7 +50,7 @@ jobs:
           cache: true
       # docs/getting-started.md already tells *users* to put golangci-lint in
       # their Gate; this repo did not run it on itself.
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: latest
 
