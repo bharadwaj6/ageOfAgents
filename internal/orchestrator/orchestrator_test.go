@@ -854,6 +854,12 @@ func TestBatchMergePathEngagesAndStaysCorrect(t *testing.T) {
 	// same pass, so the merge queue's disjoint-batch path runs. Assert everything
 	// merged and the queue actually held >1 proposal at once (batching engaged).
 	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	// Rendezvous ensures both sibling workers (backend + frontend) are inside
+	// Mock.Run simultaneously, so their proposals land before the merge queue
+	// drains — making the MergeQueueMaxDepth >= 2 assertion deterministic
+	// regardless of goroutine scheduling on slow CI runners.
+	siblings := &sync.WaitGroup{}
+	siblings.Add(2)
 	mock := &agent.Mock{
 		Decompose: map[string][]agent.Subtask{
 			"Implement: build app": {
@@ -861,6 +867,10 @@ func TestBatchMergePathEngagesAndStaysCorrect(t *testing.T) {
 				{LocalID: "backend", Title: "backend", DependsOn: []string{"types"}, IdempotencyKey: "g1:backend"},
 				{LocalID: "frontend", Title: "frontend", DependsOn: []string{"types"}, IdempotencyKey: "g1:frontend"},
 			},
+		},
+		Rendezvous: map[string]*sync.WaitGroup{
+			"backend":  siblings,
+			"frontend": siblings,
 		},
 	}
 	o, h := setup(t, mock, pass, Options{Concurrency: 4})
