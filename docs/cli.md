@@ -174,13 +174,14 @@ preserved worktree for each failure.
 ### `aoa events`
 
 Inspect the Event Log — the append-only record every other number is derived from. It is also how a
-program driving `aoa` follows what happened: `--json` and `--since` read the log as a resumable JSONL
-stream.
+program driving `aoa` follows what happened: `--json`, `--since` and `--follow` read the log as a
+resumable JSONL stream.
 
 ```bash
 aoa events --path ./ws tail --count 20
 aoa events --path ./ws replay --type Merged
 aoa events --path ./ws --json --since 41    # every event after seq 41, one JSON object per line
+aoa events --path ./ws --json --since 41 --follow    # ...then each new event as it is appended
 ```
 
 | Flag | Default | |
@@ -190,6 +191,8 @@ aoa events --path ./ws --json --since 41    # every event after seq 41, one JSON
 | `--type T` | — | print only events of type `T` |
 | `--json` | `false` | print each event as its Event Log line, byte for byte |
 | `--since N` | — | print every event with a seq greater than `N` |
+| `--follow` | `false` | then keep printing events as they are appended, until interrupted |
+| `--poll D` | `500ms` | how often `--follow` checks the log |
 
 Subcommands: `tail` (default) and `replay`, which adds each event's payload. `aoa feed` is a deprecated
 alias for `events tail`.
@@ -213,6 +216,13 @@ incrementally:
 
 `--type T` filters what is printed, not the cursor, so filtered output skips the seqs of other events.
 Resume from the last seq you *received*: every event you skipped was of another type.
+
+`--follow` turns the read into a stream: after printing its selection, it checks the log every `--poll`
+and prints each event appended since, in order, until interrupted (SIGINT or SIGTERM). It prints only
+complete lines, never one a writer is part-way through, and polls without taking the log's lock, so
+it never holds up `aoa run`. If it exits, restart it with `--since` set to the last seq you received and nothing is lost
+or repeated. Should the log be truncated or replaced under it, `--follow` reads it again from the start
+and skips every seq it has already passed.
 
 ### `aoa diagnose`
 
