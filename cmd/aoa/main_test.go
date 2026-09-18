@@ -272,7 +272,11 @@ func TestRunEveryStopsOnCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspaceAt: %v", err)
 	}
-	o, led, err := buildOrchestrator(ws)
+	led, err := ledger.Open(ws.ledgerPath)
+	if err != nil {
+		t.Fatalf("open ledger: %v", err)
+	}
+	o, err := buildOrchestrator(ws, led)
 	if err != nil {
 		t.Fatalf("buildOrchestrator: %v", err)
 	}
