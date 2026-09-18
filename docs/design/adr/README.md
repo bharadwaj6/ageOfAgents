@@ -22,3 +22,4 @@ ordinary engineering practice rather than research, and say so.
 | [012](012-observability-as-replay-projection.md) | Observability is a replay projection to OTLP (OpenTelemetry), off by default |
 | [013](013-worker-pool-not-dispatch-wave.md) | Dispatch is an asynchronous worker pool, not a per-pass wave |
 | [014](014-cli-backends-as-data.md) | A CLI backend is a table row, and the table is reachable from `aoa.toml` |
+| [015](015-aoa-is-a-backend.md) | `aoa` is a backend: front doors decide what, `aoa` decides whether it lands (extends 003, 008, 010) |

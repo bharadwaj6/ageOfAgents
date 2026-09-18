@@ -1,7 +1,8 @@
 # ADR 003: Flat Orchestrator–Worker + Work-Stealing, One Deterministic Reconciler
 
 ## Status
-Accepted
+Accepted. [ADR 015](015-aoa-is-a-backend.md) scopes the refusal of an LLM coordinator to `aoa`'s own
+control plane: a front door that only submits, amends, approves or cancels is not a coordinator.
 
 ## Context
 Earlier designs used role hierarchies (a coordinator LLM, watchdog daemons, lifecycle managers) or many
