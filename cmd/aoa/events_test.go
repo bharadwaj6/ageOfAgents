@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
@@ -207,6 +211,172 @@ func TestEventsSinceRejectsExplicitCount(t *testing.T) {
 				t.Errorf("accepted %v, want an error naming %s", tt.args, tt.wantErr)
 			case tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr):
 				t.Errorf("error %q should name %s", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// syncBuffer is a bytes.Buffer that followEvents can write from its goroutine
+// while the test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// lineCount is how many newline-terminated lines b holds.
+func (b *syncBuffer) lineCount() int { return strings.Count(b.String(), "\n") }
+
+// waitForLines waits until out holds n lines, failing the test if it takes
+// too long or overshoots.
+func waitForLines(t *testing.T, out *syncBuffer, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for out.lineCount() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d lines; have:\n%s", n, out.String())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := out.lineCount(); got != n {
+		t.Fatalf("got %d lines, want %d:\n%s", got, n, out.String())
+	}
+}
+
+// appendToLog writes b to the end of the log at path, bypassing the Ledger, as
+// a writer part-way through a line leaves it.
+func appendToLog(t *testing.T, path string, b []byte) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	if _, err := f.Write(b); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+}
+
+// startFollow runs followEvents over the log at path, through its own handle
+// as a separate process would, and returns its output and a stop function that
+// cancels it and returns its result.
+func startFollow(t *testing.T, path string, since int) (*syncBuffer, func() error) {
+	t.Helper()
+	led, err := ledger.Open(path)
+	if err != nil {
+		t.Fatalf("open follower's ledger: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	out := &syncBuffer{}
+	done := make(chan error, 1)
+	go func() { done <- followEvents(ctx, led, since, "", formatJSON, out, 2*time.Millisecond) }()
+	stop := func() error {
+		cancel()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(10 * time.Second):
+			t.Fatal("followEvents did not return after its context was cancelled")
+			return nil
+		}
+	}
+	t.Cleanup(func() { cancel() })
+	return out, stop
+}
+
+// --follow must print what other processes append, in order, and never a line
+// a writer is still in the middle of.
+func TestFollowEmitsAppendsInOrderWithoutPartialLines(t *testing.T) {
+	root, writer := eventsWorkspace(t, 2)
+	path := filepath.Join(root, ".aoa", "events.jsonl")
+	out, stop := startFollow(t, path, 0)
+	waitForLines(t, out, 2) // what was already there
+
+	appendEvents(t, writer, 2) // seqs 3 and 4, through another handle
+	waitForLines(t, out, 4)
+
+	// Seq 5, half written. Many polls see it; none may print it.
+	e, err := api.NewEvent(api.Merged, "test", api.MergedPayload{TicketID: "t1", Worker: "w", Commit: "abc"})
+	if err != nil {
+		t.Fatalf("NewEvent: %v", err)
+	}
+	e.Seq = 5
+	line, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	half := len(line) / 2
+	appendToLog(t, path, line[:half])
+	time.Sleep(50 * time.Millisecond)
+	if got := out.String(); strings.Count(got, "\n") != 4 || !strings.HasSuffix(got, "\n") {
+		t.Fatalf("printed part of a half-written line:\n%s", got)
+	}
+	appendToLog(t, path, append(slices.Clone(line[half:]), '\n'))
+	waitForLines(t, out, 5)
+
+	appendEvents(t, writer, 1) // seq 6, after the raw write
+	waitForLines(t, out, 6)
+
+	if err := stop(); err != nil {
+		t.Errorf("followEvents returned %v on cancel, want nil", err)
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if got := out.String(); got != string(want) {
+		t.Errorf("followed output is not the log, in order and whole.\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// A log truncated or replaced under a follower is read again from the start,
+// and the seqs it already printed are not printed twice.
+func TestFollowResumesBySeqWhenTheLogIsReplaced(t *testing.T) {
+	root, writer := eventsWorkspace(t, 3)
+	path := filepath.Join(root, ".aoa", "events.jsonl")
+	out, stop := startFollow(t, path, 0)
+	waitForLines(t, out, 3)
+
+	// Restore an older copy of the log: just its first event.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if err := os.WriteFile(path, data[:bytes.IndexByte(data, '\n')+1], 0o644); err != nil {
+		t.Fatalf("truncate log: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond) // the follower sees the log shrink
+	appendEvents(t, writer, 3)        // seqs 2, 3 again, then the new 4
+	waitForLines(t, out, 4)
+
+	if err := stop(); err != nil {
+		t.Fatalf("followEvents returned %v; a replaced log must be followed, not fatal", err)
+	}
+	if got := jsonSeqs(t, out.String()); !slices.Equal(got, []int{1, 2, 3, 4}) {
+		t.Errorf("seqs = %v, want [1 2 3 4]: each once, in order", got)
+	}
+}
+
+func TestEventsRejectsANonPositivePoll(t *testing.T) {
+	for _, poll := range []string{"0s", "-1s"} {
+		t.Run(poll, func(t *testing.T) {
+			root, _ := eventsWorkspace(t, 1)
+			err := cmdEvents([]string{"--path", root, "--follow", "--poll", poll})
+			if err == nil || !strings.Contains(err.Error(), "--poll") {
+				t.Errorf("err = %v, want one naming --poll", err)
 			}
 		})
 	}

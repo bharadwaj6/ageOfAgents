@@ -132,8 +132,8 @@ Usage:
                                           Run the reconciler (to settled by default)
   aoa status [--path DIR] [--watch] [--interval D]
                                           Show goals and tickets (--watch to live-refresh)
-  aoa events [--path DIR] [tail [--count N] | replay] [--type T] [--json] [--since N]
-                                          Print the Event Log; --json --since N is a resumable stream
+  aoa events [--path DIR] [tail [--count N] | replay] [--type T] [--json] [--since N] [--follow]
+                                          Print the Event Log, or stream it (--json --since N --follow)
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
   aoa serve  [--path DIR] [--port N] [--secret S] [--allow LIST]
@@ -845,13 +845,16 @@ func cmdEvents(args []string) error {
 		"For programs: --json prints each event as its Event Log line, byte for byte\n"+
 		"(JSONL), and --since N prints every event after seq N, under tail and replay\n"+
 		"alike. Resume with --since set to the last seq you received. --type filters\n"+
-		"what is printed, not the cursor, so filtered output can skip seqs.",
-		"aoa events --path ./workspace --json --since 41")
+		"what is printed, not the cursor, so filtered output can skip seqs.\n\n"+
+		"--follow keeps printing events as they are appended, until interrupted.",
+		"aoa events --path ./workspace --json --since 41 --follow")
 	path := fs.String("path", ".", "workspace root")
 	count := fs.Int("count", 20, "number of events for tail (0 = all); cannot combine with --since")
 	typ := fs.String("type", "", "print only events of this type (filters output, not the --since cursor)")
 	asJSON := fs.Bool("json", false, "print each event's Event Log line byte for byte (JSONL)")
 	since := fs.Int("since", 0, "print every event after seq `N`, however many (an exclusive cursor)")
+	follow := fs.Bool("follow", false, "then keep printing events as they are appended, until interrupted")
+	poll := fs.Duration("poll", 500*time.Millisecond, "how often --follow checks the Event Log")
 	sub, err := parseWithSubcommand(fs, args, "tail")
 	if err != nil {
 		return err
@@ -869,6 +872,9 @@ func cmdEvents(args []string) error {
 			return fmt.Errorf("--since takes a seq, 0 or more; got %d", *since)
 		}
 	}
+	if *poll <= 0 {
+		return fmt.Errorf("--poll must be positive, got %s", *poll)
+	}
 	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
@@ -877,7 +883,7 @@ func cmdEvents(args []string) error {
 	if err != nil {
 		return err
 	}
-	lines, _, err := led.ReadFrom(0)
+	all, _, err := led.ReadFrom(0)
 	if err != nil {
 		return err
 	}
@@ -893,7 +899,7 @@ func cmdEvents(args []string) error {
 	if sub == "replay" {
 		n = 0
 	}
-	lines = filterEvents(lines, *typ)
+	lines := filterEvents(all, *typ)
 	if set["since"] {
 		lines, n = afterSeq(lines, *since), 0
 	}
@@ -909,7 +915,67 @@ func cmdEvents(args []string) error {
 	if err := out.Flush(); err != nil {
 		return fmt.Errorf("write events: %w", err)
 	}
-	return nil
+	if !*follow {
+		return nil
+	}
+	// Follow on from everything just read, printed or not, so nothing is
+	// printed twice and nothing appended since is missed.
+	cursor := *since
+	if n := len(all); n > 0 && all[n-1].Event.Seq > cursor {
+		cursor = all[n-1].Event.Seq
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return followEvents(ctx, led, cursor, *typ, format, os.Stdout, *poll)
+}
+
+// followEvents prints every event after seq since, then checks the log every
+// poll and prints what was appended, in order, until ctx is done; it then
+// returns nil. Only complete lines are printed: a line a writer is still in
+// the middle of waits for a later poll. typ filters what is printed, not the
+// cursor.
+//
+// If the log is truncated or replaced, it is read again from the start and
+// events numbered at or below the last seq already seen are skipped, so a
+// restored copy of the same log resumes without repeats. A different log that
+// numbers from 1 again prints nothing until it passes that seq.
+func followEvents(ctx context.Context, led *ledger.Ledger, since int, typ string, format eventFormat, w io.Writer, poll time.Duration) error {
+	out := bufio.NewWriter(w)
+	tick := time.NewTicker(poll)
+	defer tick.Stop()
+	last := since
+	var offset int64
+	for {
+		lines, next, err := led.ReadFrom(offset)
+		if offset > 0 && errors.Is(err, ledger.ErrLogShrank) {
+			offset = 0
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		offset = next
+		for _, l := range lines {
+			if l.Event.Seq <= last {
+				continue
+			}
+			last = l.Event.Seq
+			if typ != "" && string(l.Event.Type) != typ {
+				continue
+			}
+			if err := writeEvent(out, l, format); err != nil {
+				return err
+			}
+		}
+		if err := out.Flush(); err != nil {
+			return fmt.Errorf("write events: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-tick.C:
+		}
+	}
 }
 
 // filterEvents keeps only events of the given type ("" = all).
