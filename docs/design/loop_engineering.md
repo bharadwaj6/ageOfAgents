@@ -18,7 +18,7 @@ persistence.
 
 | Move | `aoa` | Where |
 |------|-------|-------|
-| **Discovery** — surface work without being asked | **partial** | Work enters via `aoa goal` or an `@aoa` issue comment (`cmd/aoa/serve.go`). Nothing polls CI, triages issues, or scans commits. See [the open gap](#the-one-real-gap-discovery). |
+| **Discovery** — surface work without being asked | **the front door's job** | `aoa` is the backend ([ADR 015](adr/015-aoa-is-a-backend.md)): a person, a CI job, a board poller or an orchestrator finds the work and submits it with `aoa goal`, or with an `@aoa` issue comment (`cmd/aoa/serve.go`). `aoa` itself polls nothing. See [discovery belongs to the front door](#discovery-belongs-to-the-front-door). |
 | **Handoff** — isolate parallel agents | **ahead of the model** | Per-attempt git worktrees cut from `HEAD` with random branch suffixes (`internal/worktree`), *plus* a serializing merge queue with post-merge verification and `ResetHard` rollback (`internal/mergequeue`). The model asks for worktrees so agents don't collide; `aoa` also guarantees `main` stays linearizable and green (ADR 002). |
 | **Verification** — external backpressure, not self-grading | **ahead of the model** | The Gate is `go build` / `go test` / your commands, run on the **post-merge** state, never on the candidate in isolation. A `regression_verify` Shadow set measures what the Gate itself misses, without blocking (`regression_escape_rate`). |
 | **Persistence** — survive the context window | **ahead of the model** | An append-only JSONL Event Log is the single source of truth; all state is a pure fold (ADR 001), with torn-write repair and crash recovery. Retry prompts carry the prior Gate output; dispatches carry a context pack of merged dependencies (ADR 006). |
@@ -54,25 +54,38 @@ The model names four debts an unattended loop accrues. They are a good checklist
 | **Comprehension rot** — the mental model drifts from the code | Partly. `aoa status`, `aoa diagnose` (MAST histogram), and OTel traces exist; there is no per-run human digest. Deferred — reopen if `status` + `diagnose` prove insufficient on a real repo. |
 | **Token blowout** — a failure spiral burns the budget | **This was a real hole, now fixed.** `Goal.TokensSpent` was only charged from `ProposalSubmitted` and `TicketDecomposed`, so every attempt that burned tokens *without* reaching a proposal — agent error, "no changes", commit failure — charged zero. The spend governor was blind to precisely the bimodal long tail it exists to bound. Failed and retried attempts now carry `Tokens`/`Model` and charge the Goal, and the USD ceiling records `LimitUSD`/`SpentUSD` so a cost trip is distinguishable from a token trip. |
 
-## The one real gap: discovery
+## Discovery belongs to the front door
 
-`aoa` does not find its own work. Goals arrive because a human typed `aoa goal` or `@aoa` in a comment.
-Nothing reads a red CI run, an issue labelled `agent-ready`, or a failing nightly.
+`aoa` does not find its own work. Goals arrive when something submits them. Nothing inside `aoa` reads
+a red CI run, an issue labelled `agent-ready`, or a failing nightly.
 
-This is the model's "Blind Loop": execution is automated, triage is not. It is a genuine gap and it is
-recorded as one rather than papered over.
+This used to be recorded as the one real gap, the model's "Blind Loop": execution was automated and
+triage was not. [ADR 015](adr/015-aoa-is-a-backend.md) resolves it by **position** rather than by
+building a triager. `aoa` is the gated execution backend. Discovery, triage and intent belong to the
+**front door** that drives it. A front door can be:
 
-What has been done instead of building a triager: the webhook path that *does* exist was made safe to
-leave running — durable delivery deduplication via an idempotency key on `GoalSubmitted`, single-flight
-runs so two deliveries cannot race the Event Log, real server timeouts, and errors that surface instead of
-vanishing.
+- a person at a terminal;
+- a CI job;
+- a board poller in the style of Symphony;
+- an orchestrator such as firstmate.
 
-**Reopen gate.** Build discovery sources when the webhook path demonstrably isn't enough on a real repo.
-The shape is already clear and does not need an LLM: a deterministic `Source` producing candidates with
-idempotency keys, the first being `gate-red` — run the configured Gate against `main` and, if it fails,
-submit one deduplicated Goal to fix it. That reuses `internal/verify` and needs no network. Whatever gets
-built, **discovery stays deterministic Go**: an LLM deciding what the fleet works on next is a coordinator
-by another name (ADR 003).
+Front doors hand work over through the backend contract. `aoa goal --ref <origin> --key <id>` makes a
+redelivery a no-op, and `status --json` and `events --json` report back. The tools that do discovery
+well already exist. The thing they lack is a gate.
+
+The one discovery path `aoa` does ship is the `@aoa` webhook, and it was made safe to leave running:
+
+- delivery deduplication through an idempotency key on `GoalSubmitted`;
+- single-flight runs, so two deliveries cannot race the Event Log;
+- real server timeouts;
+- errors that surface instead of vanishing.
+
+The `gate-red` idea is a good first front door, and it needs no LLM. Run the Gate against `main`. If it
+fails, run `aoa goal --key gate-red:<sha>`. It is a cron recipe, not code inside `aoa`.
+
+The line ADR 003 draws still holds **inside `aoa`**: nothing in the control loop decides what the fleet
+works on. A front door may use an LLM to choose what to submit, because submitting is all it can do. It
+cannot dispatch, reorder or merge, and nothing it says makes failing work land.
 
 ## What `aoa` deliberately refuses
 
@@ -119,7 +132,7 @@ approval path, not for trusting a longer loop.
 
 | Move | Where `aoa` stands |
 |---|---|
-| Discovery | Webhook only — deduped and single-flight. Autonomous sources are [deliberately deferred](roadmap.md#deliberately-deferred-with-reopen-conditions) |
+| Discovery | Owned by the front door ([ADR 015](adr/015-aoa-is-a-backend.md)); `aoa` ships only the deduplicated, single-flight `@aoa` webhook |
 | Handoff | Per-attempt git worktrees plus a serializing, gated merge queue |
 | Verification | A deterministic Gate, with the blind spot itself measured (`regression_escape_rate`) |
 | Persistence | Append-only event log, replay, and a deterministic context pack |

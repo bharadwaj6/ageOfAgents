@@ -17,6 +17,7 @@ record rather than a preference:
   [ADR 011](adr/011-debate-markets-as-offline-tools.md)).
 - Agents coordinate through the shared log, not messages ([ADR 006](adr/006-emergent-task-graph-blackboard.md)).
 - Observability is a replay projection, never hot-path instrumentation ([ADR 012](adr/012-observability-as-replay-projection.md)).
+- `aoa` is a backend: front doors decide what gets worked on, `aoa` decides whether it lands ([ADR 015](adr/015-aoa-is-a-backend.md)).
 
 ## The open question that matters
 
@@ -30,12 +31,59 @@ methodology is written down; what is missing is budget and a run at scale.
 Everything else on this page is secondary to that. See [live evaluation](live_eval.md) for the numbers
 and their caveats, and [metrics](metrics.md) for what would count as an answer.
 
+## Direction: the gated backend
+
+[ADR 015](adr/015-aoa-is-a-backend.md) positions `aoa` as the execution backend that end-to-end
+automators drive. The automators are firstmate, Symphony-style board runners, Linear agents, CI jobs
+and people. They decide *what* gets worked on; `aoa` decides *whether it lands*. This section is the
+living tracker for that work. Each PR ticks its own line.
+
+### Resuming agent: start here
+
+Take the first unticked item below.
+
+- Its dependencies are in the right-hand column. Branch from `main`, or stack on the dependency's
+  branch if that hasn't merged yet.
+- Each item is red-test-first and runs `make check` (read the output).
+- Each item is one PR, rebase-merged.
+- The design detail for each item is in [ADR 015](adr/015-aoa-is-a-backend.md) §5.
+
+When your PR merges, tick its line here and update **Last status**.
+
+**Last status:** ADR 015, the tracker and issues #128–#132 filed. Wave 1 (doc fixes, webhook
+allowlist, cross-process ledger lock) in review.
+
+| | Increment | Depends on |
+|---|---|---|
+| [ ] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |
+| [ ] | ADR 015, tracker and positioning | — |
+| [ ] | `serve` queues work only from trusted commenters (`--allow`) | — |
+| [ ] | Event Log safe for writers in several processes (`internal/filelock`, sidecar lock) | — |
+| [ ] | One Scheduler per workspace, `aoa run` exits `75` when busy | ledger lock |
+| [ ] | Write verbs: goal `--source/--ref/--key`, idempotent submit, `--json` on goal/amend/approve/reject | ledger lock |
+| [ ] | `status --json` from one projection shared with text `status` | write verbs |
+| [ ] | Event cursor: `events --json --since N`, then `--follow` | ledger lock |
+| [ ] | Cancellation: `GoalCancelled`, `aoa cancel`, invariant `CancelHonored` | write verbs, status |
+| [ ] | Contract reference `docs/backend.md`, skill switched to `--json`, README pointer | all of the above |
+
+**Later increments** each need a design decision, and most need an ADR, before any code:
+
+- delivery by push or PR ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128));
+- reporting back to the origin ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129));
+- a team HTTP transport for the same verbs, with auth and several workspaces
+  ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)), plus a cross-run budget
+  ([#77](https://github.com/bharadwaj6/ageOfAgents/issues/77));
+- reference integrations for firstmate, Linear, GitHub labels and Symphony
+  ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130));
+- one repo adopted by two workspaces ([#131](https://github.com/bharadwaj6/ageOfAgents/issues/131)).
+
 ## Not yet scheduled
 
 Directions, not commitments. Detail and rationale in [proposals](improvements.md#not-yet-scheduled):
 
 - **Firecracker microVM sandboxing** — Docker isolates the Gate; the agent itself is not confined.
-- **Persistent server mode** — a durable server with a dashboard over the Event Log.
+- **Persistent server mode.** A durable server with a dashboard over the Event Log, now framed as the
+  team transport for the backend contract ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)).
 - **A cross-run `$` circuit breaker** — `max_usd_per_goal` bounds one goal; nothing bounds a week.
 - **Cross-repo dependency management** — designed in [cross-repo](cross_repo.md), unimplemented.
 
@@ -49,7 +97,9 @@ decision is falsifiable rather than permanent:
 | Speculative / batched merge with an adaptive window | `merge_queue_wait_mean` climbs while queue depth stays high — i.e. serialization is demonstrably the bottleneck |
 | Best-of-N generation with the test suite as selector | Per-task cost data shows the extra attempts are cheaper than the retries they replace |
 | SPRT early-stopping for live evals | Eval runs get large enough that fixed-N sampling is the dominant cost |
-| Autonomous work discovery (beyond the webhook path) | The hardened webhook path proves insufficient on a real repository |
+
+Autonomous work discovery has left this table. It is no longer deferred: [ADR 015](adr/015-aoa-is-a-backend.md)
+assigns discovery to the front door, so `aoa` will not build it.
 
 ## Not coming back
 

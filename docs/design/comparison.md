@@ -97,6 +97,35 @@ Whatever the loop around them, agents are far better on known ground than on gen
 argument for a strict Gate and a human approval path, not for a longer leash. See
 [`loop_engineering.md`](loop_engineering.md).
 
+## A layer above: front doors
+
+The newest systems in this space sit **above** `aoa` rather than beside it. They take work from a task
+board or a chat message and carry it to a PR:
+
+- **firstmate** is a dispatcher agent running a crew of harnesses.
+- **OpenAI Symphony** is a daemon that polls Linear or GitHub Issues and runs one agent per issue.
+- **Linear agent sessions** and the **Copilot coding agent** are the others.
+
+[ADR 015](adr/015-aoa-is-a-backend.md) calls these **front doors** and positions `aoa` as the backend
+they drive. The front door decides *what* gets worked on; `aoa` decides *whether it lands*.
+
+The split follows from what each side says about itself. Symphony's spec calls it "a scheduler/runner
+and tracker reader" and specifies no verification or merge gate. firstmate calls itself "the command
+layer, not the workshop", and leaves validation to no-mistakes and merge policy to "the configured
+authority". An objective Gate on the post-merge state, with a replayable log behind it, is the part
+neither provides. It is also the part `aoa` exists for.
+
+| System | Relationship to `aoa` |
+|---|---|
+| firstmate | Front door. A crewmate drives `aoa` through the CLI, and a check script polls `status --json`. |
+| Symphony-style runners | Front door. `aoa` can be the per-issue executor and supply the missing gate. |
+| Linear agent sessions | Front door. Delegating an issue becomes `aoa goal --ref <issue>`. |
+| Copilot coding agent | A combined front door and executor. It complements `aoa` when you want your own Gate, log and harness. |
+| no-mistakes | A push-time gate that runs LLM review, then tests. It complements `aoa`'s delivery modes ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128)) and does not replace the Gate. |
+
+As elsewhere on this page, these are positions drawn from each system's own documents, not
+measurements.
+
 ## Live evaluation protocol (closing the mock→live gap)
 
 The matrix above is hermetic and architectural. The honest next step — repeatedly flagged in review — is
