@@ -47,9 +47,9 @@ them. The agent gets the goal text and the repo, nothing else from this conversa
 ## Watch and report back
 
 ```bash
-aoa status --path <workspace>              # goals, tasks, attempts, tokens, cost
-aoa events --path <workspace> tail -n 20   # the log all of that is derived from
-aoa diagnose --path <workspace>            # failure-mode histogram when things go wrong
+aoa status --path <workspace>                   # goals, tasks, attempts, tokens, cost
+aoa events --path <workspace> tail --count 20   # the log all of that is derived from
+aoa diagnose --path <workspace>                 # failure-mode histogram when things go wrong
 ```
 
 `status` is the one to quote to the user. A failed task prints a "needs human" line with the worktree

@@ -119,7 +119,7 @@ Inspect the Event Log — the append-only record every other number is derived f
 
 ```bash
 aoa events --path ./ws tail --count 20
-aoa events --path ./ws replay --type TicketMerged
+aoa events --path ./ws replay --type Merged
 ```
 
 | Flag | Default | |
