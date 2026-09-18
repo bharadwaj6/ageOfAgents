@@ -50,10 +50,10 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status (2026-09-18):** in review: #127 (doc fixes), #133 (this ADR), and the stack
-#134 (allowlist) ← #136 (ledger lock). Merge bottom-up. In progress, stacked on #136: one Scheduler
-per workspace, the write verbs, and the event cursor. Also filed: #135 (a stopped Docker daemon is
-recorded as a Gate verdict).
+**Last status (2026-09-18):** in review: #127 (doc fixes), #133 (this ADR), and one linear stack:
+#134 (allowlist) ← #136 (ledger lock) ← #137 (one Scheduler) ← #138 (write verbs) ← #139 (event cursor).
+Merge bottom-up; GitHub retargets each PR to `main` as the one below it lands. In progress on top of
+#139: `status --json`. Also filed: #135 (a stopped Docker daemon is recorded as a Gate verdict).
 
 | | Increment | Depends on |
 |---|---|---|
@@ -61,10 +61,10 @@ recorded as a Gate verdict).
 | [ ] | ADR 015, tracker and positioning ([#133](https://github.com/bharadwaj6/ageOfAgents/pull/133)) | — |
 | [ ] | `serve` queues work only from trusted commenters, `--allow` ([#134](https://github.com/bharadwaj6/ageOfAgents/pull/134)) | — |
 | [ ] | Event Log safe for writers in several processes, `internal/filelock` ([#136](https://github.com/bharadwaj6/ageOfAgents/pull/136), stacked on #134) | — |
-| [ ] | One Scheduler per workspace, `aoa run` exits `75` when busy | ledger lock |
-| [ ] | Write verbs: goal `--source/--ref/--key`, idempotent submit, `--json` on goal/amend/approve/reject | ledger lock |
+| [ ] | One Scheduler per workspace, `aoa run` exits `75` when busy ([#137](https://github.com/bharadwaj6/ageOfAgents/pull/137)) | ledger lock |
+| [ ] | Write verbs: goal `--source/--ref/--key`, idempotent submit, `--json` on goal/amend/approve/reject ([#138](https://github.com/bharadwaj6/ageOfAgents/pull/138)) | ledger lock |
 | [ ] | `status --json` from one projection shared with text `status` | write verbs |
-| [ ] | Event cursor: `events --json --since N`, then `--follow` | ledger lock |
+| [ ] | Event cursor: `events --json --since N` and `--follow` ([#139](https://github.com/bharadwaj6/ageOfAgents/pull/139)) | ledger lock |
 | [ ] | Cancellation: `GoalCancelled`, `aoa cancel`, invariant `CancelHonored` | write verbs, status |
 | [ ] | Contract reference `docs/backend.md`, skill switched to `--json`, README pointer | all of the above |
 
