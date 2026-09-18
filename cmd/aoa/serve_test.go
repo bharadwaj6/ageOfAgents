@@ -205,17 +205,44 @@ func TestServeDeduplicatesRedeliveries(t *testing.T) {
 		drain(t, r)
 	}
 
-	// All three are on the log (the log is append-only and records what arrived)...
-	if got := goals(t, led); len(got) != 3 {
-		t.Fatalf("GoalSubmitted event count = %d, want 3", len(got))
+	// Only the first reaches the log. The redeliveries used to be appended too
+	// and collapsed on replay, but a board poller re-submits every cycle and
+	// that grew the log by thousands of identical events per issue per day, so
+	// submitGoal now checks the key under the ledger lock and appends nothing.
+	if got := goals(t, led); len(got) != 1 {
+		t.Fatalf("GoalSubmitted event count = %d, want 1 (redeliveries append nothing)", len(got))
 	}
-	// ...but replay collapses them onto one Goal, which is what the Scheduler acts on.
+	// Replay agrees: one Goal, which is what the Scheduler acts on.
 	events, err := led.Read()
 	require.NoError(t, err)
 	s, err := state.Fold(events)
 	require.NoError(t, err)
 	if len(s.Goals) != 1 {
 		t.Errorf("replayed goal count = %d, want 1 (redeliveries share an idempotency key)", len(s.Goals))
+	}
+}
+
+func TestServeRecordsIssueRef(t *testing.T) {
+	// Whoever reports back on a webhook Goal needs to know which issue it came
+	// from and who asked for it; both are in the delivery.
+	r, led := testRunner(t)
+	h := webhookHandler(r, testSecret, defaultAllowSet(t))
+
+	rec := httptest.NewRecorder()
+	h(rec, post(t, commentFrom("@aoa add a greeting", "alice", "MEMBER"), "d-9"))
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	drain(t, r)
+
+	events, err := led.Read()
+	require.NoError(t, err)
+	s, err := state.Fold(events)
+	require.NoError(t, err)
+	require.Len(t, s.Goals, 1)
+	for _, g := range s.Goals {
+		require.Equal(t, "https://github.com/o/r/issues/7", g.Ref)
+		require.Equal(t, "alice", g.By)
+		require.Equal(t, "github-webhook", g.Source)
+		require.Equal(t, g.ID, s.KeyToGoal["github-delivery:d-9"])
 	}
 }
 

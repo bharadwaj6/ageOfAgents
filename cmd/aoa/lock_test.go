@@ -151,7 +151,7 @@ func TestRunReconcilesGoalAppendedBeforeRelease(t *testing.T) {
 			t.Errorf("front door: open ledger: %v", err)
 			return
 		}
-		if _, err := submitGoal(led, "add a farewell", "front-door", ""); err != nil {
+		if _, err := submitGoal(led, goalRequest{Text: "add a farewell", Source: "front-door"}); err != nil {
 			t.Errorf("front door: submit goal: %v", err)
 		}
 	}
@@ -209,7 +209,7 @@ func TestWithSchedulerLockRechecksOnlyWhenAsked(t *testing.T) {
 					return
 				}
 				appends++
-				if _, err := submitGoal(led, "late goal", "front-door", ""); err != nil {
+				if _, err := submitGoal(led, goalRequest{Text: "late goal", Source: "front-door"}); err != nil {
 					t.Errorf("submit goal: %v", err)
 				}
 			}

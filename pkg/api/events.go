@@ -1,7 +1,11 @@
-// Package api defines the public event vocabulary for the Age of Agents
-// orchestrator. The append-only Event Log of these events is the single source
-// of truth (see docs/design/adr/001-event-sourced-truth.md); all runtime state is
-// derived by replaying the event stream.
+// Package api is the public contract of the Age of Agents orchestrator. It
+// holds two things external callers depend on:
+//
+//   - the event vocabulary: the append-only Event Log of these events is the
+//     single source of truth (see docs/design/adr/001-event-sourced-truth.md),
+//     and all runtime state is derived by replaying the event stream;
+//   - the CLI's machine-readable contract: the result types the write verbs
+//     print with --json (contract.go), versioned by [ContractVersion].
 package api
 
 import (
@@ -128,15 +132,22 @@ func (e Event) TicketID() string {
 // --- Typed payloads -------------------------------------------------------
 
 // GoalSubmittedPayload accompanies [GoalSubmitted]. Source names where the Goal
-// came from ("cli" when a human typed it, otherwise the entry point that
+// came from ("human" when typed at the CLI, otherwise the entry point that
 // produced it). IdempotencyKey, when set, makes re-submitting the same logical
 // Goal a no-op — an at-least-once source such as a redelivered webhook can
-// safely replay without forking a second Goal (ADR 010).
+// safely replay without forking a second Goal (ADR 010). Ref and By record the
+// Goal's origin for whoever reports back on it.
 type GoalSubmittedPayload struct {
 	GoalID         string `json:"goal_id"`
 	Text           string `json:"text"`
 	Source         string `json:"source,omitempty"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// Ref points at the Goal's origin: a URL (an issue, a PR comment) or a
+	// tracker reference such as "linear:ENG-123". Empty when there is none.
+	Ref string `json:"ref,omitempty"`
+	// By names who submitted the Goal (a username, a bot), as the submitter
+	// reported it. Empty when unknown; aoa never guesses an identity.
+	By string `json:"by,omitempty"`
 }
 
 // TicketCreatedPayload accompanies [TicketCreated]. IdempotencyKey makes
@@ -272,7 +283,8 @@ type ApprovalRequestedPayload struct {
 // ApprovalGrantedPayload accompanies [ApprovalGranted].
 type ApprovalGrantedPayload struct {
 	TicketID string `json:"ticket_id"`
-	By       string `json:"by,omitempty"` // who approved (e.g. a username)
+	By       string `json:"by,omitempty"`     // who approved (e.g. a username)
+	Reason   string `json:"reason,omitempty"` // why, when the approver said
 }
 
 // ApprovalDeniedPayload accompanies [ApprovalDenied].

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -404,5 +405,186 @@ func TestGoalAmendmentAppendsToEffectiveText(t *testing.T) {
 	// An un-amended goal returns its text verbatim.
 	if (&Goal{Text: "plain"}).EffectiveText() != "plain" {
 		t.Error("un-amended goal should return its text unchanged")
+	}
+}
+
+func TestGoalFoldKeepsOrigin(t *testing.T) {
+	// A front door that submitted a Goal needs to find it again — which issue it
+	// came from, who asked — and a duplicate submit must name the original.
+	origin := api.GoalSubmittedPayload{
+		GoalID: "g1", Text: "fix it", Source: "linear", IdempotencyKey: "linear:ENG-1",
+		Ref: "https://linear.app/acme/issue/ENG-1", By: "octocat",
+	}
+	tests := []struct {
+		name  string
+		build func(b *build) *build
+		// wantIdx is the index of the event whose envelope the Goal must carry.
+		wantIdx int
+		want    api.GoalSubmittedPayload
+	}{
+		{
+			name:    "origin fields are kept",
+			build:   func(b *build) *build { return b.add(api.GoalSubmitted, origin) },
+			wantIdx: 0,
+			want:    origin,
+		},
+		{
+			name: "a keyed duplicate does not overwrite the original",
+			build: func(b *build) *build {
+				dup := origin
+				dup.GoalID, dup.Ref, dup.By, dup.Source = "g2", "https://elsewhere", "mallory", "poller"
+				return b.add(api.GoalSubmitted, origin).add(api.GoalSubmitted, dup)
+			},
+			wantIdx: 0,
+			want:    origin,
+		},
+		{
+			name: "an unkeyed goal without origin has empty fields",
+			build: func(b *build) *build {
+				return b.add(api.Heartbeat, api.HeartbeatPayload{Worker: "w"}).
+					add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "plain"})
+			},
+			wantIdx: 1,
+			want:    api.GoalSubmittedPayload{GoalID: "g1", Text: "plain"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := tt.build(newBuild(t))
+			s := b.fold()
+			if len(s.Goals) != 1 {
+				t.Fatalf("goal count = %d, want 1", len(s.Goals))
+			}
+			g := s.Goals[tt.want.GoalID]
+			if g == nil {
+				t.Fatalf("goal %s missing", tt.want.GoalID)
+			}
+			ev := b.events[tt.wantIdx]
+			if g.Source != tt.want.Source || g.Ref != tt.want.Ref || g.By != tt.want.By {
+				t.Errorf("origin = (source %q, ref %q, by %q), want (%q, %q, %q)",
+					g.Source, g.Ref, g.By, tt.want.Source, tt.want.Ref, tt.want.By)
+			}
+			if !g.SubmittedAt.Equal(ev.Timestamp) {
+				t.Errorf("SubmittedAt = %v, want the event's timestamp %v", g.SubmittedAt, ev.Timestamp)
+			}
+			if g.SubmittedSeq != ev.Seq {
+				t.Errorf("SubmittedSeq = %d, want %d", g.SubmittedSeq, ev.Seq)
+			}
+		})
+	}
+}
+
+func TestSnapshotKeepsGoalOrigin(t *testing.T) {
+	// The origin fields are additive: a snapshot taken now carries them, and a
+	// snapshot taken before they existed still decodes, with them empty.
+	b := newBuild(t).add(api.GoalSubmitted, api.GoalSubmittedPayload{
+		GoalID: "g1", Text: "fix it", Source: "linear", Ref: "linear:ENG-1", By: "octocat",
+	})
+	orig := b.fold()
+	raw, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	tests := []struct {
+		name  string
+		state json.RawMessage
+		want  Goal
+	}{
+		{
+			name:  "current snapshot",
+			state: raw,
+			want:  *orig.Goals["g1"],
+		},
+		{
+			name:  "snapshot from before origin fields",
+			state: json.RawMessage(`{"Goals":{"g1":{"ID":"g1","Text":"fix it","TokensByModel":{}}},"Tickets":{}}`),
+			want:  Goal{ID: "g1", Text: "fix it", TokensByModel: map[string]int{}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newBuild(t).add(api.StateSnapshot, api.StateSnapshotPayload{State: tt.state}).fold()
+			g := s.Goals["g1"]
+			if g == nil {
+				t.Fatal("goal g1 missing after snapshot")
+			}
+			if g.Source != tt.want.Source || g.Ref != tt.want.Ref || g.By != tt.want.By ||
+				!g.SubmittedAt.Equal(tt.want.SubmittedAt) || g.SubmittedSeq != tt.want.SubmittedSeq {
+				t.Errorf("goal after snapshot = %+v, want %+v", *g, tt.want)
+			}
+		})
+	}
+}
+
+func TestApprovalDecisionIsRecorded(t *testing.T) {
+	// `aoa approve` must tell a retried decision from a contradicting one, so
+	// replay records which decision took effect, and where.
+	parked := func(b *build) *build {
+		return b.
+			add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl"}).
+			add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "t1", Worker: "w1", Branch: "aoa/t1"}).
+			add(api.ApprovalRequested, api.ApprovalRequestedPayload{TicketID: "t1", Worker: "w1"})
+	}
+	tests := []struct {
+		name         string
+		decide       func(b *build) *build
+		wantApproved bool
+		wantRejected bool
+		wantSeq      int
+		wantStatus   TicketStatus
+	}{
+		{
+			name:       "undecided",
+			decide:     func(b *build) *build { return b },
+			wantSeq:    0,
+			wantStatus: StatusAwaiting,
+		},
+		{
+			name: "approved",
+			decide: func(b *build) *build {
+				return b.add(api.ApprovalGranted, api.ApprovalGrantedPayload{TicketID: "t1", By: "octocat"})
+			},
+			wantApproved: true, wantSeq: 4, wantStatus: StatusProposed,
+		},
+		{
+			name: "rejected",
+			decide: func(b *build) *build {
+				return b.add(api.ApprovalDenied, api.ApprovalDeniedPayload{TicketID: "t1", Reason: "no"})
+			},
+			wantRejected: true, wantSeq: 4, wantStatus: StatusFailed,
+		},
+		{
+			name: "a late contradicting decision does not take effect",
+			decide: func(b *build) *build {
+				return b.add(api.ApprovalDenied, api.ApprovalDeniedPayload{TicketID: "t1"}).
+					add(api.ApprovalGranted, api.ApprovalGrantedPayload{TicketID: "t1"})
+			},
+			wantRejected: true, wantSeq: 4, wantStatus: StatusFailed,
+		},
+		{
+			name: "a repeated decision keeps the first seq",
+			decide: func(b *build) *build {
+				return b.add(api.ApprovalGranted, api.ApprovalGrantedPayload{TicketID: "t1"}).
+					add(api.ApprovalGranted, api.ApprovalGrantedPayload{TicketID: "t1"})
+			},
+			wantApproved: true, wantSeq: 4, wantStatus: StatusProposed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tk := tt.decide(parked(newBuild(t))).fold().Tickets["t1"]
+			if tk == nil {
+				t.Fatal("ticket t1 missing")
+			}
+			if tk.Approved != tt.wantApproved || tk.Rejected != tt.wantRejected {
+				t.Errorf("approved, rejected = %v, %v; want %v, %v", tk.Approved, tk.Rejected, tt.wantApproved, tt.wantRejected)
+			}
+			if tk.DecidedSeq != tt.wantSeq {
+				t.Errorf("DecidedSeq = %d, want %d", tk.DecidedSeq, tt.wantSeq)
+			}
+			if tk.Status != tt.wantStatus {
+				t.Errorf("status = %s, want %s", tk.Status, tt.wantStatus)
+			}
+		})
 	}
 }

@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Write verbs a front door can drive.** `aoa goal`, `amend`, `approve` and `reject` take `--json` and
+  print exactly one line of JSON — the Goal or ticket id, the `seq` of the event written, and whether the
+  call was a duplicate — in shapes defined in `pkg/api/contract.go` and versioned by a `schema` field.
+  Before, a caller had to scrape prose to learn which Goal it had just created.
+- **Goals record where they came from.** `aoa goal --source S --ref R --by B` stores the entry point, an
+  origin reference (a URL or `linear:ENG-123`) and who asked on the Goal; `aoa serve` fills them from the
+  issue URL and the commenter's login. `approve`/`reject` take `--by` and `--reason`.
+- **Retrying a decision is safe.** Approving an approved ticket, or rejecting a rejected one, succeeds
+  with `already_decided` and appends nothing; contradicting a decision is still an error.
+- `aoa goal --key K` passes an idempotency key: submitting it again returns the Goal it already names.
 - **A leaner agent brief, with the recipes as skills.** `CLAUDE.md` is now a pointer and `AGENTS.md` keeps
   only what every session needs — vocabulary, the golden rules, the repo map, conventions. The per-job
   detail moved into project skills that cost nothing until they fire: `change-architecture`,
@@ -44,6 +54,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Duplicate keyed submits are no longer appended.** A Goal whose idempotency key is already on the log
+  used to be appended anyway and collapsed on replay. A board poller re-submits every open issue each
+  cycle — at a 30-second poll, 2,880 identical events per issue per day. The key is now checked under
+  the ledger lock and a duplicate writes nothing, so concurrent submitters of one key, in separate
+  processes too, agree on one Goal. Replay still dedupes keys, for logs written before this.
 - **The design docs stop citing raw LLM transcripts as research.** `docs/research/` holds five unedited
   chat outputs from the exploratory phase; the design docs were citing them as evidence — one called a
   Gemini chat window "an independent critique [that] validated these decisions". All 16 such citations
@@ -80,6 +95,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A new Goal id never collides with an existing one.** Ids are 32 random bits; on the rare collision
+  the second Goal was silently dropped on replay. A colliding id is now regenerated.
 - **The Event Log is safe to append from several processes.** `aoa goal`, `approve`, `reject` and
   `amend` run during a live `aoa run` or `aoa serve` each numbered events from their own stale view of
   the log, so two processes could write the same sequence number — breaking the gapless 1..N invariant
