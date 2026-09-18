@@ -1,0 +1,10 @@
+goal g-1: do the thing
+  graph g-1: tickets=1 depth=0 fan-out=0
+
+  [failed  ] g-1-impl  (attempts=1 tokens=90)
+
+needs human — failed tickets:
+  g-1-impl — (no reason recorded)
+
+total: tokens=90  wall=10.0s
+all work settled

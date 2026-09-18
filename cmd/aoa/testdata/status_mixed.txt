@@ -1,0 +1,23 @@
+goal g-await: bump the version
+goal g-failed: fix the flaky test
+goal g-merged: add a greeting
+goal g-queued: write the docs
+goal g-split: build the parser
+  graph g-await: tickets=1 depth=0 fan-out=0
+  graph g-failed: tickets=1 depth=0 fan-out=0
+  graph g-merged: tickets=1 depth=0 fan-out=0
+  graph g-split: tickets=3 depth=1 fan-out=2
+
+  [awaiting] g-await-impl  (attempts=1 tokens=250)
+  [failed  ] g-failed-impl  (attempts=2 tokens=1200)
+  [merged  ] g-merged-impl  (attempts=1 tokens=1200)
+  [decomposed] g-split-impl  (attempts=1 tokens=300)
+  [merged  ] g-split-impl/a  (attempts=1 tokens=400)
+  [merged  ] g-split-impl/b  (attempts=1 tokens=600)
+
+needs human — failed tickets:
+  g-failed-impl — gate: go test ./... failed (2 attempts)
+      take over: cd /ws/.aoa/handoff/g-failed-impl
+
+total: tokens=3950  wall=41.0s  cost=$0.0154
+merge queue: max-depth=2  wait-mean=2.6s  wait-max=4.0s
