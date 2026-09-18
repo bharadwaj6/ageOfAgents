@@ -100,6 +100,14 @@ All notable changes to this project are documented here. The format follows
   nor `serve --secret` — the last of which `docs/scheduling.md` says you must always set or anyone who
   can reach the port can queue work.
 
+### Security
+
+- **`aoa serve` only takes work from trusted commenters.** It now ignores `@aoa` comments from anyone
+  whose GitHub `author_association` is outside `--allow` (default `OWNER`, `MEMBER`, `COLLABORATOR`),
+  answering `200 ignored` and logging who was turned away. Previously any commenter could queue agent
+  work: `--secret` proves a delivery came from GitHub, not who wrote the comment, so on a public
+  repository anyone could make the host run an agent.
+
 ## [0.3.0] — 2026-08-24
 
 ### Changed

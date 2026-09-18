@@ -39,6 +39,16 @@ HMAC verification of GitHub's signature. **Without it, anyone who can reach the 
 run an AI agent against your repository.** The server warns and starts anyway; that is a convenience for
 local testing, not a deployment posture. Always set `--secret` on anything reachable.
 
+`--secret` authenticates **GitHub**, not the commenter: a correctly signed delivery can still carry a
+comment from anyone who can comment on the repository, which on a public repository is everyone. Who may
+queue work is decided by `--allow`, a list of GitHub `author_association` values, defaulting to
+`OWNER,MEMBER,COLLABORATOR` — people with write access or membership of the owning organization. Any
+other `@aoa` comment is answered `200 ignored`, queues nothing, and is logged with the commenter's login.
+**Widening `--allow` to `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER` or `NONE` lets strangers run
+agents on your machine** — anyone can become a contributor by getting one pull request merged. The
+allowlist is only as trustworthy as the payload: without `--secret`, `author_association` is whatever the
+sender wrote.
+
 ### Cost is a security property here
 
 A runaway loop spends real money. `max_tokens_per_goal` and `max_usd_per_goal` are per-goal circuit

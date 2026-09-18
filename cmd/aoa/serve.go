@@ -24,6 +24,44 @@ const maxWebhookBody = 1 << 20
 // commandPrefix is the ChatOps trigger in an issue comment.
 const commandPrefix = "@aoa"
 
+// defaultAllow is the --allow default: the author associations GitHub gives
+// people with write access to the repository or membership of its org.
+const defaultAllow = "OWNER,MEMBER,COLLABORATOR"
+
+// authorAssociations is every value GitHub sends as a comment's
+// author_association, roughly most trusted first.
+var authorAssociations = []string{
+	"OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR",
+	"FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE",
+}
+
+// parseAllow parses a comma-separated --allow value into the set of author
+// associations that may queue work. Matching is case-insensitive and blank
+// entries are skipped, but a value GitHub never sends is an error rather than
+// silently matching no one, and so is a list with nothing in it.
+func parseAllow(s string) (map[string]bool, error) {
+	known := make(map[string]bool, len(authorAssociations))
+	for _, a := range authorAssociations {
+		known[a] = true
+	}
+	allow := make(map[string]bool)
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		a := strings.ToUpper(part)
+		if !known[a] {
+			return nil, fmt.Errorf("--allow: unknown author association %q (valid: %s)", part, strings.Join(authorAssociations, ", "))
+		}
+		allow[a] = true
+	}
+	if len(allow) == 0 {
+		return nil, fmt.Errorf("--allow: need at least one author association (valid: %s)", strings.Join(authorAssociations, ", "))
+	}
+	return allow, nil
+}
+
 // pendingGoal is webhook-supplied work not yet written to the Event Log. Key is
 // the delivery's idempotency key, so a redelivery collapses on replay.
 type pendingGoal struct{ text, key string }
@@ -111,13 +149,18 @@ func (r *runner) submit(batch []pendingGoal) error {
 
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	describe(fs, "aoa serve \u2014 run a GitHub webhook server.\n\nAn `@aoa <goal>` issue comment queues a Goal and reconciles the workspace.\nWithout --secret the endpoint is unauthenticated: anyone who can reach the\nport can make this machine run an agent against your repo. See SECURITY.md.",
+	describe(fs, "aoa serve \u2014 run a GitHub webhook server.\n\nAn `@aoa <goal>` issue comment queues a Goal and reconciles the workspace.\nOnly commenters whose author_association is in --allow can queue work; any\nother `@aoa` comment is acknowledged and ignored. --secret proves a delivery\ncame from GitHub, not who wrote the comment. Without --secret the endpoint is\nunauthenticated and the allowlist can be forged: anyone who can reach the port\ncan make this machine run an agent against your repo. See SECURITY.md.",
 		"aoa serve --path ./workspace --port 8080 --secret $GITHUB_WEBHOOK_SECRET")
 	port := fs.Int("port", 8080, "Port to listen on")
 	path := fs.String("path", ".", "Workspace root directory")
 	secret := fs.String("secret", "", "GitHub webhook secret")
+	allowFlag := fs.String("allow", defaultAllow, "Comma-separated author associations that may queue work ("+strings.Join(authorAssociations, ", ")+")")
 	_ = fs.Parse(args)
 
+	allow, err := parseAllow(*allowFlag)
+	if err != nil {
+		return err
+	}
 	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
@@ -127,7 +170,7 @@ func cmdServe(args []string) error {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/webhook", webhookHandler(newRunner(ws.root), *secret))
+	mux.HandleFunc("/webhook", webhookHandler(newRunner(ws.root), *secret, allow))
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", *port),
@@ -144,7 +187,11 @@ func cmdServe(args []string) error {
 // webhookHandler accepts GitHub issue-comment deliveries and queues any `@aoa
 // <goal>` command for the runner. It responds as soon as the work is queued —
 // the orchestrator run happens off the request path and may outlive it.
-func webhookHandler(r *runner, secret string) http.HandlerFunc {
+//
+// Only a commenter whose author_association is in allow can queue work; a nil
+// or empty allow queues nothing. Anyone else's command is answered 200
+// "ignored", not an error status, because GitHub redelivers any non-2xx.
+func webhookHandler(r *runner, secret string, allow map[string]bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -168,8 +215,16 @@ func webhookHandler(r *runner, secret string) http.HandlerFunc {
 		var payload struct {
 			Action  string `json:"action"`
 			Comment struct {
-				Body string `json:"body"`
+				Body              string `json:"body"`
+				AuthorAssociation string `json:"author_association"`
+				User              struct {
+					Login string `json:"login"`
+				} `json:"user"`
 			} `json:"comment"`
+			Issue struct {
+				HTMLURL string `json:"html_url"`
+				Number  int    `json:"number"`
+			} `json:"issue"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
 			http.Error(w, "Malformed payload", http.StatusBadRequest)
@@ -177,6 +232,14 @@ func webhookHandler(r *runner, secret string) http.HandlerFunc {
 		}
 		cmd, ok := parseCommand(payload.Action, payload.Comment.Body)
 		if !ok {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, "ignored")
+			return
+		}
+		// A valid signature proves GitHub sent this, not that the commenter may
+		// spend this machine's compute: on a public repo anyone can comment.
+		if !allow[payload.Comment.AuthorAssociation] {
+			log.Printf("serve: ignored @aoa from %q (%q not in --allow)", payload.Comment.User.Login, payload.Comment.AuthorAssociation)
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintln(w, "ignored")
 			return

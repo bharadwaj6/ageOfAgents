@@ -111,7 +111,7 @@ Usage:
   aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
-  aoa serve  [--path DIR] [--port N] [--secret S]
+  aoa serve  [--path DIR] [--port N] [--secret S] [--allow LIST]
                                           Run a GitHub webhook server (always set --secret)
   aoa eval   --tasks F [--backend B] [--price P | --price-file F] [--max-cost $] [--json] [--otel]
                                           Run end-to-end tasks on real repos (any backend value)

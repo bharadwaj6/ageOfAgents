@@ -119,7 +119,9 @@ aoa serve --path . --port 8080 --secret "$GITHUB_WEBHOOK_SECRET"
 ```
 
 Always set `--secret` — without it, signatures are not verified and anyone who can reach the port can
-queue work. Deliveries are deduplicated by `X-GitHub-Delivery` and written to the log with an
+queue work. A signature proves the delivery came from GitHub, not that the commenter is trusted, so only
+commenters whose `author_association` is in `--allow` (default `OWNER,MEMBER,COLLABORATOR`) can queue a
+Goal; anyone else's `@aoa` comment is acknowledged and ignored. Deliveries are deduplicated by `X-GitHub-Delivery` and written to the log with an
 idempotency key, so GitHub's at-least-once redelivery cannot fork a duplicate Goal. Runs are
 single-flight: a delivery arriving mid-run is queued and reconciled on the next cycle.
 
