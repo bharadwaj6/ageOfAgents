@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -611,4 +612,56 @@ func TestOpenWaitsForInFlightAppend(t *testing.T) {
 		t.Errorf("seq after the in-flight event = %d, want 2", stored.Seq)
 	}
 	requireGapless(t, path, 2)
+}
+
+// A reader must not need write access. The status, events and diagnose
+// commands only read the log, and a log copied somewhere read-only (a CI
+// artifact, another user's workspace) has no lock file and cannot get one.
+func TestOpenReadsAReadOnlyLog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits do not stop file creation on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permission bits")
+	}
+	src := filepath.Join(t.TempDir(), "events.jsonl")
+	w, err := Open(src)
+	if err != nil {
+		t.Fatalf("Open writer: %v", err)
+	}
+	mustAppend(t, w, mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "x"}))
+	mustAppend(t, w, mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "y"}))
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read source log: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("copy log: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("make dir read-only: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Errorf("restore dir: %v", err)
+		}
+	})
+
+	l, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open of a read-only log: %v", err)
+	}
+	events, err := l.Read()
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	if _, err := l.Append(mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g3", Text: "z"})); err == nil {
+		t.Fatal("Append succeeded without being able to take the lock")
+	}
 }
