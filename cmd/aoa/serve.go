@@ -62,9 +62,11 @@ func parseAllow(s string) (map[string]bool, error) {
 	return allow, nil
 }
 
-// pendingGoal is webhook-supplied work not yet written to the Event Log. Key is
-// the delivery's idempotency key, so a redelivery collapses on replay.
-type pendingGoal struct{ text, key string }
+// pendingGoal is webhook-supplied work not yet written to the Event Log. key is
+// the delivery's idempotency key, so a redelivery is not submitted twice; ref
+// is the URL of the issue the command was posted on; by is the commenter's
+// login.
+type pendingGoal struct{ text, key, ref, by string }
 
 // runner serializes all work the webhook server drives. Two deliveries must
 // never produce two concurrent orchestrator runs: each run owns a Ledger handle
@@ -138,11 +140,17 @@ func (r *runner) submit(batch []pendingGoal) error {
 		return err
 	}
 	for _, g := range batch {
-		id, err := submitGoal(led, g.text, "github-webhook", g.key)
+		res, err := submitGoal(led, goalRequest{
+			Text: g.text, Source: "github-webhook", Ref: g.ref, Key: g.key, By: g.by,
+		})
 		if err != nil {
 			return fmt.Errorf("goal %q: %w", g.text, err)
 		}
-		log.Printf("serve: submitted goal %s: %q", id, g.text)
+		if res.Duplicate {
+			log.Printf("serve: goal %s already submitted (key %q); redelivery ignored", res.GoalID, g.key)
+			continue
+		}
+		log.Printf("serve: submitted goal %s: %q", res.GoalID, g.text)
 	}
 	return nil
 }
@@ -246,13 +254,14 @@ func webhookHandler(r *runner, secret string, allow map[string]bool) http.Handle
 		}
 
 		// Webhook delivery is at-least-once. Keying the Goal on the delivery id
-		// makes a redelivery a no-op on replay (state.Apply dedupes), which
-		// survives a restart in a way an in-process seen-set would not.
+		// makes a redelivery a no-op: submitGoal finds the key already on the
+		// log and appends nothing. The log is the seen-set, so this survives a
+		// restart in a way an in-process one would not.
 		key := ""
 		if id := req.Header.Get("X-GitHub-Delivery"); id != "" {
 			key = "github-delivery:" + id
 		}
-		r.enqueue(pendingGoal{text: cmd, key: key})
+		r.enqueue(pendingGoal{text: cmd, key: key, ref: payload.Issue.HTMLURL, by: payload.Comment.User.Login})
 
 		w.WriteHeader(http.StatusAccepted)
 		fmt.Fprintln(w, "queued")

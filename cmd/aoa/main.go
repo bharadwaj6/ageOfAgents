@@ -123,8 +123,10 @@ Usage:
   aoa doctor [--path DIR]                 Check this workspace can actually run
   aoa init   [--path DIR] [--repo PATH | --adopt PATH] [--force]
                                           Scaffold a workspace, or adopt an existing repo
-  aoa goal   [--path DIR] "objective"     Submit a goal
-  aoa amend  [--path DIR] <goal-id> "..."  Append steering guidance to a goal mid-run
+  aoa goal   [--path DIR] [--json] [--key K] [--source S] [--ref R] [--by B] "objective"
+                                          Submit a goal (a repeated --key returns the existing one)
+  aoa amend  [--path DIR] [--json] <goal-id> "..."
+                                          Append steering guidance to a goal mid-run
   aoa run    [--path DIR] [--once | --interval D] [--otel | --otel-live]
                                           Run the reconciler (to settled by default)
   aoa status [--path DIR] [--watch] [--interval D]
@@ -138,8 +140,10 @@ Usage:
                                           Run end-to-end tasks on real repos (any backend value)
   aoa diagnose [--path DIR] [--json]      MAST-style failure-mode histogram for a run
   aoa otel export [--path DIR]            Replay the Event Log to OTLP traces + metrics
-  aoa approve [--path DIR] <ticket-id>    Approve a parked proposal (require_approval)
-  aoa reject  [--path DIR] <ticket-id>    Reject a parked proposal (require_approval)
+  aoa approve [--path DIR] [--json] [--by B] [--reason R] <ticket-id>
+                                          Approve a parked proposal (require_approval)
+  aoa reject  [--path DIR] [--json] [--by B] [--reason R] <ticket-id>
+                                          Reject a parked proposal (require_approval)
   aoa version                             Print the build version
   aoa completion bash|zsh|fish            Print a shell completion script
 
@@ -361,9 +365,16 @@ func rejectStrayFlags(args []string) error {
 
 func cmdGoal(args []string) error {
 	fs := flag.NewFlagSet("goal", flag.ExitOnError)
-	describe(fs, "aoa goal \u2014 submit an objective in plain English.\n\nThe Goal becomes one Task. Nothing is dispatched until you run `aoa run`.\nFlags must come before the text.", "aoa goal --path ./workspace \"add a greeting function\"")
+	describe(fs, "aoa goal \u2014 submit an objective in plain English.\n\nThe Goal becomes one Task. Nothing is dispatched until you run `aoa run`.\nFlags must come before the text. With --key, submitting the same key again\nappends nothing and reports the Goal already submitted.", "aoa goal --path ./workspace \"add a greeting function\"")
 	path := fs.String("path", ".", "workspace root")
-	_ = fs.Parse(args)
+	asJSON := fs.Bool("json", false, "print the result as one JSON line (pkg/api SubmitResult)")
+	source := fs.String("source", "human", "entry point submitting the goal (e.g. a front door's name)")
+	ref := fs.String("ref", "", "origin of the goal: a URL or tracker:id")
+	key := fs.String("key", "", "idempotency key: re-submitting it returns the existing goal")
+	by := fs.String("by", "", "who is submitting the goal")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	text := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if text == "" {
@@ -380,31 +391,90 @@ func cmdGoal(args []string) error {
 	if err != nil {
 		return err
 	}
-	goalID, err := submitGoal(led, text, "human", "")
+	res, err := submitGoal(led, goalRequest{Text: text, Source: *source, Ref: *ref, Key: *key, By: *by})
 	if err != nil {
 		return err
 	}
-	fmt.Printf("submitted goal %s: %q\n", goalID, text)
+	switch {
+	case *asJSON:
+		return printJSON(res)
+	case res.Duplicate:
+		fmt.Printf("goal %s already submitted (key %q)\n", res.GoalID, *key)
+	default:
+		fmt.Printf("submitted goal %s: %q\n", res.GoalID, text)
+	}
 	return nil
 }
 
-// submitGoal appends a GoalSubmitted event and returns the new Goal's id. source
-// names the entry point that produced it. key, when non-empty, is an idempotency
-// key: replaying the same logical Goal from an at-least-once source (a
-// redelivered webhook, a re-fired trigger) is then a no-op on replay rather than
-// a second Goal.
-func submitGoal(led *ledger.Ledger, text, source, key string) (string, error) {
-	goalID := "g-" + orchestrator.ShortID()
-	ev, err := api.NewEvent(api.GoalSubmitted, source, api.GoalSubmittedPayload{
-		GoalID: goalID, Text: text, Source: source, IdempotencyKey: key,
+// newGoalID returns a fresh random Goal id. A variable so a test can force a
+// collision.
+var newGoalID = func() string { return "g-" + orchestrator.ShortID() }
+
+// goalRequest is one Goal to submit. Source names the entry point that produced
+// it and becomes the event's actor. Ref points at its origin (a URL or
+// "tracker:id") and By names who asked; both are recorded as given. Key, when
+// non-empty, is an idempotency key: submitting it again returns the Goal it
+// already names instead of creating another.
+type goalRequest struct{ Text, Source, Ref, Key, By string }
+
+// submitGoal appends a GoalSubmitted event and reports the Goal's id and the
+// event's seq. A keyed request whose key is already on the log appends nothing
+// and reports the existing Goal as a duplicate, with the seq of its original
+// GoalSubmitted — so a poller that re-submits every cycle, or a redelivered
+// webhook, costs one read instead of one event per attempt.
+//
+// The check and the append are one ledger transaction (Ledger.Update), so
+// concurrent submitters of one key — separate processes included — agree on a
+// single Goal. state.Apply still dedupes keys on replay, for logs written
+// before this check existed.
+func submitGoal(led *ledger.Ledger, req goalRequest) (api.SubmitResult, error) {
+	res := api.SubmitResult{Schema: api.ContractVersion}
+	stored, err := led.Update(func(events []api.Event) ([]api.Event, error) {
+		s, err := state.Fold(events)
+		if err != nil {
+			return nil, err
+		}
+		if req.Key != "" {
+			if id, ok := s.KeyToGoal[req.Key]; ok {
+				res.GoalID, res.Duplicate = id, true
+				if g := s.Goals[id]; g != nil {
+					res.Seq = g.SubmittedSeq
+				}
+				return nil, nil
+			}
+		}
+		// Ids are 32 random bits: a collision is unlikely but not impossible,
+		// and replay would silently drop the second Goal of that id.
+		goalID := newGoalID()
+		for s.Goals[goalID] != nil {
+			goalID = newGoalID()
+		}
+		ev, err := api.NewEvent(api.GoalSubmitted, req.Source, api.GoalSubmittedPayload{
+			GoalID: goalID, Text: req.Text, Source: req.Source, IdempotencyKey: req.Key,
+			Ref: req.Ref, By: req.By,
+		})
+		if err != nil {
+			return nil, err
+		}
+		res.GoalID = goalID
+		return []api.Event{ev}, nil
 	})
 	if err != nil {
-		return "", err
+		return api.SubmitResult{}, err
 	}
-	if _, err := led.Append(ev); err != nil {
-		return "", err
+	if len(stored) > 0 {
+		res.Seq = stored[0].Seq
 	}
-	return goalID, nil
+	return res, nil
+}
+
+// printJSON writes v to stdout as one compact JSON line: the --json output of
+// the write verbs, whose shapes are the contract types in pkg/api.
+func printJSON(v any) error {
+	if err := json.NewEncoder(os.Stdout).Encode(v); err != nil {
+		return fmt.Errorf("write json: %w", err)
+	}
+	return nil
 }
 
 // cmdAmend appends steering guidance to a Goal mid-run (GoalAmended). Future
@@ -414,7 +484,10 @@ func cmdAmend(args []string) error {
 	fs := flag.NewFlagSet("amend", flag.ExitOnError)
 	describe(fs, "aoa amend \u2014 append steering guidance to a Goal already on the log.\n\nFuture dispatches pick it up; work already in flight is unaffected.", "aoa amend --path ./workspace g-1a2b3c4d \"prefer table-driven tests\"")
 	path := fs.String("path", ".", "workspace root")
-	_ = fs.Parse(args)
+	asJSON := fs.Bool("json", false, "print the result as one JSON line (pkg/api AmendResult)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	rest := fs.Args()
 	if len(rest) < 2 {
@@ -436,26 +509,38 @@ func cmdAmend(args []string) error {
 	if err != nil {
 		return err
 	}
-	events, err := led.Read()
+	res, err := amendGoal(led, goalID, guidance)
 	if err != nil {
 		return err
 	}
-	s, err := state.Fold(events)
-	if err != nil {
-		return err
-	}
-	if s.Goals[goalID] == nil {
-		return fmt.Errorf("unknown goal %q", goalID)
-	}
-	ev, err := api.NewEvent(api.GoalAmended, "human", api.GoalAmendedPayload{GoalID: goalID, Guidance: guidance})
-	if err != nil {
-		return err
-	}
-	if _, err := led.Append(ev); err != nil {
-		return err
+	if *asJSON {
+		return printJSON(res)
 	}
 	fmt.Printf("amended goal %s — run `aoa run --path %s` to apply it to pending work\n", goalID, *path)
 	return nil
+}
+
+// amendGoal appends a GoalAmended event for a Goal that must already be on the
+// log. The check and the append are one ledger transaction.
+func amendGoal(led *ledger.Ledger, goalID, guidance string) (api.AmendResult, error) {
+	stored, err := led.Update(func(events []api.Event) ([]api.Event, error) {
+		s, err := state.Fold(events)
+		if err != nil {
+			return nil, err
+		}
+		if s.Goals[goalID] == nil {
+			return nil, fmt.Errorf("unknown goal %q", goalID)
+		}
+		ev, err := api.NewEvent(api.GoalAmended, "human", api.GoalAmendedPayload{GoalID: goalID, Guidance: guidance})
+		if err != nil {
+			return nil, err
+		}
+		return []api.Event{ev}, nil
+	})
+	if err != nil {
+		return api.AmendResult{}, err
+	}
+	return api.AmendResult{Schema: api.ContractVersion, GoalID: goalID, Seq: stored[0].Seq}, nil
 }
 
 func cmdRun(args []string) error {
@@ -990,10 +1075,15 @@ func cmdApprove(args []string, approve bool) error {
 		name = "reject"
 	}
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
-	describe(fs, fmt.Sprintf("aoa %s \u2014 decide a proposal parked by the approval gate.\n\nOnly applies when require_approval is set. The proposal has already passed\nthe Gate; this is the human decision on top of it.", name),
+	describe(fs, fmt.Sprintf("aoa %s \u2014 decide a proposal parked by the approval gate.\n\nOnly applies when require_approval is set. The proposal has already passed\nthe Gate; this is the human decision on top of it. Repeating a decision\nalready made succeeds and records nothing new.", name),
 		fmt.Sprintf("aoa %s --path ./workspace g-1a2b3c4d-impl", name))
 	path := fs.String("path", ".", "workspace root")
-	_ = fs.Parse(args)
+	asJSON := fs.Bool("json", false, "print the result as one JSON line (pkg/api DecisionResult)")
+	by := fs.String("by", "", "who is deciding (recorded as given)")
+	reason := fs.String("reason", "", "why (reject defaults to \"rejected by operator\")")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	ticketID := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if ticketID == "" {
@@ -1010,40 +1100,92 @@ func cmdApprove(args []string, approve bool) error {
 	if err != nil {
 		return err
 	}
-	events, err := led.Read()
+	res, err := decideTicket(led, decisionRequest{TicketID: ticketID, Approve: approve, By: *by, Reason: *reason})
 	if err != nil {
 		return err
 	}
-	s, err := state.Fold(events)
-	if err != nil {
-		return err
-	}
-	t := s.Tickets[ticketID]
-	if t == nil {
-		return fmt.Errorf("unknown ticket %q", ticketID)
-	}
-	if t.Status != state.StatusAwaiting {
-		return fmt.Errorf("ticket %q is %s, not awaiting approval", ticketID, t.Status)
-	}
-
-	var ev api.Event
-	if approve {
-		ev, err = api.NewEvent(api.ApprovalGranted, "human", api.ApprovalGrantedPayload{TicketID: ticketID})
-	} else {
-		ev, err = api.NewEvent(api.ApprovalDenied, "human", api.ApprovalDeniedPayload{TicketID: ticketID, Reason: "rejected by operator"})
-	}
-	if err != nil {
-		return err
-	}
-	if _, err := led.Append(ev); err != nil {
-		return err
-	}
-	if approve {
+	switch {
+	case *asJSON:
+		return printJSON(res)
+	case res.AlreadyDecided:
+		fmt.Printf("%s already %s\n", ticketID, res.Decision)
+	case approve:
 		fmt.Printf("approved %s — run `aoa run --path %s` to merge it\n", ticketID, *path)
-	} else {
+	default:
 		fmt.Printf("rejected %s\n", ticketID)
 	}
 	return nil
+}
+
+// decisionRequest is a human decision on a parked proposal. By and Reason are
+// recorded as given.
+type decisionRequest struct {
+	TicketID string
+	Approve  bool
+	By       string
+	Reason   string
+}
+
+// decideTicket records an approval or rejection of a ticket awaiting approval.
+// Repeating the decision already on the log appends nothing and reports
+// AlreadyDecided, so a front door can retry safely; contradicting it, or
+// deciding a ticket that was never parked, is an error. The check and the
+// append are one ledger transaction.
+func decideTicket(led *ledger.Ledger, req decisionRequest) (api.DecisionResult, error) {
+	decision := api.DecisionApproved
+	if !req.Approve {
+		decision = api.DecisionRejected
+	}
+	res := api.DecisionResult{Schema: api.ContractVersion, TicketID: req.TicketID, Decision: decision}
+	stored, err := led.Update(func(events []api.Event) ([]api.Event, error) {
+		s, err := state.Fold(events)
+		if err != nil {
+			return nil, err
+		}
+		t := s.Tickets[req.TicketID]
+		switch {
+		case t == nil:
+			return nil, fmt.Errorf("unknown ticket %q", req.TicketID)
+		case t.Status == state.StatusAwaiting:
+			// Decide it below.
+		case (req.Approve && t.Approved) || (!req.Approve && t.Rejected):
+			res.AlreadyDecided, res.Seq = true, t.DecidedSeq
+			return nil, nil
+		case t.Approved || t.Rejected:
+			made := api.DecisionApproved
+			if t.Rejected {
+				made = api.DecisionRejected
+			}
+			return nil, fmt.Errorf("ticket %q was already %s; it cannot be %s", req.TicketID, made, decision)
+		default:
+			return nil, fmt.Errorf("ticket %q is %s, not awaiting approval", req.TicketID, t.Status)
+		}
+		var ev api.Event
+		if req.Approve {
+			ev, err = api.NewEvent(api.ApprovalGranted, "human", api.ApprovalGrantedPayload{
+				TicketID: req.TicketID, By: req.By, Reason: req.Reason,
+			})
+		} else {
+			reason := req.Reason
+			if reason == "" {
+				reason = "rejected by operator"
+			}
+			ev, err = api.NewEvent(api.ApprovalDenied, "human", api.ApprovalDeniedPayload{
+				TicketID: req.TicketID, By: req.By, Reason: reason,
+			})
+		}
+		if err != nil {
+			return nil, err
+		}
+		return []api.Event{ev}, nil
+	})
+	if err != nil {
+		return api.DecisionResult{}, err
+	}
+	if len(stored) > 0 {
+		res.Seq = stored[0].Seq
+	}
+	return res, nil
 }
 
 // cmdDiagnose prints the MAST-style failure-mode histogram for a workspace's

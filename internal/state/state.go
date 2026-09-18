@@ -64,6 +64,11 @@ func (s TicketStatus) IsTerminal() bool {
 type Goal struct {
 	ID             string
 	Text           string
+	Source         string         // entry point that submitted it ("human", "github-webhook", a front door's name)
+	Ref            string         // origin reference: a URL or "tracker:id"; empty when none
+	By             string         // who submitted it, as the submitter reported; empty when unknown
+	SubmittedAt    time.Time      // timestamp of the GoalSubmitted event that created it
+	SubmittedSeq   int            // sequence number of that event, so a duplicate submit can name it
 	Amendments     []string       // steering guidance appended mid-run (GoalAmended)
 	TokensSpent    int            // LLM tokens charged to this Goal's tickets (spend governor)
 	TokensByModel  map[string]int // LLM tokens charged to this Goal, broken down by model
@@ -121,6 +126,8 @@ type Ticket struct {
 	Depth          int      // decomposition depth; tickets seeded from a goal are 0
 	Amendments     []string // steering guidance dynamically added to the ticket
 	Approved       bool     // a human approved the parked proposal (ADR 008)
+	Rejected       bool     // a human rejected the parked proposal (ADR 008)
+	DecidedSeq     int      // seq of the ApprovalGranted/ApprovalDenied that decided it; 0 if undecided
 	LastActivity   time.Time
 	LastFailReason string // reason of the most recent verification failure (crash-loop detection)
 	LastFailOutput string // verifier output of the most recent failure, fed back into the retry prompt
@@ -187,7 +194,12 @@ func (s *State) Apply(e api.Event) error {
 		if _, exists := s.Goals[p.GoalID]; exists {
 			break
 		}
-		s.Goals[p.GoalID] = &Goal{ID: p.GoalID, Text: p.Text, TokensByModel: map[string]int{}}
+		s.Goals[p.GoalID] = &Goal{
+			ID: p.GoalID, Text: p.Text,
+			Source: p.Source, Ref: p.Ref, By: p.By,
+			SubmittedAt: e.Timestamp, SubmittedSeq: e.Seq,
+			TokensByModel: map[string]int{},
+		}
 
 	case api.TicketCreated:
 		var p api.TicketCreatedPayload
@@ -388,6 +400,7 @@ func (s *State) Apply(e api.Event) error {
 		if t := s.Tickets[p.TicketID]; t != nil && t.Status == StatusAwaiting {
 			t.Status = StatusProposed
 			t.Approved = true
+			t.DecidedSeq = e.Seq
 			t.LastActivity = e.Timestamp
 		}
 
@@ -398,6 +411,8 @@ func (s *State) Apply(e api.Event) error {
 		}
 		if t := s.Tickets[p.TicketID]; t != nil && t.Status == StatusAwaiting {
 			t.Status = StatusFailed
+			t.Rejected = true
+			t.DecidedSeq = e.Seq
 			t.LastActivity = e.Timestamp
 		}
 

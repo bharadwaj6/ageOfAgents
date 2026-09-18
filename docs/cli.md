@@ -68,6 +68,21 @@ Submit a Goal. Takes the objective as positional text.
 aoa goal --path ./ws "add table-driven tests for parseUsage"
 ```
 
+| Flag | Default | |
+|---|---|---|
+| `--path DIR` | `.` | workspace root |
+| `--json` | `false` | print the result as one JSON line (see [Machine-readable output](#machine-readable-output)) |
+| `--key K` | — | idempotency key: submitting the same key again appends nothing and returns the Goal it already names |
+| `--source S` | `human` | the entry point submitting it — a front door's name, `ci`, … |
+| `--ref R` | — | where the Goal came from: a URL or a tracker reference such as `linear:ENG-123` |
+| `--by B` | — | who asked for it, recorded as given |
+
+`--key` is what makes a front door safe to retry. A board poller can re-submit the same issue every cycle
+with `--key linear:ENG-123`: the first call creates the Goal, every later one prints
+`goal g-… already submitted (key "linear:ENG-123")` and writes nothing. Concurrent submitters of one key —
+separate processes included — agree on a single Goal. `--source`, `--ref` and `--by` are stored on the
+Goal so whoever reports back on it knows where to.
+
 ### `aoa run`
 
 Run the Scheduler. By default it reconciles until all work settles, then exits `0`. Safe to re-run at
@@ -104,6 +119,13 @@ does not.
 aoa amend --path ./ws g-45973ca0 "keep the public API unchanged"
 ```
 
+| Flag | Default | |
+|---|---|---|
+| `--path DIR` | `.` | workspace root |
+| `--json` | `false` | print the result as one JSON line |
+
+An unknown goal id is an error, and appends nothing.
+
 ### `aoa approve` · `aoa reject`
 
 Decide a proposal parked by the approval gate (`require_approval = true`). Takes a ticket id.
@@ -111,6 +133,30 @@ Decide a proposal parked by the approval gate (`require_approval = true`). Takes
 | Flag | Default | |
 |---|---|---|
 | `--path DIR` | `.` | workspace root |
+| `--json` | `false` | print the result as one JSON line |
+| `--by B` | — | who decided, recorded as given |
+| `--reason R` | — (`reject`: `rejected by operator`) | why, recorded with the decision |
+
+Repeating a decision already made — approving an approved ticket, rejecting a rejected one — succeeds,
+says `already approved`/`already rejected`, and appends nothing, so a retry is safe. Contradicting one
+(rejecting an approved ticket) is an error, as is deciding a ticket that is not awaiting approval.
+
+### Machine-readable output
+
+With `--json`, `goal`, `amend`, `approve` and `reject` print exactly one line of JSON to stdout, and
+nothing else. The shapes are the result types in
+[`pkg/api/contract.go`](https://github.com/bharadwaj6/ageOfAgents/blob/main/pkg/api/contract.go):
+
+```json
+{"schema":1,"goal_id":"g-1a2b3c4d","duplicate":false,"seq":7}
+{"schema":1,"goal_id":"g-1a2b3c4d","seq":12}
+{"schema":1,"ticket_id":"g-1a2b3c4d-impl","decision":"approved","seq":20,"already_decided":false}
+```
+
+`seq` is the sequence number of the event written — or, for a duplicate submit (`"duplicate":true`) or
+a repeated decision (`"already_decided":true`), of the original event, since nothing new was written.
+`schema` is the contract version: within a version fields are only ever added, so ignore any you do not
+know; renaming or removing one bumps it. Errors still go to stderr with a non-zero exit.
 
 ## Inspecting
 
@@ -192,6 +238,8 @@ The hermetic coordination benchmark. Offline, no workspace, no `--path`.
 ### `aoa serve`
 
 A GitHub webhook server: an `@aoa <goal>` issue comment queues a Goal — if the commenter is trusted.
+The Goal records the issue's URL as its ref and the commenter's login as who asked. It is keyed on the
+delivery id, so a redelivery appends nothing.
 
 | Flag | Default | |
 |---|---|---|

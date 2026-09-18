@@ -20,6 +20,21 @@ func TestNewEventRoundTrip(t *testing.T) {
 			decode:  func() any { return &GoalSubmittedPayload{} },
 		},
 		{
+			name: "GoalSubmitted with origin",
+			typ:  GoalSubmitted,
+			payload: GoalSubmittedPayload{
+				GoalID: "g2", Text: "fix the flaky test", Source: "linear", IdempotencyKey: "linear:ENG-1",
+				Ref: "https://linear.app/acme/issue/ENG-1", By: "octocat",
+			},
+			decode: func() any { return &GoalSubmittedPayload{} },
+		},
+		{
+			name:    "ApprovalGranted",
+			typ:     ApprovalGranted,
+			payload: ApprovalGrantedPayload{TicketID: "t1", By: "octocat", Reason: "reviewed the diff"},
+			decode:  func() any { return &ApprovalGrantedPayload{} },
+		},
+		{
 			name:    "TicketCreated",
 			typ:     TicketCreated,
 			payload: TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", DependsOn: []string{"t0"}, IdempotencyKey: "k1", CreatedBy: "alice"},
@@ -82,6 +97,11 @@ func TestNewEventRoundTrip(t *testing.T) {
 			}
 			if !reflect.DeepEqual(want, orig) {
 				t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", want, orig)
+			}
+			// And against the payload itself: a field that does not survive
+			// the wire (an untagged or "-" field) must fail here.
+			if got := reflect.ValueOf(want).Elem().Interface(); !reflect.DeepEqual(got, tc.payload) {
+				t.Errorf("payload lost fields on the wire:\n got  %+v\n want %+v", got, tc.payload)
 			}
 		})
 	}
