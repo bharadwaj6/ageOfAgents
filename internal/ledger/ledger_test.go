@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -663,5 +664,199 @@ func TestOpenReadsAReadOnlyLog(t *testing.T) {
 	}
 	if _, err := l.Append(mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g3", Text: "z"})); err == nil {
 		t.Fatal("Append succeeded without being able to take the lock")
+	}
+}
+
+// Update's decide runs under the cross-process lock: another handle's Append
+// must wait for it, and land after the events decide chose to append.
+func TestUpdateBlocksOtherHandlesAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	a, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open a: %v", err)
+	}
+	b, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open b: %v", err)
+	}
+	mustAppend(t, a, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+
+	entered, gate := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release) // never leave decide blocked, even on failure
+	type result struct {
+		stored []api.Event
+		err    error
+	}
+	updated := make(chan result, 1)
+	go func() {
+		stored, err := a.Update(func(events []api.Event) ([]api.Event, error) {
+			close(entered)
+			<-gate
+			// A decision that depends on what was read: it is only correct if
+			// nothing lands between the read and the write.
+			return []api.Event{mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: strconv.Itoa(len(events))})}, nil
+		})
+		updated <- result{stored, err}
+	}()
+	<-entered
+
+	appended := make(chan result, 1)
+	go func() {
+		e, err := b.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "b"}))
+		appended <- result{[]api.Event{e}, err}
+	}()
+	select {
+	case got := <-appended:
+		t.Fatalf("another handle appended seq %d while decide held the log", got.stored[0].Seq)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+
+	u := <-updated
+	if u.err != nil {
+		t.Fatalf("Update: %v", u.err)
+	}
+	if len(u.stored) != 1 || u.stored[0].Seq != 2 {
+		t.Fatalf("Update stored %+v, want one event at seq 2", u.stored)
+	}
+	var app result
+	select {
+	case app = <-appended:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Append still blocked after Update finished")
+	}
+	if app.err != nil {
+		t.Fatalf("Append: %v", app.err)
+	}
+	if app.stored[0].Seq != 3 {
+		t.Errorf("Append seq = %d, want 3 (after the Update's event)", app.stored[0].Seq)
+	}
+	requireGapless(t, path, 3)
+}
+
+// Many handles mixing Update and Append: every Update must append directly
+// after the log it read — the read-decide-append is one step, never split by
+// another writer.
+func TestConcurrentUpdatesSeeTheLogTheyExtend(t *testing.T) {
+	const updaters, appenders, each = 4, 2, 25
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < updaters+appenders; i++ {
+		l, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open %d: %v", i, err)
+		}
+		wg.Add(1)
+		go func(update bool) {
+			defer wg.Done()
+			<-start
+			for j := 0; j < each; j++ {
+				if !update {
+					if _, err := l.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "append"})); err != nil {
+						t.Errorf("Append: %v", err)
+						return
+					}
+					continue
+				}
+				var seen int
+				stored, err := l.Update(func(events []api.Event) ([]api.Event, error) {
+					seen = len(events)
+					return []api.Event{mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "update"})}, nil
+				})
+				if err != nil {
+					t.Errorf("Update: %v", err)
+					return
+				}
+				if len(stored) != 1 || stored[0].Seq != seen+1 {
+					t.Errorf("Update read %d events but stored %+v; want seq %d", seen, stored, seen+1)
+					return
+				}
+			}
+		}(i < updaters)
+	}
+	close(start)
+	wg.Wait()
+	requireGapless(t, path, (updaters+appenders)*each)
+}
+
+func TestUpdateAppendsWhatDecideReturns(t *testing.T) {
+	sentinel := errors.New("no")
+	tests := []struct {
+		name      string
+		decide    func(t *testing.T, events []api.Event) ([]api.Event, error)
+		wantErr   error
+		wantSeqs  []int // seqs Update reports storing (and the hook sees)
+		wantTotal int   // events on the log afterwards
+	}{
+		{
+			name: "an error appends nothing",
+			decide: func(t *testing.T, _ []api.Event) ([]api.Event, error) {
+				return []api.Event{mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "x"})}, sentinel
+			},
+			wantErr:   sentinel,
+			wantTotal: 2,
+		},
+		{
+			name:      "nothing to append",
+			decide:    func(*testing.T, []api.Event) ([]api.Event, error) { return nil, nil },
+			wantTotal: 2,
+		},
+		{
+			name: "several events take consecutive seqs",
+			decide: func(t *testing.T, _ []api.Event) ([]api.Event, error) {
+				return []api.Event{
+					mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "x"}),
+					mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "y"}),
+				}, nil
+			},
+			wantSeqs:  []int{3, 4},
+			wantTotal: 4,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "events.jsonl")
+			l, err := Open(path)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			mustAppend(t, l, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+			mustAppend(t, l, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+			var hooked []int
+			l.SetAppendHook(func(e api.Event) { hooked = append(hooked, e.Seq) })
+
+			var seen []api.Event
+			stored, err := l.Update(func(events []api.Event) ([]api.Event, error) {
+				seen = events
+				return tt.decide(t, events)
+			})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Update error = %v, want %v", err, tt.wantErr)
+			}
+			if len(seen) != 2 || seen[0].Seq != 1 || seen[1].Seq != 2 {
+				t.Errorf("decide saw %+v, want the two events on the log", seen)
+			}
+			var got []int
+			for _, e := range stored {
+				got = append(got, e.Seq)
+			}
+			if !slices.Equal(got, tt.wantSeqs) {
+				t.Errorf("stored seqs = %v, want %v", got, tt.wantSeqs)
+			}
+			if !slices.Equal(hooked, tt.wantSeqs) {
+				t.Errorf("hook saw seqs %v, want %v", hooked, tt.wantSeqs)
+			}
+			requireGapless(t, path, tt.wantTotal)
+			// Whatever Update did, the next Append carries on from the log.
+			next, err := l.Append(mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+			if err != nil {
+				t.Fatalf("Append after Update: %v", err)
+			}
+			if next.Seq != tt.wantTotal+1 {
+				t.Errorf("next Append seq = %d, want %d", next.Seq, tt.wantTotal+1)
+			}
+		})
 	}
 }
