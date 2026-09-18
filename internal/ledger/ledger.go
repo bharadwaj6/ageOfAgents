@@ -28,15 +28,15 @@ const lockSuffix = ".lock"
 
 // Ledger is an append-only event log backed by a JSONL file. It is safe for
 // concurrent use by many goroutines, and by many Ledger values — in one process
-// or in several — open on the same path: every Append and Open holds an
-// exclusive lock on a sidecar file, path+".lock", so sequence numbers stay
+// or in several — open on the same path: every Append, Update and Open holds
+// an exclusive lock on a sidecar file, path+".lock", so sequence numbers stay
 // gapless and a writer's half-written line is never mistaken for a crash.
 //
 // The lock is advisory (flock on Unix, LockFileEx on Windows) and assumes a
 // local filesystem: it is unreliable on NFS and on some container bind mounts.
 // Read and Replay take no lock.
 type Ledger struct {
-	mu       sync.Mutex // serialises this value's Appends; the file lock serialises the rest
+	mu       sync.Mutex // serialises this value's writes; the file lock serialises the rest
 	path     string
 	lockPath string
 	nextSeq  int
@@ -102,33 +102,104 @@ func (l *Ledger) Append(e api.Event) (api.Event, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	var stored []api.Event
 	err := l.withLock(func() error {
 		// Another writer may have appended since this Ledger last looked.
 		if err := l.sync(); err != nil {
 			return err
 		}
-		e.Seq = l.nextSeq
-		line, err := json.Marshal(e)
-		if err != nil {
-			return fmt.Errorf("marshal event: %w", err)
-		}
-		if err := appendLine(l.path, append(line, '\n')); err != nil {
-			// A failed write may have left part of a line; forget what we
-			// know so the next sync rescans the log and repairs it.
-			l.size, l.nextSeq = 0, 1
-			return err
-		}
-		l.size += int64(len(line) + 1)
-		l.nextSeq++
-		return nil
+		var err error
+		stored, err = l.write([]api.Event{e})
+		return err
 	})
 	if err != nil {
 		return api.Event{}, err
 	}
-	if l.onAppend != nil {
-		l.onAppend(e) // under mu ⇒ delivered in sequence order
+	l.notify(stored)
+	return stored[0], nil
+}
+
+// Update is a read-decide-append transaction: it reads the whole log, passes
+// it to decide, and appends whatever events decide returns — possibly none —
+// assigning sequence numbers exactly as [Ledger.Append] does. It returns the
+// stored events, in order.
+//
+// No other writer, in this process or another, can append between the read and
+// the write, so a check made in decide ("is this key already on the log?",
+// "is this ticket still awaiting approval?") still holds when its events land.
+// That is what makes a check-then-append idempotent under concurrent callers.
+//
+// If decide returns an error, nothing is appended and Update returns that
+// error. decide must not call back into this Ledger (Append and Update would
+// deadlock), and it blocks every writer on the log while it runs, so it should
+// be a fold and a decision — milliseconds — never I/O or a model call.
+func (l *Ledger) Update(decide func(events []api.Event) ([]api.Event, error)) ([]api.Event, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var stored []api.Event
+	err := l.withLock(func() error {
+		if err := l.sync(); err != nil {
+			return err
+		}
+		// sync has repaired any torn tail, so this is exactly the log the new
+		// events will follow.
+		events, _, err := scan(l.path)
+		if err != nil {
+			return err
+		}
+		pending, err := decide(events)
+		if err != nil {
+			return err
+		}
+		stored, err = l.write(pending)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	return e, nil
+	l.notify(stored)
+	return stored, nil
+}
+
+// write appends events to the log as consecutive sequence numbers from
+// nextSeq, in a single write, and returns them as stored. The caller must hold
+// mu and the file lock, and have just synced.
+func (l *Ledger) write(events []api.Event) ([]api.Event, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	stored := make([]api.Event, len(events))
+	var buf []byte
+	for i, e := range events {
+		e.Seq = l.nextSeq + i
+		line, err := json.Marshal(e)
+		if err != nil {
+			return nil, fmt.Errorf("marshal event: %w", err)
+		}
+		buf = append(append(buf, line...), '\n')
+		stored[i] = e
+	}
+	if err := appendLine(l.path, buf); err != nil {
+		// A failed write may have left part of a line; forget what we know so
+		// the next sync rescans the log and repairs it.
+		l.size, l.nextSeq = 0, 1
+		return nil, err
+	}
+	l.size += int64(len(buf))
+	l.nextSeq += len(events)
+	return stored, nil
+}
+
+// notify delivers stored events to the append hook, if any. The caller holds
+// mu, so events are delivered in sequence order.
+func (l *Ledger) notify(stored []api.Event) {
+	if l.onAppend == nil {
+		return
+	}
+	for _, e := range stored {
+		l.onAppend(e)
+	}
 }
 
 // appendLine writes line to the end of the log at path, creating it if needed.
