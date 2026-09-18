@@ -71,6 +71,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **The Event Log is safe to append from several processes.** `aoa goal`, `approve`, `reject` and
+  `amend` run during a live `aoa run` or `aoa serve` each numbered events from their own stale view of
+  the log, so two processes could write the same sequence number — breaking the gapless 1..N invariant
+  replay checks. And every `Open`, even a reader's (`aoa status`, `aoa events`), repaired a torn last
+  line by truncating it, which could cut off a line another process was mid-way through writing. `Open`
+  and every append now hold an exclusive lock on a sidecar file, `.aoa/events.jsonl.lock` (flock on
+  Unix, `LockFileEx` on Windows), and an append first catches up on whatever other writers added. Reads
+  take no lock. Local filesystems only: flock is unreliable on NFS and some container bind mounts.
 - **Design docs that contradicted the code.** ADR 004 named `claudecode.go`, deleted by ADR 014, and
   called two backends "the implementations". ADR 012 said observability was "post-hoc, not live" while
   `--otel-live` shipped. ADR 006 credited idempotency keys to ADR 001 instead of ADR 010. ADR 002 listed
