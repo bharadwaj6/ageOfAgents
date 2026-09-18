@@ -45,7 +45,8 @@ other target. The suite is hermetic: the `mock` backend never networks, and test
 | Path | Responsibility | When changing |
 |---|---|---|
 | `pkg/api` | Event envelope + typed payloads | New event → payload type + `state.Apply` case |
-| `internal/ledger` | Append-only JSONL Event Log | Keep `Append` concurrency-safe |
+| `internal/ledger` | Append-only JSONL Event Log | Keep `Append` safe across goroutines and processes (sidecar flock) |
+| `internal/filelock` | Cross-platform advisory file lock | flock on unix, LockFileEx on Windows; lock sidecar files only |
 | `internal/state` | Replay → state, Task Graph readiness | Pure functions, no I/O |
 | `internal/orchestrator` | The Scheduler (single control loop) | Keep dispatch decoupled from the Merge Queue |
 | `internal/agent` | `Backend` interface, CLI presets, native `openai`/`anthropic`, `mock` | Keep `mock` deterministic |

@@ -70,3 +70,7 @@ jobs:
       # GoReleaser ships darwin and windows binaries; nothing compiled them.
       - name: Build
         run: go build ./...
+      # The Event Log's cross-process lock is per-OS code (flock vs LockFileEx),
+      # so exercise it on each OS; unlike the rest of the suite it needs no git.
+      - name: Test file locking and the Event Log
+        run: go test ./internal/filelock ./internal/ledger
