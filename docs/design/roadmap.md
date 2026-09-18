@@ -50,15 +50,17 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status:** ADR 015, the tracker and issues #128–#132 filed. Wave 1 (doc fixes, webhook
-allowlist, cross-process ledger lock) in review.
+**Last status (2026-09-18):** in review: #127 (doc fixes), #133 (this ADR), and the stack
+#134 (allowlist) ← #136 (ledger lock). Merge bottom-up. In progress, stacked on #136: one Scheduler
+per workspace, the write verbs, and the event cursor. Also filed: #135 (a stopped Docker daemon is
+recorded as a Gate verdict).
 
 | | Increment | Depends on |
 |---|---|---|
 | [ ] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |
 | [ ] | ADR 015, tracker and positioning ([#133](https://github.com/bharadwaj6/ageOfAgents/pull/133)) | — |
 | [ ] | `serve` queues work only from trusted commenters, `--allow` ([#134](https://github.com/bharadwaj6/ageOfAgents/pull/134)) | — |
-| [ ] | Event Log safe for writers in several processes (`internal/filelock`, sidecar lock) | — |
+| [ ] | Event Log safe for writers in several processes, `internal/filelock` ([#136](https://github.com/bharadwaj6/ageOfAgents/pull/136), stacked on #134) | — |
 | [ ] | One Scheduler per workspace, `aoa run` exits `75` when busy | ledger lock |
 | [ ] | Write verbs: goal `--source/--ref/--key`, idempotent submit, `--json` on goal/amend/approve/reject | ledger lock |
 | [ ] | `status --json` from one projection shared with text `status` | write verbs |
