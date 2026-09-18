@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,8 +23,37 @@ import (
 
 const testSecret = "s3cret"
 
+// commentBody is an issue comment from the repository owner, which the default
+// --allow trusts.
 func commentBody(text string) []byte {
-	return []byte(fmt.Sprintf(`{"action":"created","comment":{"body":%q}}`, text))
+	return commentFrom(text, "octocat", "OWNER")
+}
+
+// commentFrom is an issue comment by login, whose relationship to the repository
+// GitHub reports as association.
+func commentFrom(text, login, association string) []byte {
+	return []byte(fmt.Sprintf(
+		`{"action":"created","comment":{"body":%q,"author_association":%q,"user":{"login":%q}},`+
+			`"issue":{"number":7,"html_url":"https://github.com/o/r/issues/7"}}`,
+		text, association, login))
+}
+
+// defaultAllowSet is the production --allow default, parsed as cmdServe does.
+func defaultAllowSet(t *testing.T) map[string]bool {
+	t.Helper()
+	allow, err := parseAllow(defaultAllow)
+	require.NoError(t, err)
+	return allow
+}
+
+// captureLog redirects the standard logger for the rest of the test.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &buf
 }
 
 func sign(body []byte, secret string) string {
@@ -98,7 +129,7 @@ func drain(t *testing.T, r *runner) {
 
 func TestServeRejectsBadSignature(t *testing.T) {
 	r, led := testRunner(t)
-	h := webhookHandler(r, testSecret)
+	h := webhookHandler(r, testSecret, defaultAllowSet(t))
 
 	body := commentBody("@aoa fix the build")
 	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
@@ -119,7 +150,7 @@ func TestServeRejectsBadSignature(t *testing.T) {
 
 func TestServeAcceptsSignedCommand(t *testing.T) {
 	r, led := testRunner(t)
-	h := webhookHandler(r, testSecret)
+	h := webhookHandler(r, testSecret, defaultAllowSet(t))
 
 	rec := httptest.NewRecorder()
 	h(rec, post(t, commentBody("@aoa add a greeting"), "d-1"))
@@ -146,7 +177,7 @@ func TestServeAcceptsSignedCommand(t *testing.T) {
 
 func TestServeIgnoresNonCommands(t *testing.T) {
 	r, led := testRunner(t)
-	h := webhookHandler(r, testSecret)
+	h := webhookHandler(r, testSecret, defaultAllowSet(t))
 
 	for _, body := range []string{"just a normal comment", "@aoa", "  "} {
 		rec := httptest.NewRecorder()
@@ -165,7 +196,7 @@ func TestServeDeduplicatesRedeliveries(t *testing.T) {
 	// GitHub delivery is at-least-once. The same delivery id must not fork a
 	// second Goal — and the dedupe must hold on replay, not just in memory.
 	r, led := testRunner(t)
-	h := webhookHandler(r, testSecret)
+	h := webhookHandler(r, testSecret, defaultAllowSet(t))
 
 	for i := 0; i < 3; i++ {
 		rec := httptest.NewRecorder()
@@ -216,7 +247,7 @@ func TestServeRunsAreSingleFlight(t *testing.T) {
 		return nil
 	}
 
-	h := webhookHandler(r, testSecret)
+	h := webhookHandler(r, testSecret, defaultAllowSet(t))
 	rec := httptest.NewRecorder()
 	h(rec, post(t, commentBody("@aoa first"), "d-1"))
 	<-started
@@ -242,11 +273,120 @@ func TestServeRunsAreSingleFlight(t *testing.T) {
 
 func TestServeRejectsNonPost(t *testing.T) {
 	r, _ := testRunner(t)
-	h := webhookHandler(r, testSecret)
+	h := webhookHandler(r, testSecret, defaultAllowSet(t))
 
 	rec := httptest.NewRecorder()
 	h(rec, httptest.NewRequest(http.MethodGet, "/webhook", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
 	}
+}
+
+func TestServeRequiresAllowedAuthorAssociation(t *testing.T) {
+	// --secret proves a delivery came from GitHub, not that the commenter is
+	// trusted: on a public repo anyone can write `@aoa ...`. Only associations in
+	// --allow may queue work. Everyone else gets a 200, not a 403 — GitHub
+	// redelivers on any non-2xx — and queues nothing.
+	tests := []struct {
+		association string
+		wantCode    int
+		wantBody    string
+		wantGoals   int
+	}{
+		{"OWNER", http.StatusAccepted, "queued", 1},
+		{"MEMBER", http.StatusAccepted, "queued", 1},
+		{"COLLABORATOR", http.StatusAccepted, "queued", 1},
+		{"CONTRIBUTOR", http.StatusOK, "ignored", 0},
+		{"FIRST_TIME_CONTRIBUTOR", http.StatusOK, "ignored", 0},
+		{"NONE", http.StatusOK, "ignored", 0},
+		{"", http.StatusOK, "ignored", 0}, // field absent: never trust by default
+	}
+	for _, tc := range tests {
+		name := tc.association
+		if name == "" {
+			name = "absent"
+		}
+		t.Run(name, func(t *testing.T) {
+			r, led := testRunner(t)
+			h := webhookHandler(r, testSecret, defaultAllowSet(t))
+			logs := captureLog(t)
+
+			rec := httptest.NewRecorder()
+			h(rec, post(t, commentFrom("@aoa rewrite the CI config", "mallory", tc.association), "d-1"))
+			drain(t, r)
+
+			require.Equal(t, tc.wantCode, rec.Code)
+			require.Equal(t, tc.wantBody, strings.TrimSpace(rec.Body.String()))
+			if got := goals(t, led); len(got) != tc.wantGoals {
+				t.Errorf("goal count = %d, want %d: %+v", len(got), tc.wantGoals, got)
+			}
+			ignored := strings.Contains(logs.String(), `serve: ignored @aoa from "mallory"`)
+			if want := tc.wantGoals == 0; ignored != want {
+				t.Errorf("logged an ignored line = %v, want %v; log:\n%s", ignored, want, logs.String())
+			}
+		})
+	}
+}
+
+func TestServeAllowFlagNarrowsDefault(t *testing.T) {
+	r, led := testRunner(t)
+	allow, err := parseAllow("OWNER")
+	require.NoError(t, err)
+	h := webhookHandler(r, testSecret, allow)
+
+	rec := httptest.NewRecorder()
+	h(rec, post(t, commentFrom("@aoa from a member", "alice", "MEMBER"), "d-1"))
+	require.Equal(t, http.StatusOK, rec.Code, "MEMBER is trusted by default but not by --allow OWNER")
+
+	rec = httptest.NewRecorder()
+	h(rec, post(t, commentFrom("@aoa from the owner", "octocat", "OWNER"), "d-2"))
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	drain(t, r)
+
+	got := goals(t, led)
+	require.Len(t, got, 1)
+	require.Equal(t, "from the owner", got[0].Text)
+}
+
+func TestParseAllow(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    []string
+		wantErr string
+	}{
+		{name: "default", in: defaultAllow, want: []string{"OWNER", "MEMBER", "COLLABORATOR"}},
+		{name: "case and spacing are ignored", in: " owner, Member ,collaborator ", want: []string{"OWNER", "MEMBER", "COLLABORATOR"}},
+		{name: "a single value", in: "OWNER", want: []string{"OWNER"}},
+		{name: "every GitHub value", in: "OWNER,MEMBER,COLLABORATOR,CONTRIBUTOR,FIRST_TIMER,FIRST_TIME_CONTRIBUTOR,MANNEQUIN,NONE",
+			want: []string{"OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"}},
+		{name: "a trailing comma is harmless", in: "OWNER,", want: []string{"OWNER"}},
+		{name: "empty", in: "", wantErr: "at least one"},
+		{name: "only separators", in: " , ,", wantErr: "at least one"},
+		{name: "unknown value", in: "OWNER,ADMIN", wantErr: `unknown author association "ADMIN"`},
+		{name: "a plausible typo", in: "maintainer", wantErr: `unknown author association "maintainer"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseAllow(tc.in)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				require.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			want := make(map[string]bool, len(tc.want))
+			for _, a := range tc.want {
+				want[a] = true
+			}
+			require.Equal(t, want, got)
+		})
+	}
+}
+
+func TestServeRejectsBadAllowAtStartup(t *testing.T) {
+	// A bad --allow must stop the server before it listens, not fall back to a
+	// default the operator did not ask for.
+	err := cmdServe([]string{"--path", t.TempDir(), "--allow", "EVERYONE"})
+	require.ErrorContains(t, err, "--allow")
 }

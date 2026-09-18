@@ -179,17 +179,25 @@ The hermetic coordination benchmark. Offline, no workspace, no `--path`.
 
 ### `aoa serve`
 
-A GitHub webhook server: an `@aoa <goal>` issue comment queues a Goal.
+A GitHub webhook server: an `@aoa <goal>` issue comment queues a Goal — if the commenter is trusted.
 
 | Flag | Default | |
 |---|---|---|
 | `--port N` | `8080` | port to listen on |
 | `--path DIR` | `.` | workspace root |
 | `--secret S` | — | GitHub webhook secret |
+| `--allow LIST` | `OWNER,MEMBER,COLLABORATOR` | comma-separated `author_association` values that may queue work; case-insensitive |
 
-!!! warning "Always set `--secret`"
-    Without it, anyone who can reach the port can queue work that runs an agent on your machine. See
-    [Scheduling](scheduling.md) and [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
+`--allow` accepts GitHub's `author_association` values: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`,
+`FIRST_TIMER`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN`, `NONE`. An unknown or empty value stops the server
+at startup. An `@aoa` comment from anyone outside the list is answered `200 ignored` — not an error
+status, which GitHub would redeliver — queues nothing, and logs one line naming the commenter.
+
+!!! warning "Always set `--secret`, and keep `--allow` narrow"
+    Without `--secret`, anyone who can reach the port can queue work that runs an agent on your machine,
+    and can forge the `author_association` that `--allow` checks. With it, `--allow` decides who may queue
+    work: adding `CONTRIBUTOR` or `NONE` lets strangers on a public repository run agents on your machine.
+    See [Scheduling](scheduling.md) and [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
 
 ## Shell integration
 
