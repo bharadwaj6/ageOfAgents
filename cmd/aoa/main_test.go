@@ -228,8 +228,8 @@ func TestAdoptedRepoRunsOnFeatureBranch(t *testing.T) {
 }
 
 func TestFilterEvents(t *testing.T) {
-	mk := func(typ api.EventType) api.Event { return api.Event{Type: typ} }
-	events := []api.Event{
+	mk := func(typ api.EventType) ledger.RawLine { return ledger.RawLine{Event: api.Event{Type: typ}} }
+	events := []ledger.RawLine{
 		mk(api.GoalSubmitted), mk(api.TicketCreated), mk(api.Merged), mk(api.TicketCreated),
 	}
 	if got := filterEvents(events, ""); len(got) != 4 {
@@ -240,12 +240,12 @@ func TestFilterEvents(t *testing.T) {
 		t.Fatalf("type filter: want 2 TicketCreated, got %d", len(got))
 	}
 	for _, e := range got {
-		if e.Type != api.TicketCreated {
-			t.Errorf("filtered event has wrong type %q", e.Type)
+		if e.Event.Type != api.TicketCreated {
+			t.Errorf("filtered event has wrong type %q", e.Event.Type)
 		}
 	}
 	// Filtering doesn't mutate the input slice.
-	if events[2].Type != api.Merged {
+	if events[2].Event.Type != api.Merged {
 		t.Error("filterEvents must not modify the source slice")
 	}
 }
