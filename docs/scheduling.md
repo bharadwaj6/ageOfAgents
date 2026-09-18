@@ -5,7 +5,15 @@ invocations — everything it knows is replayed from the Event Log — so **runn
 safe**, whether the last run finished, crashed, or was killed mid-dispatch. A run with nothing to do
 prints `no goals submitted` and exits `0`.
 
-That property is the whole scheduling story: `aoa` needs no daemon, no supervisor, and no leader
+Running it twice *at once* is safe too. A run holds an OS lock on `.aoa/scheduler.lock` while it
+reconciles, so a second `aoa run` on the same workspace exits `75` (`EX_TEMPFAIL`) without touching
+anything. No work is lost: a goal submitted before the second run is already on the Event Log, and the
+run holding the lock looks at the log once more after letting go and reconciles whatever arrived (a
+`--once` run does not; the next run does). The OS drops the lock when its process exits, however it
+exits, so there is never a stale lock to clean up. Like the Event Log's own lock, it assumes a local
+filesystem, not NFS.
+
+Those two properties are the whole scheduling story: `aoa` needs no daemon, no supervisor, and no leader
 election. Point any ordinary scheduler at it.
 
 > **Why there is no `aoa daemon`.** A long-lived supervisor would be a second control loop, and the
@@ -20,15 +28,13 @@ election. Point any ordinary scheduler at it.
 */15 * * * * cd /srv/myrepo-workspace && /usr/local/bin/aoa run --path . >> /var/log/aoa.log 2>&1
 ```
 
-Overlapping runs must be prevented — two runs against one workspace race the same Event Log. Wrap the
-command in `flock`:
+A tick that fires while the previous run is still going exits `75` and leaves the work to that run, so
+overlapping ticks need no guard. Wrapping the command in `flock` is no longer required, and harmless if
+you already do — `flock -n` skips such a tick silently, where `aoa` would log one line:
 
 ```cron
 */15 * * * * /usr/bin/flock -n /tmp/aoa.lock /usr/local/bin/aoa run --path /srv/myrepo-workspace
 ```
-
-`flock -n` skips the tick entirely when the previous run is still going, which is the behavior you
-want: the next tick picks the work up anyway.
 
 ## systemd timer
 
@@ -66,7 +72,8 @@ WantedBy=timers.target
 systemctl enable --now aoa.timer
 ```
 
-`Type=oneshot` means systemd will not start a second run while one is active, so no lock file is needed.
+`Type=oneshot` means systemd will not start a second run while one is active, and a manual `aoa run`
+started meanwhile exits `75` instead of racing it.
 
 ## GitHub Actions
 
@@ -94,7 +101,9 @@ jobs:
           otel: "true"        # optional: stream the run to your OTLP backend
 ```
 
-The `concurrency` block is the Actions equivalent of `flock` — required, for the same reason.
+The `concurrency` block is still required. `aoa`'s lock only excludes runs that share a disk, and each
+job gets its own runner and its own checkout, so nothing but `concurrency:` stops two jobs reconciling the
+same repository at once.
 
 ## Interactive: `--interval`
 
@@ -106,9 +115,10 @@ aoa run --path . --interval 5m
 ```
 
 It exits cleanly on `ctrl-c` (`SIGINT`) or `SIGTERM`, and a failing cycle is reported to stderr without
-ending the loop. This is a convenience, not a deployment target — it is a foreground process holding no
-state, so prefer one of the schedulers above for anything unattended. `--interval` and `--once` are
-mutually exclusive.
+ending the loop. It holds the Scheduler lock only while a pass runs, so a pass that finds another
+`aoa run` reconciling the workspace is skipped with a note on stderr. This is a convenience, not a
+deployment target — it is a foreground process holding no state, so prefer one of the schedulers above
+for anything unattended. `--interval` and `--once` are mutually exclusive.
 
 ## Webhook-driven
 
@@ -126,7 +136,7 @@ idempotency key, so GitHub's at-least-once redelivery cannot fork a duplicate Go
 single-flight: a delivery arriving mid-run is queued and reconciled on the next cycle.
 
 Scheduling and webhooks compose — a timer catches anything the webhook missed while the process was
-down.
+down, and the Scheduler lock keeps the timer's runs and the webhook's from overlapping.
 
 ## What is *not* scheduled
 

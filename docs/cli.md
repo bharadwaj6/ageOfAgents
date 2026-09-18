@@ -83,6 +83,18 @@ any time — a settled workspace does no work. See [Scheduling](scheduling.md).
 
 Both OTel flags need `OTEL_EXPORTER_OTLP_ENDPOINT` — see [Observability](integrations/README.md).
 
+**One Scheduler per workspace.** A run holds an OS lock on `.aoa/scheduler.lock` while it reconciles, and
+a second `aoa run` on the same workspace refuses rather than racing it. Goals already on the log are
+not lost: the run holding the lock reconciles them before it finishes (a `--once` run leaves them to the
+next run). With `--interval`, a pass that finds the workspace busy is skipped and the loop carries on.
+
+| Exit status | Meaning |
+|---|---|
+| `0` | all work settled and no task failed |
+| `1` | a task failed, or the run hit an error |
+| `2` | a flag could not be parsed |
+| `75` | another `aoa run` holds the workspace (`EX_TEMPFAIL`); nothing was done |
+
 ### `aoa amend`
 
 Append steering guidance to a Goal mid-run. Future dispatches pick it up; the attempt already in flight

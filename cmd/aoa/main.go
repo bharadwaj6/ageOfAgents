@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -90,8 +91,28 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitError is an error that ends the process with a specific status instead of
+// the default 1, so a caller scripting aoa can tell kinds of failure apart.
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string { return e.err.Error() }
+func (e *exitError) Unwrap() error { return e.err }
+
+// exitCode is the process status for a command that failed with err: the code
+// of the first exitError in its chain, else 1.
+func exitCode(err error) int {
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	return 1
 }
 
 func usage() {
@@ -439,7 +460,7 @@ func cmdAmend(args []string) error {
 
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	describe(fs, "aoa run \u2014 drive the Scheduler until all work is settled, then exit.\n\nIdempotent and crash-safe: re-running is always allowed and does nothing when\nthere is nothing to do. Exits non-zero if any task ended up failed.", "aoa run --path ./workspace")
+	describe(fs, "aoa run \u2014 drive the Scheduler until all work is settled, then exit.\n\nIdempotent and crash-safe: re-running is always allowed and does nothing when\nthere is nothing to do. Exits non-zero if any task ended up failed, and 75\nif another aoa run is already reconciling this workspace.", "aoa run --path ./workspace")
 	path := fs.String("path", ".", "workspace root")
 	once := fs.Bool("once", false, "run a single reconcile pass instead of looping")
 	interval := fs.Duration("interval", 0, "keep running, reconciling again every <dur> until interrupted (0 = run until settled, then exit)")
@@ -455,43 +476,71 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	o, led, err := buildOrchestrator(ws)
+	led, err := ledger.Open(ws.ledgerPath)
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
 
-	// Live streaming: open spans for any in-flight work, then have the ledger feed
-	// each new event to the emitter as it's appended (off unless an endpoint is set).
+	// start wires the Scheduler. With --otel-live it also opens spans for any
+	// in-flight work, then has the ledger feed each new event to the emitter as
+	// it's appended (off unless an endpoint is set).
+	var o *orchestrator.Orchestrator
 	var live *otel.Live
-	if *otelLive {
+	start := func() error {
+		var err error
+		if o, err = buildOrchestrator(ws, led); err != nil {
+			return err
+		}
+		if !*otelLive {
+			return nil
+		}
 		if !otel.Enabled() {
 			fmt.Fprintln(os.Stderr, "note: --otel-live set but OTEL_EXPORTER_OTLP_ENDPOINT is unset; skipping")
-		} else if live, err = otel.NewLive(ctx); err != nil {
-			return err
-		} else {
-			if seed, rerr := led.Read(); rerr == nil {
-				live.Seed(seed)
-			}
-			led.SetAppendHook(live.Observe)
+			return nil
 		}
+		if live, err = otel.NewLive(ctx); err != nil {
+			return err
+		}
+		if seed, rerr := led.Read(); rerr == nil {
+			live.Seed(seed)
+		}
+		led.SetAppendHook(live.Observe)
+		return nil
 	}
 
 	switch {
 	case *interval > 0:
-		sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		err = runEvery(sigCtx, o, led, ws, *interval)
-	case *once:
-		err = o.ReconcileOnce(ctx)
+		// runEvery takes the Scheduler lock pass by pass, not for its lifetime.
+		if err = start(); err == nil {
+			sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			err = runEvery(sigCtx, o, led, ws, *interval)
+		}
 	default:
-		err = o.Run(ctx)
+		// Lock first, so a run that finds the workspace busy exits without
+		// preflighting the backend. --once promises a single pass, so only a run
+		// to settled re-checks the log for goals appended while it held the lock.
+		err = withSchedulerLock(ws, led, !*once, func() error {
+			if o == nil {
+				if err := start(); err != nil {
+					return err
+				}
+			}
+			if *once {
+				return o.ReconcileOnce(ctx)
+			}
+			return o.Run(ctx)
+		})
 	}
 	if live != nil {
 		led.SetAppendHook(nil)
 		if serr := live.Shutdown(ctx); serr != nil && err == nil {
 			err = serr
 		}
+	}
+	if errors.Is(err, errSchedulerBusy) {
+		return &exitError{code: exitSchedulerBusy, err: err}
 	}
 	if err != nil {
 		return err
@@ -539,22 +588,29 @@ func plural(n int, noun string) string {
 // process at all (see docs/scheduling.md).
 //
 // A failing cycle is reported and the schedule continues: a transient failure
-// (a flaky Gate, a rate-limited backend) should not end the loop. Returns nil
-// when interrupted.
+// (a flaky Gate, a rate-limited backend) should not end the loop. Each pass
+// holds the Scheduler lock only while it reconciles, so a pass that finds
+// another `aoa run` reconciling the workspace is skipped, not fatal. Returns
+// nil when interrupted.
 func runEvery(ctx context.Context, o *orchestrator.Orchestrator, led *ledger.Ledger, ws workspace, every time.Duration) error {
 	cfg, err := config.Load(ws.configPath)
 	if err != nil {
 		return err
 	}
 	for {
-		if err := o.Run(ctx); err != nil {
-			if ctx.Err() != nil {
-				return nil
+		err := withSchedulerLock(ws, led, true, func() error { return o.Run(ctx) })
+		switch {
+		case errors.Is(err, errSchedulerBusy):
+			fmt.Fprintln(os.Stderr, "skipping pass: another aoa run is reconciling this workspace")
+		case err != nil && ctx.Err() != nil:
+			return nil
+		default:
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "run: %v\n", err)
 			}
-			fmt.Fprintf(os.Stderr, "run: %v\n", err)
-		}
-		if _, _, err := printStatus(led, cfg.Pricing); err != nil {
-			return err
+			if _, _, err := printStatus(led, cfg.Pricing); err != nil {
+				return err
+			}
 		}
 		fmt.Printf("\nnext pass in %s (ctrl-c to stop)\n", every)
 		select {
@@ -1079,19 +1135,17 @@ func readConventions(root, file string) string {
 	return string(b)
 }
 
-func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger, error) {
+// buildOrchestrator wires the Scheduler for ws on led, the workspace's Event
+// Log. It preflights the backend, so a missing CLI fails here.
+func buildOrchestrator(ws workspace, led *ledger.Ledger) (*orchestrator.Orchestrator, error) {
 	cfg, err := config.Load(ws.configPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	repo := worktree.OpenRepo(resolve(ws.root, cfg.Repo))
-	led, err := ledger.Open(ws.ledgerPath)
-	if err != nil {
-		return nil, nil, err
-	}
 	backend, err := buildBackend(cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	conventions := readConventions(ws.root, cfg.ConventionsFile)
 	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage}
@@ -1099,7 +1153,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	if cfg.RetryBackoff != "" {
 		d, err := time.ParseDuration(cfg.RetryBackoff)
 		if err != nil {
-			return nil, nil, fmt.Errorf("retry_backoff %q: %w", cfg.RetryBackoff, err)
+			return nil, fmt.Errorf("retry_backoff %q: %w", cfg.RetryBackoff, err)
 		}
 		backoff = d
 	}
@@ -1107,7 +1161,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	if cfg.StallTimeout != "" {
 		d, err := time.ParseDuration(cfg.StallTimeout)
 		if err != nil {
-			return nil, nil, fmt.Errorf("stall_timeout %q: %w", cfg.StallTimeout, err)
+			return nil, fmt.Errorf("stall_timeout %q: %w", cfg.StallTimeout, err)
 		}
 		stall = d
 	}
@@ -1115,7 +1169,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	if cfg.AgentTimeout != "" {
 		d, err := time.ParseDuration(cfg.AgentTimeout)
 		if err != nil {
-			return nil, nil, fmt.Errorf("agent_timeout %q: %w", cfg.AgentTimeout, err)
+			return nil, fmt.Errorf("agent_timeout %q: %w", cfg.AgentTimeout, err)
 		}
 		agentTimeout = d
 	}
@@ -1123,7 +1177,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	if cfg.PollInterval != "" {
 		d, err := time.ParseDuration(cfg.PollInterval)
 		if err != nil {
-			return nil, nil, fmt.Errorf("poll_interval %q: %w", cfg.PollInterval, err)
+			return nil, fmt.Errorf("poll_interval %q: %w", cfg.PollInterval, err)
 		}
 		pollInterval = d
 	}
@@ -1152,8 +1206,7 @@ func buildOrchestrator(ws workspace) (*orchestrator.Orchestrator, *ledger.Ledger
 	if len(cfg.RegressionVerify) > 0 {
 		mq.Shadow = verify.Verifier{Commands: verify.ToCommands(cfg.RegressionVerify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage}
 	}
-	o := orchestrator.New(led, repo, backend, mq, opt)
-	return o, led, nil
+	return orchestrator.New(led, repo, backend, mq, opt), nil
 }
 
 // requireCLI fails fast when a CLI-driven backend's binary is missing. Without

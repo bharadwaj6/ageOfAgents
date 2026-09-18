@@ -68,6 +68,15 @@ All notable changes to this project are documented here. The format follows
   and `main` still green. It now leads on that, and answers the obvious objection head-on in a section
   that concedes the case where a prompt is the right tool. Config, commands, concepts, layout and
   roadmap moved to the docs site, which is where detail belongs now that it exists.
+- **One Scheduler per workspace, enforced.** ADR 003 allows exactly one Scheduler, but only the docs
+  said so: two `aoa run`s on one workspace — overlapping cron ticks, a timer and a manual run, `aoa serve`
+  and a timer — raced each other over the worktrees and the Merge Queue. `aoa run` now holds an OS lock
+  on `.aoa/scheduler.lock` while it reconciles, and a second run exits `75` (`EX_TEMPFAIL`) without
+  touching anything, so a front door can tell "busy" from "failed". No goal is stranded: a submitter
+  appends before it tries the lock, and a run to settled checks the log again after letting go and
+  reconciles whatever arrived. `--interval` takes the lock per pass and skips a busy one. Wrapping
+  `aoa run` in `flock` is no longer needed; a GitHub Actions `concurrency:` group still is, since
+  separate runners share no disk. The OS drops the lock when its holder exits, so none can go stale.
 
 ### Fixed
 

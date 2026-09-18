@@ -38,8 +38,9 @@ aoa run  --path <workspace>
 ```
 
 `run` reconciles until everything settles, then exits 0. It is safe to re-run at any time — re-running
-a settled workspace does no work. A goal becomes exactly one task unless the agent itself decides to
-decompose.
+a settled workspace does no work. Exit `75` is not a failure: another `aoa run` is already reconciling
+that workspace, your goal is on its log, and that run picks it up — follow it with `aoa status`. A goal
+becomes exactly one task unless the agent itself decides to decompose.
 
 Write goals the way you would write a ticket: say what "done" means, and name the files if you know
 them. The agent gets the goal text and the repo, nothing else from this conversation.
