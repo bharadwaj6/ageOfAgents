@@ -860,3 +860,181 @@ func TestUpdateAppendsWhatDecideReturns(t *testing.T) {
 		})
 	}
 }
+
+// --- Reading from an offset -------------------------------------------------
+//
+// ReadFrom is how a follower tails the log while writers append. It takes no
+// lock, so it can see a writer mid-line: it must hand back only whole lines and
+// leave the rest, untouched, for its next call.
+
+// fileLen returns the size of the file at path.
+func fileLen(t *testing.T, path string) int64 {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	return fi.Size()
+}
+
+// appendRaw writes b to the end of the file at path, bypassing the Ledger, as
+// another writer part-way through a line would.
+func appendRaw(t *testing.T, path string, b []byte) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open for raw write: %v", err)
+	}
+	if _, err := f.Write(b); err != nil {
+		t.Fatalf("raw write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close after raw write: %v", err)
+	}
+}
+
+func TestReadFromReturnsOnlyCompleteLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	l, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	mustAppend(t, l, mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "x"}))
+	mustAppend(t, l, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+	whole, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	// Half of seq 3, as another writer leaves it between its first and last byte.
+	e := mustEvent(t, api.Merged, api.MergedPayload{TicketID: "t1", Worker: "a", Commit: "abc"})
+	e.Seq = 3
+	line, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	half := len(line) / 2
+	appendRaw(t, path, line[:half])
+	torn := fileLen(t, path)
+
+	lines, next, err := l.ReadFrom(0)
+	if err != nil {
+		t.Fatalf("ReadFrom(0): %v", err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want the 2 complete ones", len(lines))
+	}
+	if next != int64(len(whole)) {
+		t.Errorf("next = %d, want %d: just past the last complete line", next, len(whole))
+	}
+	wantBytes := bytes.Split(bytes.TrimSuffix(whole, []byte("\n")), []byte("\n"))
+	for i, got := range lines {
+		if got.Event.Seq != i+1 {
+			t.Errorf("line %d: seq = %d, want %d", i, got.Event.Seq, i+1)
+		}
+		if !bytes.Equal(got.Bytes, wantBytes[i]) {
+			t.Errorf("line %d: Bytes = %q, want the line exactly as stored: %q", i, got.Bytes, wantBytes[i])
+		}
+	}
+	if size := fileLen(t, path); size != torn {
+		t.Fatalf("ReadFrom changed the log from %d to %d bytes; a reader must never truncate", torn, size)
+	}
+
+	// Nothing new is complete yet: an empty read that keeps its place.
+	lines, again, err := l.ReadFrom(next)
+	if err != nil {
+		t.Fatalf("ReadFrom(next) mid-line: %v", err)
+	}
+	if len(lines) != 0 || again != next {
+		t.Errorf("mid-line read = %d lines, next %d; want 0 lines, next %d", len(lines), again, next)
+	}
+
+	// The writer finishes; the line is now whole and is returned exactly once.
+	appendRaw(t, path, append(line[half:], '\n'))
+	lines, next, err = l.ReadFrom(next)
+	if err != nil {
+		t.Fatalf("ReadFrom after the line completed: %v", err)
+	}
+	if len(lines) != 1 || lines[0].Event.Seq != 3 || lines[0].Event.Type != api.Merged {
+		t.Fatalf("got %+v, want the single completed seq 3", lines)
+	}
+	if !bytes.Equal(lines[0].Bytes, line) {
+		t.Errorf("Bytes = %q, want %q", lines[0].Bytes, line)
+	}
+	if size := fileLen(t, path); next != size {
+		t.Errorf("next = %d, want the end of the log, %d", next, size)
+	}
+}
+
+// A follower's offset is only meaningful for the log it was read from. If the
+// log was truncated or replaced since, ReadFrom must say so rather than read
+// from a position that is now the middle of someone else's line.
+func TestReadFromDetectsShrink(t *testing.T) {
+	tests := []struct {
+		name    string
+		replace func(t *testing.T, path string)
+	}{
+		{
+			name: "truncated to its first line",
+			replace: func(t *testing.T, path string) {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("read: %v", err)
+				}
+				if err := os.WriteFile(path, data[:bytes.IndexByte(data, '\n')+1], 0o644); err != nil {
+					t.Fatalf("rewrite: %v", err)
+				}
+			},
+		},
+		{
+			name: "removed",
+			replace: func(t *testing.T, path string) {
+				if err := os.Remove(path); err != nil {
+					t.Fatalf("remove: %v", err)
+				}
+			},
+		},
+		{
+			// Shrank, then grew back past the old offset before the next read:
+			// the offset now falls inside a line.
+			name: "replaced by one longer line",
+			replace: func(t *testing.T, path string) {
+				e := mustEvent(t, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: strings.Repeat("x", 512)})
+				e.Seq = 1
+				line, err := json.Marshal(e)
+				if err != nil {
+					t.Fatalf("marshal: %v", err)
+				}
+				if err := os.WriteFile(path, append(line, '\n'), 0o644); err != nil {
+					t.Fatalf("rewrite: %v", err)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "events.jsonl")
+			l, err := Open(path)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			for i := 0; i < 3; i++ {
+				mustAppend(t, l, mustEvent(t, api.Heartbeat, api.HeartbeatPayload{Worker: "a"}))
+			}
+			_, next, err := l.ReadFrom(0)
+			if err != nil {
+				t.Fatalf("ReadFrom(0): %v", err)
+			}
+			tt.replace(t, path)
+
+			lines, _, err := l.ReadFrom(next)
+			if !errors.Is(err, ErrLogShrank) {
+				t.Fatalf("ReadFrom(%d) = %d lines, err %v; want ErrLogShrank", next, len(lines), err)
+			}
+			// Starting over is always possible.
+			if _, _, err := l.ReadFrom(0); err != nil {
+				t.Errorf("ReadFrom(0) after the shrink: %v", err)
+			}
+		})
+	}
+}

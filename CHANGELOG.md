@@ -18,6 +18,13 @@ All notable changes to this project are documented here. The format follows
 - **Retrying a decision is safe.** Approving an approved ticket, or rejecting a rejected one, succeeds
   with `already_decided` and appends nothing; contradicting a decision is still an error.
 - `aoa goal --key K` passes an idempotency key: submitting it again returns the Goal it already names.
+- **The Event Log as a resumable stream: `aoa events --json --since N`.** A program driving `aoa` can
+  now consume the log without parsing human text. `--json` prints each event's Event Log line byte for
+  byte — copied, not re-encoded, so an envelope field a newer `aoa` adds survives an older binary.
+  `--since N` prints every event with a seq greater than `N`; resume with the last seq you received and
+  you get exactly the events appended since. It refuses an explicit `--count`, which would silently drop
+  some. `--type` filters the output, not the cursor. Underneath, `ledger.ReadFrom(offset)` returns only
+  complete lines and takes no lock, so a reader never sees a writer's half-written line.
 - **A leaner agent brief, with the recipes as skills.** `CLAUDE.md` is now a pointer and `AGENTS.md` keeps
   only what every session needs — vocabulary, the golden rules, the repo map, conventions. The per-job
   detail moved into project skills that cost nothing until they fire: `change-architecture`,

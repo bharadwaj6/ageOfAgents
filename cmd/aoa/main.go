@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 
 	"encoding/json"
@@ -131,7 +132,8 @@ Usage:
                                           Run the reconciler (to settled by default)
   aoa status [--path DIR] [--watch] [--interval D]
                                           Show goals and tickets (--watch to live-refresh)
-  aoa events [--path DIR] tail [--count N] [--type T] | replay [--type T]
+  aoa events [--path DIR] [tail [--count N] | replay] [--type T] [--json] [--since N]
+                                          Print the Event Log; --json --since N is a resumable stream
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
   aoa bench  [--json]                     Run the hermetic benchmark suite + report
   aoa serve  [--path DIR] [--port N] [--secret S] [--allow LIST]
@@ -838,13 +840,34 @@ func parseWithSubcommand(fs *flag.FlagSet, args []string, def string) (string, e
 
 func cmdEvents(args []string) error {
 	fs := flag.NewFlagSet("events", flag.ExitOnError)
-	describe(fs, "aoa events \u2014 inspect the Event Log, the single source of truth every\nother number is derived from.\n\nSubcommands: tail (most recent events), replay (all of them).", "aoa events --path ./workspace tail --count 20")
+	describe(fs, "aoa events \u2014 inspect the Event Log, the single source of truth every\nother number is derived from.\n\n"+
+		"Subcommands: tail (most recent events, the default), replay (all of them).\n\n"+
+		"For programs: --json prints each event as its Event Log line, byte for byte\n"+
+		"(JSONL), and --since N prints every event after seq N, under tail and replay\n"+
+		"alike. Resume with --since set to the last seq you received. --type filters\n"+
+		"what is printed, not the cursor, so filtered output can skip seqs.",
+		"aoa events --path ./workspace --json --since 41")
 	path := fs.String("path", ".", "workspace root")
-	count := fs.Int("count", 20, "number of events for tail (0 = all)")
-	typ := fs.String("type", "", "filter by event type")
+	count := fs.Int("count", 20, "number of events for tail (0 = all); cannot combine with --since")
+	typ := fs.String("type", "", "print only events of this type (filters output, not the --since cursor)")
+	asJSON := fs.Bool("json", false, "print each event's Event Log line byte for byte (JSONL)")
+	since := fs.Int("since", 0, "print every event after seq `N`, however many (an exclusive cursor)")
 	sub, err := parseWithSubcommand(fs, args, "tail")
 	if err != nil {
 		return err
+	}
+	if sub != "tail" && sub != "replay" {
+		return fmt.Errorf("unknown events subcommand %q (want tail|replay)", sub)
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["since"] {
+		if set["count"] {
+			return fmt.Errorf("--since and --count cannot be combined: --since prints every event after seq %d, and --count would silently drop some", *since)
+		}
+		if *since < 0 {
+			return fmt.Errorf("--since takes a seq, 0 or more; got %d", *since)
+		}
 	}
 	ws, err := openWorkspace(*path)
 	if err != nil {
@@ -854,48 +877,93 @@ func cmdEvents(args []string) error {
 	if err != nil {
 		return err
 	}
-	events, err := led.Read()
+	lines, _, err := led.ReadFrom(0)
 	if err != nil {
 		return err
 	}
-	switch sub {
-	case "tail":
-		renderEvents(filterEvents(events, *typ), *count, false)
-	case "replay":
-		renderEvents(filterEvents(events, *typ), 0, true)
-	default:
-		return fmt.Errorf("unknown events subcommand %q (want tail|replay)", sub)
+
+	format := formatSummary
+	switch {
+	case *asJSON:
+		format = formatJSON
+	case sub == "replay":
+		format = formatPayload
+	}
+	n := *count
+	if sub == "replay" {
+		n = 0
+	}
+	lines = filterEvents(lines, *typ)
+	if set["since"] {
+		lines, n = afterSeq(lines, *since), 0
+	}
+	if n > 0 && len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	out := bufio.NewWriter(os.Stdout)
+	for _, l := range lines {
+		if err := writeEvent(out, l, format); err != nil {
+			return err
+		}
+	}
+	if err := out.Flush(); err != nil {
+		return fmt.Errorf("write events: %w", err)
 	}
 	return nil
 }
 
 // filterEvents keeps only events of the given type ("" = all).
-func filterEvents(events []api.Event, typ string) []api.Event {
+func filterEvents(lines []ledger.RawLine, typ string) []ledger.RawLine {
 	if typ == "" {
-		return events
+		return lines
 	}
-	out := make([]api.Event, 0, len(events))
-	for _, e := range events {
-		if string(e.Type) == typ {
-			out = append(out, e)
+	out := make([]ledger.RawLine, 0, len(lines))
+	for _, l := range lines {
+		if string(l.Event.Type) == typ {
+			out = append(out, l)
 		}
 	}
 	return out
 }
 
-// renderEvents prints events; count>0 keeps only the last count (a tail),
-// withPayload appends the raw JSON payload (replay).
-func renderEvents(events []api.Event, count int, withPayload bool) {
-	if count > 0 && len(events) > count {
-		events = events[len(events)-count:]
-	}
-	for _, e := range events {
-		if withPayload {
-			fmt.Printf("%s  %s\n", formatEvent(e), string(e.Payload))
-		} else {
-			fmt.Println(formatEvent(e))
+// afterSeq keeps only events with a seq greater than since: the events a
+// reader who has already seen since has not.
+func afterSeq(lines []ledger.RawLine, since int) []ledger.RawLine {
+	out := make([]ledger.RawLine, 0, len(lines))
+	for _, l := range lines {
+		if l.Event.Seq > since {
+			out = append(out, l)
 		}
 	}
+	return out
+}
+
+// eventFormat is how `aoa events` prints one event.
+type eventFormat int
+
+const (
+	formatSummary eventFormat = iota // "#seq type id", for tail
+	formatPayload                    // the summary plus the raw payload, for replay
+	formatJSON                       // the Event Log line itself, byte for byte (--json)
+)
+
+// writeEvent prints one Event Log line to w in format f. formatJSON writes the
+// stored bytes rather than re-encoding the event, so envelope fields this build
+// does not know about reach the consumer intact.
+func writeEvent(w io.Writer, l ledger.RawLine, f eventFormat) error {
+	var err error
+	switch f {
+	case formatJSON:
+		_, err = fmt.Fprintf(w, "%s\n", l.Bytes)
+	case formatPayload:
+		_, err = fmt.Fprintf(w, "%s  %s\n", formatEvent(l.Event), l.Event.Payload)
+	default:
+		_, err = fmt.Fprintln(w, formatEvent(l.Event))
+	}
+	if err != nil {
+		return fmt.Errorf("write event: %w", err)
+	}
+	return nil
 }
 
 func cmdBench(args []string) error {

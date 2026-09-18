@@ -173,20 +173,46 @@ preserved worktree for each failure.
 
 ### `aoa events`
 
-Inspect the Event Log — the append-only record every other number is derived from.
+Inspect the Event Log — the append-only record every other number is derived from. It is also how a
+program driving `aoa` follows what happened: `--json` and `--since` read the log as a resumable JSONL
+stream.
 
 ```bash
 aoa events --path ./ws tail --count 20
 aoa events --path ./ws replay --type Merged
+aoa events --path ./ws --json --since 41    # every event after seq 41, one JSON object per line
 ```
 
 | Flag | Default | |
 |---|---|---|
 | `--path DIR` | `.` | workspace root |
-| `--count N` | `20` | events to show for `tail` (`0` = all) |
-| `--type T` | — | filter by event type |
+| `--count N` | `20` | events to show for `tail` (`0` = all); cannot be combined with `--since` |
+| `--type T` | — | print only events of type `T` |
+| `--json` | `false` | print each event as its Event Log line, byte for byte |
+| `--since N` | — | print every event with a seq greater than `N` |
 
-Subcommands: `tail` (default) and `replay`. `aoa feed` is a deprecated alias for `events tail`.
+Subcommands: `tail` (default) and `replay`, which adds each event's payload. `aoa feed` is a deprecated
+alias for `events tail`.
+
+#### Reading the log from a program
+
+`--json` prints the log's own lines, unmodified: one JSON object per line, the event envelope
+(`seq`, `type`, `ts`, `actor`, `payload` — see
+[`pkg/api/events.go`](https://github.com/bharadwaj6/ageOfAgents/blob/main/pkg/api/events.go)). The
+bytes are copied, not re-encoded, so a field a newer `aoa` adds to the envelope reaches you even through
+an older binary.
+
+`--since N` is the cursor. It prints *every* event whose seq is greater than `N`, which is why it refuses
+an explicit `--count` — a tail would silently drop events you have not seen. `tail` and `replay` select
+the same events under `--since`; in text mode `replay` still adds the payload. To consume the log
+incrementally:
+
+1. Read once with `--since 0`.
+2. Keep the `seq` of the last line you received.
+3. Next time, pass that seq to `--since`. You get exactly the events appended since, none of them twice.
+
+`--type T` filters what is printed, not the cursor, so filtered output skips the seqs of other events.
+Resume from the last seq you *received*: every event you skipped was of another type.
 
 ### `aoa diagnose`
 

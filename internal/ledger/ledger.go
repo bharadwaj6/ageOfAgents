@@ -14,7 +14,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/filelock"
@@ -34,7 +33,7 @@ const lockSuffix = ".lock"
 //
 // The lock is advisory (flock on Unix, LockFileEx on Windows) and assumes a
 // local filesystem: it is unreliable on NFS and on some container bind mounts.
-// Read and Replay take no lock.
+// Read, Replay and ReadFrom take no lock.
 type Ledger struct {
 	mu       sync.Mutex // serialises this value's writes; the file lock serialises the rest
 	path     string
@@ -310,20 +309,71 @@ func (l *Ledger) Replay(fn func(api.Event) error) error {
 	return nil
 }
 
+// ErrLogShrank reports that the log no longer runs on from an offset read
+// earlier: it is now shorter than the offset, or the offset no longer starts a
+// line. A log is only ever appended to, so either way it was truncated or
+// replaced since (and may have grown again), and the bytes before the offset
+// are not the ones the reader saw. Read again from offset 0.
+var ErrLogShrank = errors.New("event log shrank below the read offset")
+
+// RawLine is one complete line of the log: the event it decodes to, and its
+// bytes exactly as stored, without the trailing newline. Bytes carries every
+// envelope field, including any this version of [api.Event] does not know, so
+// a consumer that forwards Bytes passes on everything a newer writer recorded.
+type RawLine struct {
+	Event api.Event
+	Bytes []byte
+}
+
+// ReadFrom returns the complete lines of the log from byte offset onward, in
+// append order, and next: the offset just past the last of them, to pass to
+// the following call. offset must be 0 or a next an earlier call returned.
+//
+// ReadFrom takes no lock, so it can run while other processes append. A final
+// line without its newline yet is a writer mid-append: it is not returned, not
+// counted in next, and never truncated — a later call returns it once it is
+// whole. Otherwise ReadFrom agrees with Read: a trailing line that does not
+// parse is skipped the same way, and a corrupt line with lines after it is an
+// error. If the log was truncated or replaced since offset was read, the error
+// wraps [ErrLogShrank]. A missing log reads as empty.
+func (l *Ledger) ReadFrom(offset int64) (lines []RawLine, next int64, err error) {
+	return scanLines(l.path, offset)
+}
+
 // scan reads the whole JSONL log at path; see scanFrom.
 func scan(path string) (events []api.Event, validLen int64, err error) {
 	return scanFrom(path, 0)
 }
 
-// scanFrom reads the JSONL log at path from byte offset and returns the decoded
-// events plus validLen: the absolute offset just past the last complete,
-// parseable line (offset itself if there is none). A torn or
-// partially-written trailing line is tolerated — excluded from both the events
-// and validLen so the caller can truncate it away. A corrupt line that is
-// followed by further lines is treated as real corruption and returns an
-// error, as does an offset that is not the start of a line (so a stale offset
-// can never cut a real line in half). A missing file yields no events.
+// scanFrom is scanLines for callers that need only the decoded events.
 func scanFrom(path string, offset int64) (events []api.Event, validLen int64, err error) {
+	lines, validLen, err := scanLines(path, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(lines) > 0 {
+		events = make([]api.Event, len(lines))
+		for i, l := range lines {
+			events[i] = l.Event
+		}
+	}
+	return events, validLen, nil
+}
+
+// scanLines reads the JSONL log at path from byte offset and returns its
+// complete lines, decoded, plus validLen: the absolute offset just past the
+// last complete, parseable line (offset itself if there is none). Blank lines
+// are skipped. A torn or partially-written trailing line is tolerated —
+// excluded from both the lines and validLen, so the caller can truncate it
+// away or wait for it to finish. A corrupt line that is followed by further
+// lines is treated as real corruption and returns an error. An offset past the
+// end of the file, or one that is not the start of a line (so a stale offset
+// can never cut a real line in half), returns an error wrapping ErrLogShrank.
+// A missing file yields no lines.
+func scanLines(path string, offset int64) (lines []RawLine, validLen int64, err error) {
+	if offset < 0 {
+		return nil, 0, fmt.Errorf("negative ledger offset %d", offset)
+	}
 	// A line starts at offset only if the byte before it ends the previous
 	// line, so read that byte too.
 	data, err := readFrom(path, max(offset-1, 0))
@@ -331,8 +381,11 @@ func scanFrom(path string, offset int64) (events []api.Event, validLen int64, er
 		return nil, 0, err
 	}
 	if offset > 0 {
-		if len(data) == 0 || data[0] != '\n' {
-			return nil, 0, fmt.Errorf("ledger offset %d is not the start of a line", offset)
+		if len(data) == 0 {
+			return nil, 0, fmt.Errorf("%w: offset %d is past its end", ErrLogShrank, offset)
+		}
+		if data[0] != '\n' {
+			return nil, 0, fmt.Errorf("%w: offset %d is not the start of a line", ErrLogShrank, offset)
 		}
 		data = data[1:]
 	}
@@ -344,22 +397,24 @@ func scanFrom(path string, offset int64) (events []api.Event, validLen int64, er
 			break
 		}
 		lineEnd := i + j
-		line := strings.TrimSpace(string(data[i:lineEnd]))
-		if line != "" {
+		// Cap the slice at the line so appending to Bytes can never write
+		// over the next line in the shared buffer.
+		raw := data[i:lineEnd:lineEnd]
+		if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 {
 			var e api.Event
-			if jerr := json.Unmarshal([]byte(line), &e); jerr != nil {
+			if jerr := json.Unmarshal(trimmed, &e); jerr != nil {
 				if lineEnd+1 < len(data) {
 					return nil, 0, fmt.Errorf("corrupt event before byte %d: %w", offset+int64(lineEnd), jerr)
 				}
 				// Corrupt final line: treat as a torn tail and stop.
 				break
 			}
-			events = append(events, e)
+			lines = append(lines, RawLine{Event: e, Bytes: raw})
 		}
 		validLen = offset + int64(lineEnd+1)
 		i = lineEnd + 1
 	}
-	return events, validLen, nil
+	return lines, validLen, nil
 }
 
 // readFrom returns the contents of the file at path from byte offset to EOF.
