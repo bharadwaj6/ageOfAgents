@@ -56,7 +56,7 @@ allowlist, cross-process ledger lock) in review.
 | | Increment | Depends on |
 |---|---|---|
 | [ ] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |
-| [ ] | ADR 015, tracker and positioning | — |
+| [ ] | ADR 015, tracker and positioning ([#133](https://github.com/bharadwaj6/ageOfAgents/pull/133)) | — |
 | [ ] | `serve` queues work only from trusted commenters (`--allow`) | — |
 | [ ] | Event Log safe for writers in several processes (`internal/filelock`, sidecar lock) | — |
 | [ ] | One Scheduler per workspace, `aoa run` exits `75` when busy | ledger lock |
