@@ -59,16 +59,41 @@ func (l *Ledger) SetAppendHook(fn func(api.Event)) {
 // Open opens (or creates) the ledger at path, creating parent directories as
 // needed. It scans any existing events to resume sequence numbering. If another
 // writer is appending, Open waits for it to finish.
+//
+// A log whose lock file cannot be created (a read-only directory, say) still
+// opens for reading. Nothing can be appended through it, since Append needs the
+// lock, so it is scanned without the torn-tail repair that only a lock holder
+// may do; the first successful Append repairs it instead.
 func Open(path string) (*Ledger, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create ledger dir: %w", err)
 	}
 	l := &Ledger{path: path, lockPath: path + lockSuffix, nextSeq: 1}
-	if err := l.withLock(l.sync); err != nil {
+	err := l.withLock(l.sync)
+	var unavailable *lockUnavailableError
+	if errors.As(err, &unavailable) {
+		events, validLen, serr := scan(path)
+		if serr != nil {
+			return nil, serr
+		}
+		l.size = validLen
+		if n := len(events); n > 0 {
+			l.nextSeq = events[n-1].Seq + 1
+		}
+		return l, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	return l, nil
 }
+
+// lockUnavailableError reports that the sidecar lock file could not be opened,
+// so no lock can be taken through this path.
+type lockUnavailableError struct{ err error }
+
+func (e *lockUnavailableError) Error() string { return "open ledger lock: " + e.err.Error() }
+func (e *lockUnavailableError) Unwrap() error { return e.err }
 
 // Append assigns the next sequence number to e, writes it as one JSONL line,
 // and returns the stored event. Safe for concurrent use, including by other
@@ -125,7 +150,7 @@ func appendLine(path string, line []byte) error {
 func (l *Ledger) withLock(fn func() error) error {
 	f, err := os.OpenFile(l.lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
-		return fmt.Errorf("open ledger lock: %w", err)
+		return &lockUnavailableError{err: err}
 	}
 	if err := filelock.Lock(f); err != nil {
 		return errors.Join(fmt.Errorf("lock ledger: %w", err), f.Close())
