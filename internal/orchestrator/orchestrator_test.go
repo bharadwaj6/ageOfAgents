@@ -469,6 +469,42 @@ func TestFailedAttemptsChargeGoalTokens(t *testing.T) {
 	}
 }
 
+// Every attempt is charged what the harness reported, including attempts that
+// errored and decompositions the Scheduler rejected (ADR 017). Before this a
+// failed agent call and a rejected decomposition charged nothing, and the
+// reported cost was dropped on the way to the log.
+func TestEveryAttemptIsChargedItsReportedSpend(t *testing.T) {
+	tests := []struct {
+		name       string
+		mock       *agent.Mock
+		wantTokens int
+		wantCost   float64
+	}{
+		{name: "a proposal", mock: &agent.Mock{TokensPerTask: 10, CostPerTask: 0.25},
+			wantTokens: 10, wantCost: 0.25},
+		{name: "two errored attempts", mock: &agent.Mock{TokensPerTask: 100, CostPerTask: 0.5,
+			FailTitles: map[string]bool{"Implement: g": true}},
+			wantTokens: 200, wantCost: 1},
+		{name: "a rejected decomposition", mock: &agent.Mock{TokensPerTask: 100, CostPerTask: 0.25,
+			Decompose: map[string][]agent.Subtask{"Implement: g": {{Title: "no local id"}}}},
+			wantTokens: 100, wantCost: 0.25},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+			o, h := setup(t, tt.mock, pass, Options{Concurrency: 1, MaxAttempts: 2})
+			h.submitGoal(t, "g1", "g")
+			if err := o.Run(context.Background()); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			g := h.state(t).Goals["g1"]
+			if g.TokensSpent != tt.wantTokens || g.CostUSDReported != tt.wantCost {
+				t.Errorf("goal spend = (%d tokens, $%v), want (%d, $%v)", g.TokensSpent, g.CostUSDReported, tt.wantTokens, tt.wantCost)
+			}
+		})
+	}
+}
+
 func TestSpendGovernorTripsOnFailedAttempts(t *testing.T) {
 	// The failure spiral the governor exists to stop: work that burns budget
 	// without ever producing a mergeable diff. The decomposition alone (100) is
@@ -1125,7 +1161,7 @@ func TestDecomposeSurfacesLedgerFailures(t *testing.T) {
 		dispatchJob{ticketID: "g1-impl", goalID: "g1", title: "t"},
 		"worker/g1-impl",
 		[]agent.Subtask{{LocalID: "a", Title: "first"}},
-		100, "m",
+		usage{tokens: 100, model: "m"},
 	)
 
 	if err := o.takeDispatchErr(); err == nil {
@@ -1147,7 +1183,7 @@ func TestFailDecomposeSurfacesLedgerFailures(t *testing.T) {
 	require.NoError(t, os.Chmod(ledgerPath, 0o444))
 	t.Cleanup(func() { _ = os.Chmod(ledgerPath, 0o644) })
 
-	o.failDecompose(dispatchJob{ticketID: "g1-impl", goalID: "g1"}, "worker/g1-impl", "would cycle")
+	o.failDecompose(dispatchJob{ticketID: "g1-impl", goalID: "g1"}, "worker/g1-impl", usage{}, "would cycle")
 
 	if err := o.takeDispatchErr(); err == nil {
 		t.Fatal("failDecompose swallowed a ledger append failure")

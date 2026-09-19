@@ -21,11 +21,13 @@ place.
 Events are append-only and replayed by old and new binaries alike: add fields, don't repurpose them, and
 don't change what an existing event means.
 
-## Token usage: charge it in both places
+## Spend: one set of books
 
-If an event carries token usage, account for it in **`internal/state` and `internal/metrics`**. They read
-the same log through different projections and have drifted apart before — the governor and `aoa status`
-once disagreed by 50% because only one of them was updated. Change both, and cover both with a test.
+If an event carries spend (`tokens`, `model`, `cost_usd`), read it in **`state.ChargeOf`** and nowhere
+else. Replay charges every ticket, Goal and the whole log through it, and the spend governor, `aoa status`,
+`internal/metrics` and OTel all read those figures. There used to be a second tally in `internal/metrics`;
+the governor and `aoa status` disagreed about the same log twice before it went. `TestGovernorAndStatusAgree`
+holds them together — extend its log when you add a spend-carrying event.
 
 ## Adding a metric or a span
 

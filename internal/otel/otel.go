@@ -263,8 +263,8 @@ func emitMetrics(mt metric.Meter, m metrics.Metrics, d diagnose.Report, price ma
 	setF("regression_escape_rate", m.RegressionEscapeRate)
 	setF("throughput_per_min", m.ThroughputPerMin)
 	setF("duration_seconds", m.DurationSeconds)
-	if len(price) > 0 {
-		setF("cost_usd", metrics.USD(m.TokensByModel, price))
+	if len(price) > 0 || m.Spend.CostUSDReported > 0 {
+		setF("cost_usd", m.Spend.CostUSD(price))
 	}
 
 	if g, err := mt.Int64Gauge("aoa.tokens_by_model"); err == nil {

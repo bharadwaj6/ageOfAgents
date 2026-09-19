@@ -150,6 +150,9 @@ func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 
 	client := &http.Client{Timeout: 5 * time.Minute}
 	totalTokens := 0
+	// spent is what the turns so far consumed. It is returned with any error, so
+	// a run that fails part way through is still charged for them.
+	spent := func() Result { return Result{Tokens: totalTokens, Model: o.Model} }
 	var finalSummary string
 	var trace strings.Builder
 
@@ -164,41 +167,41 @@ func (o *OpenAI) Run(ctx context.Context, task Task) (Result, error) {
 
 		b, err := json.Marshal(reqBody)
 		if err != nil {
-			return Result{}, err
+			return spent(), err
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL, bytes.NewReader(b))
 		if err != nil {
-			return Result{}, err
+			return spent(), err
 		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return Result{}, err
+			return spent(), err
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return Result{}, fmt.Errorf("read response body: %w", err)
+			return spent(), fmt.Errorf("read response body: %w", err)
 		}
 
 		if resp.StatusCode != 200 {
-			return Result{}, fmt.Errorf("openai api error: status %d: %s", resp.StatusCode, string(body))
+			return spent(), fmt.Errorf("openai api error: status %d: %s", resp.StatusCode, string(body))
 		}
 
 		var parsed openAIResponse
 		if err := json.Unmarshal(body, &parsed); err != nil {
-			return Result{}, err
-		}
-
-		if len(parsed.Choices) == 0 {
-			return Result{}, fmt.Errorf("openai api error: no choices returned")
+			return spent(), err
 		}
 
 		totalTokens += parsed.Usage.TotalTokens
+		if len(parsed.Choices) == 0 {
+			return spent(), fmt.Errorf("openai api error: no choices returned")
+		}
+
 		assistantMsg := parsed.Choices[0].Message
 
 		// Log assistant message

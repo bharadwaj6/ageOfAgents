@@ -498,7 +498,7 @@ func TestSnapshotKeepsGoalOrigin(t *testing.T) {
 		{
 			name:  "snapshot from before origin fields",
 			state: json.RawMessage(`{"Goals":{"g1":{"ID":"g1","Text":"fix it","TokensByModel":{}}},"Tickets":{}}`),
-			want:  Goal{ID: "g1", Text: "fix it", TokensByModel: map[string]int{}},
+			want:  Goal{ID: "g1", Text: "fix it", Spend: Spend{TokensByModel: map[string]int{}}},
 		},
 	}
 	for _, tt := range tests {
@@ -965,5 +965,61 @@ func TestDeliverable(t *testing.T) {
 				t.Errorf("Deliverable(%s) = %v, want %v", goal, got, tt.want)
 			}
 		})
+	}
+}
+
+// A Goal's cost is what the harnesses reported, plus [pricing] × tokens only
+// for the attempts that reported no cost of their own (ADR 017).
+func TestGoalCostPrefersReportedCost(t *testing.T) {
+	pricing := map[string]float64{"m": 10} // $10 per million tokens
+	tests := []struct {
+		name    string
+		charges []api.ProposalSubmittedPayload
+		want    float64
+	}{
+		{name: "reported only", charges: []api.ProposalSubmittedPayload{{Tokens: 1_000_000, Model: "m", CostUSD: 0.4}}, want: 0.4},
+		{name: "unreported falls back to pricing", charges: []api.ProposalSubmittedPayload{{Tokens: 1_000_000, Model: "m"}}, want: 10},
+		{name: "mixed", charges: []api.ProposalSubmittedPayload{
+			{Tokens: 1_000_000, Model: "m", CostUSD: 0.4}, {Tokens: 500_000, Model: "m"},
+		}, want: 5.4},
+		{name: "reported, nothing priced", charges: []api.ProposalSubmittedPayload{{Tokens: 7, Model: "unpriced", CostUSD: 0.25}}, want: 0.25},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := newBuild(t).
+				add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "x"}).
+				add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "t1", IdempotencyKey: "g1:t1"})
+			for i, c := range tt.charges {
+				c.TicketID, c.Worker = "t1", "w"+string(rune('1'+i))
+				b.add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: c.Worker})
+				b.add(api.ProposalSubmitted, c)
+				b.add(api.VerificationFailed, api.VerificationFailedPayload{TicketID: "t1", Worker: c.Worker, Reason: "x"})
+			}
+			if got := b.fold().Goals["g1"].CostUSD(pricing); got != tt.want {
+				t.Errorf("CostUSD = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Best-of-N: the losing proposal of a ticket already proposed was not charged
+// by replay, though `aoa status` counted it — the two disagreed about the same
+// log. The spend happened, so both charge it.
+func TestLosingProposalIsCharged(t *testing.T) {
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "x"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "t1", IdempotencyKey: "g1:t1"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w2"}).
+		add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "t1", Worker: "w1", Commit: "c1", Tokens: 100, Model: "m", CostUSD: 0.25}).
+		add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "t1", Worker: "w2", Commit: "c2", Tokens: 50, Model: "m", CostUSD: 0.5}).
+		fold()
+
+	g := s.Goals["g1"]
+	if g.TokensSpent != 150 || g.CostUSD(nil) != 0.75 {
+		t.Errorf("goal spend = (%d, $%v), want (150, $0.75): the losing proposal spent too", g.TokensSpent, g.CostUSD(nil))
+	}
+	if tk := s.Tickets["t1"]; tk.Commit != "c1" {
+		t.Errorf("t1 commit = %q, want c1 (the first proposal still wins)", tk.Commit)
 	}
 }

@@ -34,6 +34,31 @@ All notable changes to this project are documented here. The format follows
   it back. Removing the label or closing the issue cancels the Goal. A conformance test,
   `cmd/aoa/frontdoor_test.go`, runs the script against the real CLI and a stand-in `gh` in `make check`.
 
+### Changed
+
+- **The harness's own cost is what is charged** ([ADR 017](https://bharadwaj6.github.io/ageOfAgents/design/adr/017-spend-is-bounded-before-it-happens/)).
+  Where a harness reports what an attempt cost (claude's `total_cost_usd`), that figure is charged, and
+  `[pricing]` × tokens is only the fallback for attempts that report none. Tokens are still recorded. The
+  events that carry spend (`ProposalSubmitted`, `TicketDecomposed`, `TicketFailed`, `WorkerRestarted`)
+  gain an additive `cost_usd`. `max_usd_per_goal`, `aoa status` and the OTel `aoa.cost_usd` metric all
+  use it; `aoa eval` still prices tokens only.
+- **`[pricing]` is documented by model id.** Its keys were always the model id the backend reports, but
+  the docs and the sample config keyed it by backend name (`claudecode = 15.0`), which matched no real
+  run. They now read `"claude-sonnet-5" = 3.0`; a backend that reports no model id, like codex, is still
+  keyed by its name.
+
+### Fixed
+
+- **An attempt that errored is charged what it spent.** A CLI harness that exits non-zero has its output
+  read anyway, so the usage and cost it reported are charged; before, every errored attempt charged
+  nothing, and a goal whose attempts all errored never tripped its budget. An envelope with an empty
+  `result` is read too. The HTTP backends return the turns they had already spent with the error, and a
+  fallback chain keeps what a failed backend spent. A decomposition the Scheduler rejects is charged.
+- **The spend governor and `aoa status` keep one set of books.** They were two accounting paths that
+  disagreed: a losing Best-of-N proposal was counted by `status` but not by the governor. Both now read
+  replay's per-ticket, per-Goal and whole-log spend, and `TestGovernorAndStatusAgree` holds them
+  together.
+
 ## [0.4.0] — 2026-09-19
 
 `aoa` becomes a backend that front doors (task boards, bots, orchestrators, CI) drive through a stable JSON

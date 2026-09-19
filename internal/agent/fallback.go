@@ -36,18 +36,24 @@ func (f *FallbackBackend) Name() string {
 }
 
 // Run tries each backend in order. If a backend fails, it moves to the next.
-// If all backends fail, it returns an aggregated error.
+// If all backends fail, it returns an aggregated error. What a failed backend
+// spent is carried forward and added to the Result, success or not, so falling
+// through never drops spend; the Model is the last backend's.
 func (f *FallbackBackend) Run(ctx context.Context, task Task) (Result, error) {
 	var errs []error
+	var spent Result
 	for _, b := range f.backends {
 		res, err := b.Run(ctx, task)
+		res.Tokens += spent.Tokens
+		res.CostUSD += spent.CostUSD
 		if err == nil {
 			return res, nil
 		}
+		spent = Result{Tokens: res.Tokens, Model: res.Model, CostUSD: res.CostUSD}
 		// If context is canceled by the caller (e.g. timeout or abort),
 		// we should not retry the other fallbacks.
 		if ctx.Err() != nil {
-			return Result{}, ctx.Err()
+			return spent, ctx.Err()
 		}
 		errs = append(errs, fmt.Errorf("[%s] %w", b.Name(), err))
 	}
@@ -57,5 +63,5 @@ func (f *FallbackBackend) Run(ctx context.Context, task Task) (Result, error) {
 	for _, e := range errs {
 		sb.WriteString(" " + e.Error() + ";")
 	}
-	return Result{}, errors.New(strings.TrimRight(sb.String(), ";"))
+	return spent, errors.New(strings.TrimRight(sb.String(), ";"))
 }

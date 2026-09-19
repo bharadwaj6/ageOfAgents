@@ -23,8 +23,10 @@ claude --permission-mode acceptEdits --output-format json -p "<prompt>"
 ## Cost
 
 Real counts from the CLI's own envelope, summing `input_tokens`, `output_tokens`,
-`cache_creation_input_tokens` and `cache_read_input_tokens` — cache reads are real spend. Costs land
-under the model id the CLI reports:
+`cache_creation_input_tokens` and `cache_read_input_tokens` — cache reads are real spend. The dollar
+figure charged is the envelope's own `total_cost_usd`, which prices input, output and cache tokens at
+their real rates; it is read even when the CLI exits non-zero. `[pricing]` is then only a fallback, for
+a run whose envelope carried no cost, keyed by the model id the CLI reports:
 
 ```toml
 [pricing]

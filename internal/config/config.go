@@ -145,9 +145,11 @@ type Config struct {
 	// MaxFanOut caps how many new children a single decomposition may emit
 	// (graph governor). 0 ⇒ default 8.
 	MaxFanOut int `toml:"max_fan_out"`
-	// Pricing maps a model id (as reported by the Backend) to its cost in USD per
-	// *million* tokens, used to turn token counts into a $ figure in `aoa status`.
-	// Absent ⇒ unpriced ($0). Example: [pricing] then claudecode = 15.0.
+	// Pricing maps a model id (as reported by the Backend; the backend's name
+	// when it reports none) to its cost in USD per *million* tokens. It is the
+	// fallback: an attempt whose harness reported its own cost is charged that
+	// instead. Absent ⇒ unpriced ($0). Example: [pricing] then
+	// "claude-sonnet-5" = 3.0.
 	Pricing map[string]float64 `toml:"pricing"`
 	// Backends defines custom backend plugins: type = "openai_compatible" for an
 	// OpenAI-shaped HTTP endpoint (OpenRouter, DeepSeek, a local gateway), or

@@ -40,8 +40,9 @@ Make a CLI backend **data**: one `agent.CLI` type, and a preset table describing
 ## Consequences
 - Adding a harness is a table row plus, only if it has its own envelope, a case in the parser. The
   test that covers it is a row in `TestCLIPresetArgv`.
-- `claudecode` and `grok` are unchanged: same argv, same `Name()` (it is the `[pricing]` key), and
-  their existing parser fixtures pass with nothing but a function rename — which is the compat proof.
+- `claudecode` and `grok` are unchanged: same argv, same `Name()` (the `[pricing]` key only when the
+  harness reports no model id; otherwise the key is the model id), and their existing parser fixtures
+  pass with nothing but a function rename — which is the compat proof.
 - `requireCLI` must run **before** a preset's preflight hook. Grok's spawns a detached daemon that
   outlives the process, and the hermetic suite builds that backend with an empty `PATH`.
 - Verification status is per-harness and stated honestly in `docs/harnesses/`: codex is verified end to

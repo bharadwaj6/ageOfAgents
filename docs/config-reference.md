@@ -107,13 +107,16 @@ All default to off/unlimited, so they never change behavior until set.
 | Field | Type | Default | What it does | Set it when |
 |-------|------|---------|--------------|-------------|
 | `max_tokens_per_goal` | int | `0` (unlimited) | Per-Goal token budget; the spend governor stops dispatching a Goal's remaining work once it's crossed (circuit breaker). | Pointing a real backend at an open-ended Goal and you want a hard ceiling. |
-| `max_usd_per_goal` | float | `0` (unlimited) | Per-Goal **dollar** budget. Requires `[pricing]` — with no price for the models in use the spend is `$0` and this never trips. | You'd rather reason in money than tokens. |
+| `max_usd_per_goal` | float | `0` (unlimited) | Per-Goal **dollar** budget, counted from the cost the harness reports (claude's `total_cost_usd`), else from `[pricing]` — on a backend that reports no cost and no price for its models the spend is `$0` and this never trips. | You'd rather reason in money than tokens. |
 | `retry_backoff` | duration string | `"0s"` (instant) | Base wait before re-dispatching a failed Task; grows exponentially per attempt. | A flaky Gate/agent is hammering retries. |
 | `crash_loop_threshold` | int | `3` | Give up on a Task after N **identical-reason** failures in a row, even under `max_attempts`. Inert while `≤ max_attempts`. | Distinguishing a flaky failure from a fundamentally-stuck one. |
 
 Both budgets count **every** attempt, including ones that errored, produced no changes, or were rejected
-by the Gate — the failure spiral is exactly where an unattended run burns money without shipping anything,
-so it is what the breaker is there to bound.
+by the Gate, and decompositions that were rejected — the failure spiral is exactly where an unattended run
+burns money without shipping anything, so it is what the breaker is there to bound. An attempt that errors
+is charged what its harness reported before exiting. Two things cannot be charged: an attempt killed by
+`agent_timeout` before its harness printed anything, and one whose process died and was restarted by the
+Stall Detector.
 
 ## Termination gates
 
@@ -134,14 +137,22 @@ shown; setting it here only changes the value. Leave them alone unless a real ru
 
 ```toml
 [pricing]            # USD per *million* tokens, keyed by the model id the backend reports
-claudecode = 15.0
-grok       = 5.0
+"claude-sonnet-5" = 3.0
+"grok-4.6-build"  = 2.0
+codex             = 10.0   # codex reports no model id; its tokens land under the backend's name
 ```
 
-Absent ⇒ unpriced (`$0`). Token counts stay the source of truth; `$` is `tokens × price` applied only at
-the reporting edge — surfaced in `aoa status`, `aoa eval` (per-task `$` + `--max-cost` ceiling), and the
-OTel `aoa.cost_usd` / `aoa.tokens_by_model` metrics. `aoa eval --price-file` accepts the same `[pricing]`
-table as a standalone file.
+Keys are **model ids**, as the backend reports them (`modelUsage` in claude's envelope, for example) —
+not backend names. A backend that reports no model id is keyed by its name (`codex`, a `[backends.<name>]`
+plugin). Quote a key that contains a dot.
+
+**The harness's own cost comes first.** Where a harness reports what an attempt cost (claude's
+`total_cost_usd`), that is what is charged. `[pricing]` × tokens is only the fallback, for the attempts
+of a harness that reports no cost (grok, codex, cursor, gemini, the HTTP backends). Tokens are always
+recorded too. On a subscription the dollars are notional, but accurate and comparable across runs.
+Absent `[pricing]` and a reported cost ⇒ `$0`. The same figures drive `max_usd_per_goal`, `aoa status`
+and the OTel `aoa.cost_usd` metric. `aoa eval` (per-task `$` + `--max-cost`) still prices tokens only,
+and `aoa eval --price-file` accepts the same `[pricing]` table as a standalone file.
 
 ## Example
 

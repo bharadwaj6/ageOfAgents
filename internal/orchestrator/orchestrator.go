@@ -391,12 +391,23 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	return nil
 }
 
-// usage is one agent attempt's token spend, carried to whichever event records
-// the attempt's outcome. The zero value means "nothing to charge" — the attempt
+// usage is one agent attempt's spend, carried to whichever event records the
+// attempt's outcome. The zero value means "nothing to charge" — the attempt
 // failed before the agent ran, or the Backend reported no usage.
+//
+// One gap remains: a restart by the Stall Detector has no Result to charge.
+// Either the attempt is still running in this process, and its own outcome
+// event charges it when it returns, or its process died and what it spent was
+// never reported to anyone.
 type usage struct {
 	tokens int
 	model  string
+	cost   float64 // what the harness reported; 0 when it reports none
+}
+
+// usageOf is the spend a Backend reported on res, successful or not.
+func usageOf(res agent.Result) usage {
+	return usage{tokens: res.Tokens, model: res.Model, cost: res.CostUSD}
 }
 
 type dispatchJob struct {
@@ -528,10 +539,11 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			err = fmt.Errorf("timed out after %s: %w", o.opt.AgentTimeout, err)
 		}
-		// A Backend returning an error reports no usage by Go convention, so a
-		// failed agent call charges nothing. Backends that can attribute partial
-		// spend should surface it on a successful Result instead.
-		o.failAttempt(ctx, j, worker, fmt.Sprintf("agent: %v", err), usage{})
+		// An attempt that errored has still spent: a Backend returns what it
+		// spent with the error (a CLI's own report, even on a non-zero exit),
+		// and it is charged like any other attempt. A harness killed by the
+		// timeout before it printed anything has nothing to report.
+		o.failAttempt(ctx, j, worker, fmt.Sprintf("agent: %v", err), usageOf(res))
 		return
 	}
 
@@ -565,13 +577,13 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	// than editing code. Extend the graph via the Shared Log; nothing to commit.
 	if len(res.Subtasks) > 0 {
 		o.cleanupWorktree(ctx, j.ticketID)
-		o.decompose(j, worker, res.Subtasks, res.Tokens, res.Model)
+		o.decompose(j, worker, res.Subtasks, usageOf(res))
 		return
 	}
 
 	// The agent ran and burned tokens whether or not it produced a usable diff;
 	// charge them on either failure path so the spend governor sees the burn.
-	spent := usage{tokens: res.Tokens, model: res.Model}
+	spent := usageOf(res)
 
 	sha, changed, err := wt.Commit(ctx, commitMessage(j.title, j.ticketID))
 	if err != nil {
@@ -586,7 +598,8 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 	// The one append that must not vanish: without it the committed diff exists
 	// on a branch that nothing will ever look at again.
 	if err := o.emit(api.ProposalSubmitted, api.ProposalSubmittedPayload{
-		TicketID: j.ticketID, Worker: worker, Branch: branch, Commit: sha, Summary: res.Summary, Trace: res.Trace, Tokens: res.Tokens, Model: res.Model,
+		TicketID: j.ticketID, Worker: worker, Branch: branch, Commit: sha, Summary: res.Summary, Trace: res.Trace,
+		Tokens: spent.tokens, Model: spent.model, CostUSD: spent.cost,
 	}); err != nil {
 		o.recordDispatchErr(fmt.Errorf("propose %s (diff is on branch %s): %w", j.ticketID, branch, err))
 	}
@@ -627,7 +640,7 @@ func commitMessage(title, ticketID string) string {
 // would create a cycle. A rejected decomposition fails the parent terminally —
 // re-running the same worker would propose the same invalid graph. On success
 // the parent becomes terminal (StatusDecomposed) and the children carry the work.
-func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subtask, tokens int, model string) {
+func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subtask, u usage) {
 	s, err := o.loadState()
 	if err != nil {
 		// The agent's tokens are already spent and its decomposition is in hand.
@@ -647,11 +660,11 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 	adopted := make(map[string]bool) // canonical IDs that already exist in state
 	for _, st := range subs {
 		if st.LocalID == "" {
-			o.failDecompose(j, worker, "subtask missing local id")
+			o.failDecompose(j, worker, u, "subtask missing local id")
 			return
 		}
 		if _, dup := localToID[st.LocalID]; dup {
-			o.failDecompose(j, worker, "duplicate subtask local id "+st.LocalID)
+			o.failDecompose(j, worker, u, "duplicate subtask local id "+st.LocalID)
 			return
 		}
 		if st.IdempotencyKey != "" {
@@ -709,7 +722,7 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 
 	// Governor: bound emergent decomposition depth and per-Goal ticket count.
 	if j.depth >= o.opt.MaxGraphDepth {
-		o.failDecompose(j, worker, "decomposition depth budget exceeded")
+		o.failDecompose(j, worker, u, "decomposition depth budget exceeded")
 		return
 	}
 	existing := 0
@@ -725,11 +738,11 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 		}
 	}
 	if added > o.opt.MaxFanOut {
-		o.failDecompose(j, worker, "decomposition fan-out budget exceeded")
+		o.failDecompose(j, worker, u, "decomposition fan-out budget exceeded")
 		return
 	}
 	if existing+added > o.opt.MaxTicketsPerGoal {
-		o.failDecompose(j, worker, "per-goal ticket budget exceeded")
+		o.failDecompose(j, worker, u, "per-goal ticket budget exceeded")
 		return
 	}
 
@@ -737,7 +750,7 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 	for _, c := range children {
 		for _, d := range c.deps {
 			if !childSet[d] && s.Tickets[d] == nil {
-				o.failDecompose(j, worker, "unknown dependency "+d)
+				o.failDecompose(j, worker, u, "unknown dependency "+d)
 				return
 			}
 		}
@@ -745,7 +758,7 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 
 	// Reject decompositions that would deadlock the graph.
 	if s.WouldCycle(newEdges) {
-		o.failDecompose(j, worker, "decomposition would create a cycle")
+		o.failDecompose(j, worker, u, "decomposition would create a cycle")
 		return
 	}
 
@@ -770,16 +783,19 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 		}
 	}
 	if err := o.emit(api.TicketDecomposed, api.TicketDecomposedPayload{
-		TicketID: j.ticketID, Worker: worker, Children: childIDs, Tokens: tokens, Model: model,
+		TicketID: j.ticketID, Worker: worker, Children: childIDs, Tokens: u.tokens, Model: u.model, CostUSD: u.cost,
 	}); err != nil {
 		o.recordDispatchErr(fmt.Errorf("decompose %s: %w", j.ticketID, err))
 	}
 }
 
 // failDecompose terminally fails a parent whose proposed decomposition was
-// rejected by a governor or graph check.
-func (o *Orchestrator) failDecompose(j dispatchJob, worker, reason string) {
-	if err := o.emit(api.TicketFailed, api.TicketFailedPayload{TicketID: j.ticketID, Worker: worker, Reason: reason}); err != nil {
+// rejected by a governor or graph check. The agent spent u producing it, and
+// the failure charges that.
+func (o *Orchestrator) failDecompose(j dispatchJob, worker string, u usage, reason string) {
+	if err := o.emit(api.TicketFailed, api.TicketFailedPayload{
+		TicketID: j.ticketID, Worker: worker, Reason: reason, Tokens: u.tokens, Model: u.model, CostUSD: u.cost,
+	}); err != nil {
 		// Dropping this leaves the parent running forever after its decomposition
 		// was already rejected.
 		o.recordDispatchErr(fmt.Errorf("fail decomposition of %s: %w", j.ticketID, err))
@@ -1104,7 +1120,7 @@ func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, r
 	if isLastWorker && j.attempt >= o.opt.MaxAttempts {
 		if err := o.emit(api.TicketFailed, api.TicketFailedPayload{
 			TicketID: j.ticketID, Worker: worker, Reason: reason, Worktree: o.preserveWorktree(j.ticketID),
-			Tokens: u.tokens, Model: u.model,
+			Tokens: u.tokens, Model: u.model, CostUSD: u.cost,
 		}); err != nil {
 			o.recordDispatchErr(fmt.Errorf("fail %s: %w", j.ticketID, err))
 		}
@@ -1112,7 +1128,7 @@ func (o *Orchestrator) failAttempt(ctx context.Context, j dispatchJob, worker, r
 	}
 	o.cleanupWorktree(ctx, j.ticketID)
 	if err := o.emit(api.WorkerRestarted, api.WorkerRestartedPayload{
-		TicketID: j.ticketID, Worker: worker, Reason: reason, Tokens: u.tokens, Model: u.model,
+		TicketID: j.ticketID, Worker: worker, Reason: reason, Tokens: u.tokens, Model: u.model, CostUSD: u.cost,
 	}); err != nil {
 		o.recordDispatchErr(fmt.Errorf("restart %s: %w", j.ticketID, err))
 	}
