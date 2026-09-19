@@ -12,21 +12,20 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
 )
 
-// chargeGoal adds an attempt's token spend to the ticket's Goal. Every path that
-// consumes tokens charges through here — a proposal, a decomposition, and equally
-// an attempt that failed or was retried — so the spend governor sees the full
-// burn, not just the work that succeeded. A zero token count is a no-op.
-func (s *State) chargeGoal(t *Ticket, tokens int, model string) {
-	if t == nil || tokens == 0 {
+// charge adds an attempt's spend to its ticket, the ticket's Goal and the whole
+// log. Every event that records spend is charged through here (see ChargeOf) —
+// a proposal, a losing Best-of-N proposal included, a decomposition, and
+// equally an attempt that failed or was retried — so the spend governor sees
+// the full burn, not just the work that succeeded.
+func (s *State) charge(ticketID string, c Charge) {
+	t := s.Tickets[ticketID]
+	if t == nil {
 		return
 	}
-	g := s.Goals[t.GoalID]
-	if g == nil {
-		return
-	}
-	g.TokensSpent += tokens
-	if model != "" {
-		g.TokensByModel[model] += tokens
+	t.Add(c)
+	s.Spend.Add(c)
+	if g := s.Goals[t.GoalID]; g != nil {
+		g.Add(c)
 	}
 }
 
@@ -64,21 +63,20 @@ func (s TicketStatus) IsTerminal() bool {
 type Goal struct {
 	ID             string
 	Text           string
-	Source         string         // entry point that submitted it ("human", "github-webhook", a front door's name)
-	Ref            string         // origin reference: a URL or "tracker:id"; empty when none
-	By             string         // who submitted it, as the submitter reported; empty when unknown
-	SubmittedAt    time.Time      // timestamp of the GoalSubmitted event that created it
-	SubmittedSeq   int            // sequence number of that event, so a duplicate submit can name it
-	Amendments     []string       // steering guidance appended mid-run (GoalAmended)
-	TokensSpent    int            // LLM tokens charged to this Goal's tickets (spend governor)
-	TokensByModel  map[string]int // LLM tokens charged to this Goal, broken down by model
-	BudgetExceeded bool           // the per-Goal token/USD budget tripped; no more work is dispatched
-	Cancelled      bool           // withdrawn (GoalCancelled); none of its work may land from here on
-	CancelledSeq   int            // seq of the first GoalCancelled for it; 0 if never cancelled
-	Branch         string         // Goal branch its tickets merge onto (PR delivery mode, ADR 016); empty in local mode
-	Delivered      bool           // its branch was pushed and its pull request opened (Delivered)
-	PRURL          string         // the pull request Delivered reported; empty when delivery was push only
-	DeliveryError  string         // why the latest delivery attempt failed; cleared once delivered
+	Source         string    // entry point that submitted it ("human", "github-webhook", a front door's name)
+	Ref            string    // origin reference: a URL or "tracker:id"; empty when none
+	By             string    // who submitted it, as the submitter reported; empty when unknown
+	SubmittedAt    time.Time // timestamp of the GoalSubmitted event that created it
+	SubmittedSeq   int       // sequence number of that event, so a duplicate submit can name it
+	Amendments     []string  // steering guidance appended mid-run (GoalAmended)
+	Spend                    // what this Goal's tickets spent, failed and retried attempts included (spend governor)
+	BudgetExceeded bool      // the per-Goal token/USD budget tripped; no more work is dispatched
+	Cancelled      bool      // withdrawn (GoalCancelled); none of its work may land from here on
+	CancelledSeq   int       // seq of the first GoalCancelled for it; 0 if never cancelled
+	Branch         string    // Goal branch its tickets merge onto (PR delivery mode, ADR 016); empty in local mode
+	Delivered      bool      // its branch was pushed and its pull request opened (Delivered)
+	PRURL          string    // the pull request Delivered reported; empty when delivery was push only
+	DeliveryError  string    // why the latest delivery attempt failed; cleared once delivered
 }
 
 // EffectiveText is the Goal's text plus any mid-run amendments, as handed to a
@@ -96,21 +94,6 @@ func (g *Goal) EffectiveText() string {
 		b.WriteString(a)
 	}
 	return b.String()
-}
-
-// CostUSD computes the total USD cost of the Goal based on the provided pricing map
-// (which maps model ID to USD per million tokens).
-func (g *Goal) CostUSD(pricing map[string]float64) float64 {
-	if len(pricing) == 0 {
-		return 0
-	}
-	var total float64
-	for model, tokens := range g.TokensByModel {
-		if rate, ok := pricing[model]; ok {
-			total += (float64(tokens) / 1_000_000.0) * rate
-		}
-	}
-	return total
 }
 
 // Ticket is a unit of work in the task graph.
@@ -139,6 +122,7 @@ type Ticket struct {
 	LastFailOutput string // verifier output of the most recent failure, fed back into the retry prompt
 	SameFailCount  int    // consecutive verification failures sharing LastFailReason
 	Worktree       string // preserved checkout of a terminally-failed attempt (warm handoff); empty otherwise
+	Spend                 // what every attempt at this ticket spent
 }
 
 // State is the derived snapshot produced by folding events.
@@ -149,6 +133,7 @@ type State struct {
 	KeyToTicket map[string]string `json:"key_to_ticket"` // idempotency key -> ticket ID (dedupe)
 	KeyToGoal   map[string]string `json:"key_to_goal"`   // idempotency key -> goal ID (dedupe)
 	LastSeq     int
+	Spend       Spend // what every attempt on the log spent
 }
 
 // New returns an empty State.
@@ -204,7 +189,6 @@ func (s *State) Apply(e api.Event) error {
 			ID: p.GoalID, Text: p.Text,
 			Source: p.Source, Ref: p.Ref, By: p.By,
 			SubmittedAt: e.Timestamp, SubmittedSeq: e.Seq,
-			TokensByModel: map[string]int{},
 		}
 
 	case api.TicketCreated:
@@ -245,7 +229,6 @@ func (s *State) Apply(e api.Event) error {
 			t.ActiveWorkers = nil
 			t.Children = p.Children
 			t.LastActivity = e.Timestamp
-			s.chargeGoal(t, p.Tokens, p.Model)
 		}
 
 	case api.TicketReady:
@@ -303,7 +286,6 @@ func (s *State) Apply(e api.Event) error {
 				t.Commit = p.Commit
 				t.Summary = p.Summary
 				t.Trace = p.Trace
-				s.chargeGoal(t, p.Tokens, p.Model)
 			}
 			t.LastActivity = e.Timestamp
 		}
@@ -387,7 +369,6 @@ func (s *State) Apply(e api.Event) error {
 				t.LastFailReason = p.Reason
 			}
 			t.Worktree = p.Worktree // preserved checkout for a warm handoff ("" if none)
-			s.chargeGoal(t, p.Tokens, p.Model)
 		}
 
 	case api.ApprovalRequested:
@@ -510,7 +491,6 @@ func (s *State) Apply(e api.Event) error {
 				}
 				t.LastFailOutput = p.Reason
 			}
-			s.chargeGoal(t, p.Tokens, p.Model)
 		}
 	case api.TicketInvalidated:
 		var p api.TicketInvalidatedPayload
@@ -551,6 +531,9 @@ func (s *State) Apply(e api.Event) error {
 		return fmt.Errorf("state: unknown event type %q (seq %d)", e.Type, e.Seq)
 	}
 
+	if id, c, ok := ChargeOf(e); ok {
+		s.charge(id, c)
+	}
 	s.LastSeq = e.Seq
 	return nil
 }

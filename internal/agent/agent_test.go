@@ -62,9 +62,14 @@ func TestMockDefaultMarkerFile(t *testing.T) {
 }
 
 func TestMockForcedFailure(t *testing.T) {
-	m := &Mock{FailTitles: map[string]bool{"bad": true}}
-	if _, err := m.Run(context.Background(), Task{TicketID: "t", Title: "bad", Worktree: t.TempDir()}); err == nil {
+	m := &Mock{FailTitles: map[string]bool{"bad": true}, TokensPerTask: 30, CostPerTask: 0.5}
+	res, err := m.Run(context.Background(), Task{TicketID: "t", Title: "bad", Worktree: t.TempDir()})
+	if err == nil {
 		t.Error("expected forced failure error")
+	}
+	// A failing attempt has still spent, like a real harness that errors.
+	if res.Tokens != 30 || res.Model != "mock" || res.CostUSD != 0.5 {
+		t.Errorf("spend with the error = (%d, %q, $%v), want (30, mock, $0.5)", res.Tokens, res.Model, res.CostUSD)
 	}
 }
 

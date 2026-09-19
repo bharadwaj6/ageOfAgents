@@ -21,10 +21,11 @@ import (
 // disagree. It replays the log once into state and once through
 // metrics.Compute; everything else is derived from those two.
 //
-// Tokens come from metrics.Compute throughout — per task, per Goal and in total
-// — so a Goal's tokens are the sum of its tasks' and the totals are the sum of
-// everything. Costs price those same tallies with pricing (USD per million
-// tokens, by model).
+// Spend — tokens and cost, per task, per Goal and in total — is replay's own
+// (state.Spend), the very figures the spend governor enforces, so status and
+// the governor cannot disagree. A Goal's spend is the sum of its tasks' and the
+// totals are the sum of everything. Cost is what the harnesses reported, plus
+// pricing (USD per million tokens, by model) for the spend they did not.
 //
 // Goals are ordered by submission (the seq of their GoalSubmitted event, then
 // id), and each Goal's tasks by creation, so a decomposed task comes before its
@@ -37,14 +38,6 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 	}
 	m := metrics.Compute(events)
 
-	ticketTokens := make(map[string]int, len(m.PerTicket))
-	for _, tc := range m.PerTicket {
-		ticketTokens[tc.TicketID] = tc.Tokens
-	}
-	goalCost := make(map[string]metrics.GoalCost, len(m.PerGoal))
-	for _, gc := range m.PerGoal {
-		goalCost[gc.GoalID] = gc
-	}
 	graph := map[string]metrics.GraphShape{}
 	for _, gs := range metrics.GraphShapes(s) {
 		graph[gs.GoalID] = gs
@@ -52,7 +45,7 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 	tickets := map[string][]api.TicketView{}
 	for _, id := range s.TicketOrder {
 		if t := s.Tickets[id]; t != nil {
-			tickets[t.GoalID] = append(tickets[t.GoalID], ticketView(t, ticketTokens[id]))
+			tickets[t.GoalID] = append(tickets[t.GoalID], ticketView(t))
 		}
 	}
 
@@ -70,8 +63,8 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 		Settled: true,
 		Goals:   make([]api.GoalView, 0, len(goals)),
 		Totals: api.StatusTotals{
-			Tokens:      m.TokensTotal,
-			CostUSD:     metrics.USD(m.TokensByModel, pricing),
+			Tokens:      s.Spend.TokensSpent,
+			CostUSD:     s.Spend.CostUSD(pricing),
 			WallSeconds: m.DurationSeconds,
 			Goals:       m.Goals,
 			Tickets:     m.Tickets,
@@ -95,8 +88,8 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 			SubmittedAt:    g.SubmittedAt,
 			Outcome:        s.GoalOutcome(g.ID),
 			BudgetExceeded: g.BudgetExceeded,
-			Tokens:         goalCost[g.ID].Tokens,
-			CostUSD:        metrics.USD(goalCost[g.ID].TokensByModel, pricing),
+			Tokens:         g.TokensSpent,
+			CostUSD:        g.CostUSD(pricing),
 			Amendments:     g.Amendments,
 			Branch:         g.Branch,
 			PRURL:          g.PRURL,
@@ -132,13 +125,13 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 // ticketView is the contract's view of one task. Commit is carried only while
 // it names something real — the candidate under review, or the merged commit —
 // and the failure details only once the task has failed.
-func ticketView(t *state.Ticket, tokens int) api.TicketView {
+func ticketView(t *state.Ticket) api.TicketView {
 	tv := api.TicketView{
 		ID:       t.ID,
 		Title:    t.Title,
 		Status:   string(t.Status),
 		Attempts: t.Attempts,
-		Tokens:   tokens,
+		Tokens:   t.TokensSpent,
 		Depth:    t.Depth,
 	}
 	switch t.Status {

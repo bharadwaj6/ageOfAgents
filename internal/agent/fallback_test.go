@@ -76,3 +76,39 @@ func TestFallbackBackend_ContextCanceled(t *testing.T) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }
+
+// spendingBackend fails after spending, as a real harness does when it errors
+// part way through.
+type spendingBackend struct{ tokens int }
+
+func (s *spendingBackend) Name() string { return "spender" }
+func (s *spendingBackend) Run(context.Context, agent.Task) (agent.Result, error) {
+	return agent.Result{Tokens: s.tokens, Model: "m", CostUSD: 0.25}, errors.New("exit status 1")
+}
+
+// Falling through to the next backend must not drop what the failed one spent.
+func TestFallbackBackendKeepsTheSpendOfFailedBackends(t *testing.T) {
+	tests := []struct {
+		name       string
+		backends   []agent.Backend
+		wantErr    bool
+		wantTokens int
+		wantCost   float64
+	}{
+		{name: "a later backend succeeds", backends: []agent.Backend{&spendingBackend{tokens: 100}, &agent.Mock{TokensPerTask: 7}},
+			wantTokens: 107, wantCost: 0.25},
+		{name: "all fail", backends: []agent.Backend{&spendingBackend{tokens: 100}, &spendingBackend{tokens: 50}},
+			wantErr: true, wantTokens: 150, wantCost: 0.5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := agent.NewFallbackBackend(tt.backends...).Run(context.Background(), agent.Task{TicketID: "t", Title: "x", Worktree: t.TempDir()})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if res.Tokens != tt.wantTokens || res.CostUSD != tt.wantCost {
+				t.Errorf("spend = (%d, $%v), want (%d, $%v)", res.Tokens, res.CostUSD, tt.wantTokens, tt.wantCost)
+			}
+		})
+	}
+}

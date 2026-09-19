@@ -49,6 +49,7 @@ type Result struct {
 	Subtasks          []Subtask // non-empty => decompose this Task into children
 	Tokens            int       // LLM tokens this work consumed; 0 when unknown (e.g. mock)
 	Model             string    // best-effort model identifier, for per-model cost; "" when unknown
+	CostUSD           float64   // what the harness itself reported the work cost; 0 when it reports none
 	Invalidated       bool      // if true, the worker determined the ticket's assumptions are invalid
 	InvalidatedReason string    // reason for invalidating the ticket
 	AmendedTitle      string    // if set, updates the ticket's title
@@ -57,6 +58,10 @@ type Result struct {
 
 // Backend executes coding work for a single task. Implementations must be safe
 // to call from multiple goroutines for distinct tasks.
+//
+// A Run that fails after the agent spent anything returns that spend — Tokens,
+// Model and CostUSD — alongside the error, and the Scheduler charges it: an
+// attempt that errors has still cost what it cost (ADR 017).
 type Backend interface {
 	// Name identifies the backend (e.g. "mock", "claudecode").
 	Name() string

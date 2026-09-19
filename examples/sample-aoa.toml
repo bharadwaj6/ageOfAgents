@@ -22,8 +22,10 @@ max_tokens_per_goal  = 0       # per-goal token ceiling; 0 = unlimited
 retry_backoff        = "0s"    # wait before re-dispatching a failed task
 crash_loop_threshold = 3       # give up after N identical failures
 
-# USD per *million* tokens, by model id. Powers the $ columns and the OTel
-# aoa.cost_usd metric. Absent => unpriced.
+# USD per *million* tokens, by the model id the backend reports. Only a
+# fallback: where a harness reports its own cost (claude's total_cost_usd),
+# that is charged instead. Powers the $ columns, max_usd_per_goal and the
+# OTel aoa.cost_usd metric. Absent => unpriced.
 [pricing]
-claudecode = 15.0
-grok       = 5.0
+"claude-sonnet-5" = 3.0
+"grok-4.6-build"  = 2.0

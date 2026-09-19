@@ -148,3 +148,56 @@ func TestOpenAISendsModelAndTools(t *testing.T) {
 		t.Fatalf("request carried %d tools, want bash and finish", len(tools))
 	}
 }
+
+// An HTTP backend that fails mid-loop has still spent the turns before the
+// failure; it returns them with the error so the Scheduler can charge them.
+func TestHTTPBackendsReturnSpendWithTheError(t *testing.T) {
+	tests := []struct {
+		name  string
+		first string // a first turn that runs a harmless command, with its usage
+		build func(url string) Backend
+		want  int
+	}{
+		{
+			name: "openai",
+			first: `{"choices": [{"message": {"role": "assistant", "tool_calls": [{"id": "tc_1", "type": "function",
+			  "function": {"name": "bash", "arguments": "{\"command\":\"true\"}"}}]}}], "usage": {"total_tokens": 42}}`,
+			build: func(url string) Backend { return NewOpenAICompatible("openai", "gpt-test", url, "TEST_API_KEY") },
+			want:  42,
+		},
+		{
+			name: "anthropic",
+			first: `{"content": [{"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"command": "true"}}],
+			  "stop_reason": "tool_use", "usage": {"input_tokens": 10, "output_tokens": 5}}`,
+			build: func(url string) Backend {
+				a := NewAnthropic()
+				a.BaseURL, a.APIKeyEnv = url, "TEST_API_KEY"
+				return a
+			},
+			want: 15,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var n int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if atomic.AddInt32(&n, 1) > 1 {
+					http.Error(w, "overloaded", http.StatusServiceUnavailable)
+					return
+				}
+				w.Header().Set("content-type", "application/json")
+				_, _ = w.Write([]byte(tt.first))
+			}))
+			defer srv.Close()
+			t.Setenv("TEST_API_KEY", "k")
+
+			res, err := tt.build(srv.URL).Run(context.Background(), Task{TicketID: "t1", Title: "x", Worktree: t.TempDir()})
+			if err == nil {
+				t.Fatal("Run succeeded; want the second turn's 503")
+			}
+			if res.Tokens != tt.want || res.Model == "" {
+				t.Errorf("spend with the error = (%d, %q), want (%d, the model)", res.Tokens, res.Model, tt.want)
+			}
+		})
+	}
+}

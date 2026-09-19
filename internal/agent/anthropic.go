@@ -129,6 +129,9 @@ func (a *Anthropic) Run(ctx context.Context, task Task) (Result, error) {
 
 	client := &http.Client{Timeout: 5 * time.Minute}
 	totalTokens := 0
+	// spent is what the turns so far consumed. It is returned with any error, so
+	// a run that fails part way through is still charged for them.
+	spent := func() Result { return Result{Tokens: totalTokens, Model: a.Model} }
 	var finalSummary string
 	var trace strings.Builder
 
@@ -143,12 +146,12 @@ func (a *Anthropic) Run(ctx context.Context, task Task) (Result, error) {
 		}
 		b, err := json.Marshal(reqBody)
 		if err != nil {
-			return Result{}, err
+			return spent(), err
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", a.BaseURL, bytes.NewReader(b))
 		if err != nil {
-			return Result{}, err
+			return spent(), err
 		}
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
@@ -156,27 +159,26 @@ func (a *Anthropic) Run(ctx context.Context, task Task) (Result, error) {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return Result{}, err
+			return spent(), err
 		}
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return Result{}, fmt.Errorf("read response body: %w", err)
+			return spent(), fmt.Errorf("read response body: %w", err)
 		}
 		if resp.StatusCode != 200 {
-			return Result{}, fmt.Errorf("anthropic api error: status %d: %s", resp.StatusCode, string(body))
+			return spent(), fmt.Errorf("anthropic api error: status %d: %s", resp.StatusCode, string(body))
 		}
 
 		var parsed anthropicResponse
 		if err := json.Unmarshal(body, &parsed); err != nil {
-			return Result{}, err
+			return spent(), err
 		}
+		totalTokens += parsed.Usage.InputTokens + parsed.Usage.OutputTokens
 		var blocks []anthropicBlock
 		if err := json.Unmarshal(parsed.Content, &blocks); err != nil {
-			return Result{}, err
+			return spent(), err
 		}
-
-		totalTokens += parsed.Usage.InputTokens + parsed.Usage.OutputTokens
 
 		// Echo the assistant turn back verbatim (preserves block order).
 		messages = append(messages, anthropicMessage{Role: "assistant", Content: parsed.Content})
@@ -240,7 +242,7 @@ func (a *Anthropic) Run(ctx context.Context, task Task) (Result, error) {
 		// Feed tool results back as the next user turn.
 		rb, err := json.Marshal(results)
 		if err != nil {
-			return Result{}, err
+			return spent(), err
 		}
 		messages = append(messages, anthropicMessage{Role: "user", Content: rb})
 	}

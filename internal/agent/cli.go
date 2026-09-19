@@ -125,7 +125,7 @@ func EnsureGrokLeader() {
 // shell string — a prompt containing backticks, $(...) or newlines is passed
 // through literally. TestCLIPromptIsOneArgvElement locks that in.
 type CLI struct {
-	name string   // Backend name; also the [pricing] key and the Model fallback
+	name string   // Backend name; the Model fallback, and so the [pricing] key when the harness names no model
 	Bin  string   // binary to invoke
 	Args []string // args inserted verbatim before the prompt
 	// run executes the command; injectable for tests. dir is the working
@@ -154,13 +154,15 @@ func (c *CLI) Run(ctx context.Context, task Task) (Result, error) {
 	prompt := BuildPrompt(task)
 	args := append(append([]string{}, c.Args...), prompt)
 
+	// The output is read even on a non-zero exit: a harness that errored part
+	// way through still reports what it spent, and that spend is charged.
 	out, err := runner(ctx, task.Worktree, c.Bin, args...)
-	if err != nil {
-		return Result{}, fmt.Errorf("%s: %w", c.name, err)
-	}
-	text, tokens, model := parseCLIOutput(out)
+	text, tokens, model, cost := parseCLIOutput(out)
 	if model == "" {
 		model = c.name
+	}
+	if err != nil {
+		return Result{Tokens: tokens, Model: model, CostUSD: cost}, fmt.Errorf("%s: %w", c.name, err)
 	}
 	return Result{
 		Trace:    strings.TrimSpace(text),
@@ -168,6 +170,7 @@ func (c *CLI) Run(ctx context.Context, task Task) (Result, error) {
 		Subtasks: parseSubtasks(text),
 		Tokens:   tokens,
 		Model:    model,
+		CostUSD:  cost,
 	}, nil
 }
 
@@ -249,7 +252,10 @@ type cliEnvelope struct {
 	Result   string `json:"result"`   // claude, cursor
 	Text     string `json:"text"`     // grok
 	Response string `json:"response"` // gemini
-	Usage    struct {
+	// TotalCostUSD is what the run cost by the harness's own reckoning (claude).
+	// It is charged in preference to [pricing] × tokens (ADR 017).
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	Usage        struct {
 		TotalTokens              int `json:"total_tokens"` // grok reports a total directly
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`
@@ -299,8 +305,16 @@ func (e cliEnvelope) model() string {
 	return id
 }
 
-// parseCLIOutput pulls the agent's prose, its true token count and the model id
-// out of whatever a harness printed, trying three shapes in order:
+// reported says whether the envelope carries anything a harness reports: prose,
+// or spend. An errored run can end with an empty `result` and still report
+// what it spent, and that spend must not be lost to the prose fallback.
+func (e cliEnvelope) reported() bool {
+	return e.text() != "" || e.total() > 0 || e.TotalCostUSD > 0 || len(e.ModelUsage) > 0
+}
+
+// parseCLIOutput pulls the agent's prose, its true token count, the model id
+// and the cost the harness reported out of whatever a harness printed, trying
+// three shapes in order:
 //
 //  1. one JSON envelope for the whole run (claude, grok, cursor, gemini);
 //  2. a JSONL event stream (codex);
@@ -308,17 +322,19 @@ func (e cliEnvelope) model() string {
 //
 // It degrades rather than fails: an older CLI, or a future format change, lands
 // in tier 3 and reports zero tokens. Reporting zero is honest — inventing a
-// number is not — and callers render an unknown cost as unknown.
-func parseCLIOutput(out string) (text string, tokens int, model string) {
+// number is not — and callers render an unknown cost as unknown. Only claude's
+// envelope reports a cost (total_cost_usd); codex's stream reports tokens but
+// no cost, so its cost is priced from [pricing].
+func parseCLIOutput(out string) (text string, tokens int, model string, costUSD float64) {
 	var env cliEnvelope
-	if err := json.Unmarshal([]byte(out), &env); err == nil && env.text() != "" {
-		return env.text(), env.total(), env.model()
+	if err := json.Unmarshal([]byte(out), &env); err == nil && env.reported() {
+		return env.text(), env.total(), env.model(), env.TotalCostUSD
 	}
 	if text, tokens, ok := parseJSONLStream(out); ok {
-		return text, tokens, ""
+		return text, tokens, "", 0
 	}
 	tokens, model = parseUsage(out)
-	return out, tokens, model
+	return out, tokens, model, 0
 }
 
 // parseJSONLStream reads codex's `--json` event stream. It scans line by line

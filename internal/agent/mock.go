@@ -23,7 +23,8 @@ type Mock struct {
 	// mock writes a single marker file named "<TicketID>.txt".
 	Plan map[string][]File
 	// FailTitles, when true for a title, makes Run return an error (used to
-	// exercise the verification-failure / retry path).
+	// exercise the verification-failure / retry path), with TokensPerTask and
+	// CostPerTask as the failed attempt's spend.
 	FailTitles map[string]bool
 	// Decompose maps a ticket Title to child subtasks. A matching entry makes
 	// Run return those Subtasks (a decomposition) instead of writing files, so
@@ -33,6 +34,9 @@ type Mock struct {
 	// Run (implementation or decomposition), so the spend governor and cost
 	// metrics can be exercised deterministically and offline.
 	TokensPerTask int
+	// CostPerTask, when > 0, is reported as the Result's harness-reported cost in
+	// USD for every Run, failed ones included, so budgets can be exercised offline.
+	CostPerTask float64
 	// Rendezvous synchronises concurrent workers whose title matches a key in
 	// the map. Each matching Run call decrements the WaitGroup then blocks
 	// until all peers have entered, so none returns before all are inside Run.
@@ -53,7 +57,10 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 		return Result{}, err
 	}
 	if m.FailTitles[task.Title] {
-		return Result{}, fmt.Errorf("mock: forced failure for %q", task.Title)
+		// Like a real harness that errors part way through, a failing attempt
+		// has still spent.
+		return Result{Tokens: m.TokensPerTask, Model: m.model(), CostUSD: m.CostPerTask},
+			fmt.Errorf("mock: forced failure for %q", task.Title)
 	}
 
 	// A configured decomposition takes precedence over writing files: the mock
@@ -65,6 +72,7 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 			Subtasks: subs,
 			Tokens:   m.TokensPerTask,
 			Model:    m.model(),
+			CostUSD:  m.CostPerTask,
 		}, nil
 	}
 
@@ -100,6 +108,7 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 		Summary: task.Title,
 		Tokens:  m.TokensPerTask,
 		Model:   m.model(),
+		CostUSD: m.CostPerTask,
 	}, nil
 }
 

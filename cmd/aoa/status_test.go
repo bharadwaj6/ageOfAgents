@@ -14,6 +14,7 @@ import (
 
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
+	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
 )
 
@@ -631,5 +632,63 @@ func TestStatusTextShowsDelivery(t *testing.T) {
 				t.Errorf("status text should contain %q and not %q:\n%s", tt.want, tt.notWant, out)
 			}
 		})
+	}
+}
+
+// TestGovernorAndStatusAgree holds the spend governor and `aoa status` to one
+// set of books. They read the same log through what were two accounting paths,
+// and disagreed: a losing Best-of-N proposal was charged by status but not by
+// the governor. Over a log with every kind of spend — a retry, a failed
+// attempt, a decomposition, Best-of-N, harness-reported and priced cost — each
+// Goal's tokens and dollars in status must be exactly what the governor sees.
+func TestGovernorAndStatusAgree(t *testing.T) {
+	pricing := map[string]float64{"m-small": 1.5, "m-large": 15}
+	b := newLog(t).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build the parser"}).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "fix the flaky test"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g1-impl", GoalID: "g1", Title: "Implement: build the parser", IdempotencyKey: "g1:impl"}).
+		add(0, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g2-impl", GoalID: "g2", Title: "Implement: fix the flaky test", IdempotencyKey: "g2:impl"}).
+		// g1: decomposed, with a reported cost.
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g1-impl", Worker: "w1"}).
+		add(0, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g1-impl/a", GoalID: "g1", Title: "lexer", IdempotencyKey: "g1:a", CreatedBy: "w1", Depth: 1}).
+		add(0, api.TicketDecomposed, api.TicketDecomposedPayload{TicketID: "g1-impl", Worker: "w1", Children: []string{"g1-impl/a"}, Tokens: 300, Model: "m-large", CostUSD: 0.05}).
+		// g1-impl/a: a retried attempt (priced), then Best-of-N — two proposals,
+		// the second of which loses.
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g1-impl/a", Worker: "w2"}).
+		add(1, api.WorkerRestarted, api.WorkerRestartedPayload{TicketID: "g1-impl/a", Worker: "w2", Reason: "agent: exit status 1", Tokens: 700, Model: "m-small"}).
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g1-impl/a", Worker: "w3"}).
+		add(0, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g1-impl/a", Worker: "w4"}).
+		add(2, api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "g1-impl/a", Worker: "w3", Commit: "c1", Tokens: 400, Model: "m-large", CostUSD: 0.125}).
+		add(1, api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "g1-impl/a", Worker: "w4", Commit: "c2", Tokens: 600, Model: "m-small"}).
+		add(1, api.VerificationPassed, api.VerificationPassedPayload{TicketID: "g1-impl/a", Worker: "w3"}).
+		add(0, api.Merged, api.MergedPayload{TicketID: "g1-impl/a", Worker: "w3", Commit: "c1"}).
+		// g2: an attempt that errored and was charged what it reported.
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g2-impl", Worker: "w5"}).
+		add(3, api.TicketFailed, api.TicketFailedPayload{TicketID: "g2-impl", Worker: "w5", Reason: "agent: exit status 1", Tokens: 900, Model: "m-small", CostUSD: 0.5})
+
+	events := b.events
+	s, err := state.Fold(events)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	v, err := statusView(events, pricing)
+	if err != nil {
+		t.Fatalf("statusView: %v", err)
+	}
+	want := map[string]int{"g1": 300 + 700 + 400 + 600, "g2": 900}
+	var tokens int
+	for _, gv := range v.Goals {
+		g := s.Goals[gv.ID]
+		if gv.Tokens != g.TokensSpent || gv.CostUSD != g.CostUSD(pricing) {
+			t.Errorf("goal %s: status says %d tokens / $%v, the governor %d / $%v",
+				gv.ID, gv.Tokens, gv.CostUSD, g.TokensSpent, g.CostUSD(pricing))
+		}
+		if gv.Tokens != want[gv.ID] {
+			t.Errorf("goal %s: %d tokens, want %d (every attempt, failed and losing ones included)", gv.ID, gv.Tokens, want[gv.ID])
+		}
+		tokens += gv.Tokens
+	}
+	if tokens != v.Totals.Tokens {
+		t.Errorf("goals sum to %d tokens, totals say %d", tokens, v.Totals.Tokens)
 	}
 }

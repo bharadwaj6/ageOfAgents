@@ -181,8 +181,9 @@ type TicketDecomposedPayload struct {
 	TicketID string   `json:"ticket_id"`
 	Worker   string   `json:"worker,omitempty"`
 	Children []string `json:"children"`
-	Tokens   int      `json:"tokens,omitempty"` // LLM tokens the decomposition consumed (0 when unknown)
-	Model    string   `json:"model,omitempty"`  // model that produced the decomposition, for per-model cost
+	Tokens   int      `json:"tokens,omitempty"`   // LLM tokens the decomposition consumed (0 when unknown)
+	Model    string   `json:"model,omitempty"`    // model that produced the decomposition, for per-model cost
+	CostUSD  float64  `json:"cost_usd,omitempty"` // cost the harness reported for it (0 when it reports none)
 }
 
 // TicketReadyPayload accompanies [TicketReady].
@@ -211,14 +212,15 @@ type HeartbeatPayload struct {
 
 // ProposalSubmittedPayload accompanies [ProposalSubmitted].
 type ProposalSubmittedPayload struct {
-	TicketID string `json:"ticket_id"`
-	Worker   string `json:"worker"`
-	Branch   string `json:"branch"`
-	Commit   string `json:"commit"`
-	Summary  string `json:"summary,omitempty"` // one-line description of the change, for dependents' context
-	Trace    string `json:"trace,omitempty"`
-	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the work consumed (0 when unknown)
-	Model    string `json:"model,omitempty"`  // model that produced the change, for per-model cost
+	TicketID string  `json:"ticket_id"`
+	Worker   string  `json:"worker"`
+	Branch   string  `json:"branch"`
+	Commit   string  `json:"commit"`
+	Summary  string  `json:"summary,omitempty"` // one-line description of the change, for dependents' context
+	Trace    string  `json:"trace,omitempty"`
+	Tokens   int     `json:"tokens,omitempty"`   // LLM tokens the work consumed (0 when unknown)
+	Model    string  `json:"model,omitempty"`    // model that produced the change, for per-model cost
+	CostUSD  float64 `json:"cost_usd,omitempty"` // cost the harness reported for the work (0 when it reports none)
 }
 
 // VerificationPassedPayload accompanies [VerificationPassed].
@@ -258,10 +260,11 @@ type TicketFailedPayload struct {
 	// ended the ticket. Without it a terminal failure records only which command
 	// failed, so an infrastructure fault and a genuinely broken patch are
 	// indistinguishable after the fact.
-	Output   string `json:"output,omitempty"`
-	Worktree string `json:"worktree,omitempty"`
-	Tokens   int    `json:"tokens,omitempty"` // LLM tokens the failed attempt consumed (0 when unknown)
-	Model    string `json:"model,omitempty"`  // model that consumed them, for per-model cost
+	Output   string  `json:"output,omitempty"`
+	Worktree string  `json:"worktree,omitempty"`
+	Tokens   int     `json:"tokens,omitempty"`   // LLM tokens the failed attempt consumed (0 when unknown)
+	Model    string  `json:"model,omitempty"`    // model that consumed them, for per-model cost
+	CostUSD  float64 `json:"cost_usd,omitempty"` // cost the harness reported for the attempt (0 when it reports none)
 }
 
 // WorkerStalledPayload accompanies [WorkerStalled].
@@ -281,9 +284,10 @@ type WorkerRestartedPayload struct {
 	// own failure: the next attempt re-ran an identical prompt, and crash-loop
 	// detection — which keys on repeated identical reasons — could never fire on
 	// anything but a Gate rejection.
-	Reason string `json:"reason,omitempty"`
-	Tokens int    `json:"tokens,omitempty"` // LLM tokens the abandoned attempt consumed (0 when unknown)
-	Model  string `json:"model,omitempty"`  // model that consumed them, for per-model cost
+	Reason  string  `json:"reason,omitempty"`
+	Tokens  int     `json:"tokens,omitempty"`   // LLM tokens the abandoned attempt consumed (0 when unknown)
+	Model   string  `json:"model,omitempty"`    // model that consumed them, for per-model cost
+	CostUSD float64 `json:"cost_usd,omitempty"` // cost the harness reported for the attempt (0 when it reports none)
 }
 
 // ApprovalRequestedPayload accompanies [ApprovalRequested]. Commit is the

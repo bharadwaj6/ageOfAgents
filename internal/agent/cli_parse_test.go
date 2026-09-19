@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
 // Real usage, not self-reported usage. Before this the backend asked parseUsage
 // for an `aoa:usage` fence that BuildPrompt never requested, so every real run
@@ -23,7 +27,7 @@ func TestParseClaudeOutputReadsRealUsage(t *testing.T) {
 	  "modelUsage": {"claude-opus-5": {"inputTokens": 2, "outputTokens": 4}}
 	}`
 
-	text, tokens, model := parseCLIOutput(envelope)
+	text, tokens, model, cost := parseCLIOutput(envelope)
 	if text != "done: added the tests" {
 		t.Errorf("text = %q, want the agent's prose from `result`", text)
 	}
@@ -35,13 +39,17 @@ func TestParseClaudeOutputReadsRealUsage(t *testing.T) {
 	if model != "claude-opus-5" {
 		t.Errorf("model = %q, want the id from modelUsage", model)
 	}
+	// The harness's own cost is what gets charged, in preference to pricing.
+	if cost != 0.2969205 {
+		t.Errorf("cost = %v, want total_cost_usd 0.2969205", cost)
+	}
 }
 
 func TestParseClaudeOutputPicksBusiestModel(t *testing.T) {
 	const envelope = `{"result":"x","usage":{"input_tokens":1},
 	  "modelUsage":{"small":{"inputTokens":1,"outputTokens":1},
 	                "big":{"inputTokens":900,"outputTokens":100}}}`
-	if _, _, model := parseCLIOutput(envelope); model != "big" {
+	if _, _, model, _ := parseCLIOutput(envelope); model != "big" {
 		t.Errorf("model = %q, want the model that did the most work", model)
 	}
 }
@@ -50,14 +58,14 @@ func TestParseClaudeOutputPicksBusiestModel(t *testing.T) {
 // changed CLI still produces a usable Result.
 func TestParseClaudeOutputFallsBackToProse(t *testing.T) {
 	const prose = "I edited the file.\n```aoa:usage\n{\"tokens\": 42, \"model\": \"m\"}\n```\n"
-	text, tokens, model := parseCLIOutput(prose)
+	text, tokens, model, _ := parseCLIOutput(prose)
 	if text != prose {
 		t.Errorf("non-JSON output should pass through verbatim, got %q", text)
 	}
 	if tokens != 42 || model != "m" {
 		t.Errorf("fence fallback = (%d, %q), want (42, \"m\")", tokens, model)
 	}
-	if _, tk, _ := parseCLIOutput("just prose"); tk != 0 {
+	if _, tk, _, _ := parseCLIOutput("just prose"); tk != 0 {
 		t.Errorf("unknown usage = %d, want 0 (never invented)", tk)
 	}
 }
@@ -67,7 +75,7 @@ func TestParseClaudeOutputFindsSubtasksInsideEnvelope(t *testing.T) {
 	env := `{"result":"splitting this up\n` + "```aoa:subtasks\\n" +
 		`[{\"local_id\":\"a\",\"title\":\"first\",\"depends_on\":[]}]` + "\\n```" +
 		`\n","usage":{"input_tokens":1},"modelUsage":{"m":{"inputTokens":1}}}`
-	text, _, _ := parseCLIOutput(env)
+	text, _, _, _ := parseCLIOutput(env)
 	subs := parseSubtasks(text)
 	if len(subs) != 1 || subs[0].Title != "first" {
 		t.Fatalf("subtasks = %+v, want one titled \"first\"", subs)
@@ -83,7 +91,7 @@ func TestParseCLIOutputReadsCodexJSONL(t *testing.T) {
 {"type":"item.completed","item":{"type":"agent_message","text":"added the tests"}}
 {"type":"turn.completed","usage":{"input_tokens":20000,"cached_input_tokens":18000,"output_tokens":500,"reasoning_output_tokens":400}}`
 
-	text, tokens, model := parseCLIOutput(stream)
+	text, tokens, model, _ := parseCLIOutput(stream)
 	if text != "added the tests" {
 		t.Errorf("text = %q, want only the agent_message prose", text)
 	}
@@ -104,7 +112,7 @@ func TestParseCLIOutputReadsCursorEnvelope(t *testing.T) {
 	const envelope = `{"type":"result","subtype":"success","is_error":false,
 	  "duration_ms":42000,"result":"refactored the parser","session_id":"s_1"}`
 
-	text, tokens, _ := parseCLIOutput(envelope)
+	text, tokens, _, _ := parseCLIOutput(envelope)
 	if text != "refactored the parser" {
 		t.Errorf("text = %q, want the `result` field", text)
 	}
@@ -119,7 +127,7 @@ func TestParseCLIOutputReadsCursorEnvelope(t *testing.T) {
 func TestParseCLIOutputReadsGeminiEnvelope(t *testing.T) {
 	const envelope = `{"session_id":"s_1","response":"updated the docs","stats":{}}`
 
-	text, tokens, _ := parseCLIOutput(envelope)
+	text, tokens, _, _ := parseCLIOutput(envelope)
 	if text != "updated the docs" {
 		t.Errorf("text = %q, want the `response` field", text)
 	}
@@ -133,8 +141,44 @@ func TestParseCLIOutputReadsGeminiEnvelope(t *testing.T) {
 func TestParseCLIOutputFallsBackToTheUsageFence(t *testing.T) {
 	out := "did the thing\n\n```" + usageFence + "\n{\"tokens\": 4321, \"model\": \"mycoder-1\"}\n```\n"
 
-	_, tokens, model := parseCLIOutput(out)
+	_, tokens, model, _ := parseCLIOutput(out)
 	if tokens != 4321 || model != "mycoder-1" {
 		t.Errorf("fence not honoured: tokens=%d model=%q", tokens, model)
+	}
+}
+
+// The harness's own figures are what an attempt is charged, whether it ended
+// well or not (ADR 017). Before this a non-zero exit returned an empty Result,
+// so every errored attempt charged nothing; an envelope with an empty `result`
+// fell through to prose and charged nothing either; and total_cost_usd was
+// ignored everywhere.
+func TestCLIRunReportsTheHarnessesSpend(t *testing.T) {
+	const usage = `"total_cost_usd": 0.42, "usage": {"input_tokens": 10, "output_tokens": 5},
+	  "modelUsage": {"claude-sonnet-5": {"inputTokens": 10, "outputTokens": 5}}`
+	tests := []struct {
+		name    string
+		out     string
+		runErr  error
+		wantErr bool
+	}{
+		{name: "success", out: `{"is_error": false, "result": "done", ` + usage + `}`},
+		{name: "non-zero exit", out: `{"is_error": true, "result": "hit max turns", ` + usage + `}`,
+			runErr: errors.New("exit status 1"), wantErr: true},
+		{name: "empty result", out: `{"is_error": true, "result": "", ` + usage + `}`},
+		{name: "empty result, non-zero exit", out: `{"is_error": true, "result": "", ` + usage + `}`,
+			runErr: errors.New("exit status 1"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := NewCLI("claudecode", "claude", nil)
+			c.run = func(context.Context, string, string, ...string) (string, error) { return tt.out, tt.runErr }
+			res, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "x", Worktree: "/wt"})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if res.Tokens != 15 || res.Model != "claude-sonnet-5" || res.CostUSD != 0.42 {
+				t.Errorf("spend = (%d tokens, %q, $%v), want (15, claude-sonnet-5, $0.42)", res.Tokens, res.Model, res.CostUSD)
+			}
+		})
 	}
 }
