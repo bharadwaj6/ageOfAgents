@@ -62,6 +62,7 @@ other target. The suite is hermetic: the `mock` backend never networks, and test
 | `internal/config` | `aoa.toml` loading | New field → default in `Default()` |
 | `cmd/aoa` | Tiny stdlib CLI; one-Scheduler lock (`lock.go`), status projection (`status.go`) | No CLI framework; document new commands in `docs/cli.md` |
 | `scripts/` | Eval + benchmark harnesses, installer | Not covered by `make check`; keep runnable from a clean clone |
+| `examples/github-issues` | Reference GitHub Issues front door (bash+gh+jq) | Uses only the CLI JSON contract; conformance test in `cmd/aoa/frontdoor_test.go` |
 
 ## Conventions
 

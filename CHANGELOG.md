@@ -25,6 +25,14 @@ All notable changes to this project are documented here. The format follows
   that each Goal is delivered at most once, only after every task is complete, and only as its branch's
   last verified commit. The default `mode = "local"` behaves as before. **A log containing `Delivered` or
   `DeliveryFailed` cannot be read by an older `aoa` binary.**
+- **A reference GitHub Issues front door** ([`examples/github-issues`](examples/github-issues/README.md)).
+  One bash script turns labelled issues into Goals and reports each outcome back to the issue as one
+  comment. It uses only the CLI's JSON contract, `gh` and `jq`. An issue is taken only when both its
+  author and whoever last applied the label are on an allowlist. The script keeps no state: a hidden
+  marker in each of its own comments makes reporting idempotent and numbers the attempts, and markers in
+  anyone else's comments are ignored. A final outcome removes the label, so a retry takes a person adding
+  it back. Removing the label or closing the issue cancels the Goal. A conformance test,
+  `cmd/aoa/frontdoor_test.go`, runs the script against the real CLI and a stand-in `gh` in `make check`.
 
 ## [0.4.0] — 2026-09-19
 
