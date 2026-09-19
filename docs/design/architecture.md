@@ -96,6 +96,10 @@ flowchart TD
     class MergeQueue gate;
 ```
 
+Work reaches the Event Log from a **front door**: a person, CI, a tracker poller or an orchestrator.
+It drives `aoa` through its JSON contract and decides *what* gets worked on; `aoa` decides *whether it
+lands* ([ADR 015](adr/015-aoa-is-a-backend.md)).
+
 **Domain objects**
 
 - **Goal** — a human-submitted objective. Decomposed into Tasks (initially, and at runtime as Workers
@@ -119,8 +123,9 @@ There is exactly one control loop.
 
 | Package | Responsibility |
 |---------|----------------|
-| `pkg/api` | Event envelope + the small event set (see §6). |
-| `internal/ledger` | Append-only JSONL Event Log: `Append`, `Read`, `Replay`. |
+| `pkg/api` | Event envelope + the small event set (see §6), and the CLI's versioned JSON contract (`contract.go`). |
+| `internal/ledger` | Append-only JSONL Event Log: `Append`, `Read`, `Replay`, `Update`, `ReadFrom`. Safe for writers in several processes. |
+| `internal/filelock` | The cross-process lock behind the ledger and the one-Scheduler rule (flock / LockFileEx). |
 | `internal/state` | Replays events into `State` (Tasks, dependencies, Workers, Merge Queue). |
 | `internal/orchestrator` | The Scheduler: dispatch + Concurrency Limit + Stall Detector + Merge Queue driver. |
 | `internal/agent` | `Backend` interface (AI-provider abstraction) + `mock`, the CLI harness presets in `cli.go`, and the native `openai`/`anthropic` Backends. |
@@ -194,6 +199,10 @@ emitting ordinary `agent.Backend` work, never as a second coordinator (ADR 011).
   services (git only).
 - **Use:** `aoa goal "…"` then `aoa run` drives Goal → decompose → dispatch Workers → verify → merge,
   with a live view from `aoa status --watch`.
+- **Drive:** a front door (a person, CI, a tracker poller, an orchestrator) uses the same verbs with
+  `--json` ([ADR 015](adr/015-aoa-is-a-backend.md), [backend contract](../backend.md)). Submitting is
+  idempotent, any number of processes may write, and an OS lock keeps exactly one Scheduler per
+  workspace.
 - **Validate:** the deterministic `mock` Backend runs the whole loop in `go test` with no network; the
   Gate is the correctness mechanism; the Event Log replays for debugging.
 - **Port:** static Go binary, plain JSONL events, no DB, one config file.

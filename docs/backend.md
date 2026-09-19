@@ -4,7 +4,7 @@
 firstmate, a Symphony-style tracker poller, a Linear agent, a CI job, or a person. `aoa` decides
 *whether it lands*: an isolated worktree, your Gate on the post-merge state, the merge queue,
 approvals, budgets, and an Event Log that replays. The split is recorded in
-[ADR 015](https://bharadwaj6.github.io/ageOfAgents/design/adr/015-aoa-is-a-backend/).
+[ADR 015](design/adr/015-aoa-is-a-backend.md).
 
 This page is the contract a front door builds on. Every flag is in the [CLI reference](cli.md).
 

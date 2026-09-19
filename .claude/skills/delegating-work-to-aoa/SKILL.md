@@ -56,7 +56,7 @@ aoa diagnose --path <workspace>                 # failure-mode histogram when th
 `status` is the one to quote to the user. A failed task prints a "needs human" line with the worktree
 path, so you can `cd` there and take over rather than starting again. From a script, use
 `aoa status --json`. It prints one line, with each goal's `outcome` (`queued`, `running`,
-`awaiting_approval`, `merged` or `failed`).
+`awaiting_approval`, `merged`, `failed` or `cancelled`).
 
 ## Steering a run
 
@@ -64,7 +64,9 @@ path, so you can `cd` there and take over rather than starting again. From a scr
 aoa amend --path <workspace> <goal-id> "keep the public API unchanged"
 ```
 
-Applies to future dispatches, not the attempt already in flight.
+Applies to future dispatches, not the attempt already in flight. To withdraw a goal entirely, run
+`aoa cancel --path <workspace> <goal-id>`. Nothing of it merges afterwards, and it doesn't count as a
+failure.
 
 If `require_approval = true`, verified proposals park instead of merging:
 

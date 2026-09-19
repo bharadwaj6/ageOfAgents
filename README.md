@@ -122,6 +122,25 @@ environment — it runs the Gate you configure, on the machine you run it on. Ed
 counts, `aoa` says so at startup rather than quietly showing you `$0`. Setup, flags and the reasoning
 behind each: [Harnesses](https://bharadwaj6.github.io/ageOfAgents/harnesses/).
 
+## Drive it from a board, a bot or an orchestrator
+
+`aoa` is built to be the backend of something else: a tracker poller, a chat bot, an orchestrator such
+as firstmate, or CI. The front door decides *what* gets worked on; `aoa` decides *whether it lands*.
+Every verb speaks JSON:
+
+```console
+$ aoa goal --json --source linear --ref "$ISSUE_URL" --key linear:ENG-12 "fix the flaky shutdown test"
+{"schema":1,"goal_id":"g-4504fef6","duplicate":false,"seq":1}
+$ aoa run                                  # exits 75 if another run already holds the workspace
+$ aoa status --json                        # each goal's outcome: queued, running, awaiting_approval, merged, failed or cancelled
+$ aoa events --json --since 41 --follow    # the Event Log as a resumable stream
+```
+
+Resubmitting a key is a no-op, any number of processes can submit at once, and exactly one Scheduler
+reconciles a workspace. The whole contract is in
+[Drive it from another system](https://bharadwaj6.github.io/ageOfAgents/backend/), and the reasoning is in
+[ADR 015](https://bharadwaj6.github.io/ageOfAgents/design/adr/015-aoa-is-a-backend/).
+
 ## Where things stand
 
 The loop closes end to end on real repositories, with real backends, on real money — with cost
@@ -129,6 +148,8 @@ accounting, spend governors and OpenTelemetry export. What is **not** establishe
 changes outcomes at scale: every SWE-bench number recorded so far was produced with the Gate *disabled*,
 so those runs measure the backend agent, not the merge queue. The numbers and their caveats are in
 [live evaluation](https://bharadwaj6.github.io/ageOfAgents/design/live_eval/).
+
+The machine-readable contract is stable at `schema: 1`: within that version, fields are only ever added.
 
 The rule itself isn't new: Graydon Hoare called it the
 [not-rocket-science rule](https://graydon2.dreamwidth.org/1597.html) — *automatically maintain a
