@@ -1,6 +1,11 @@
 package agent
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
 
 // Real usage, not self-reported usage. Before this the backend asked parseUsage
 // for an `aoa:usage` fence that BuildPrompt never requested, so every real run
@@ -136,5 +141,38 @@ func TestParseCLIOutputFallsBackToTheUsageFence(t *testing.T) {
 	_, tokens, model := parseCLIOutput(out)
 	if tokens != 4321 || model != "mycoder-1" {
 		t.Errorf("fence not honoured: tokens=%d model=%q", tokens, model)
+	}
+}
+
+// A non-zero exit must carry the harness's own explanation, not just
+// "exit status 1": the message of a JSON error envelope when there is one,
+// else the tail of the output, bounded either way.
+func TestCLIRunFailureCarriesHarnessMessage(t *testing.T) {
+	exit := errors.New("exit status 1")
+	for _, tc := range []struct {
+		name, out string
+		want      string
+		maxLen    int
+	}{
+		{"json envelope", `{"type":"error","message":"Not signed in. Run grok login"}` + "\nError: Not signed in.\n",
+			"grok: exit status 1: Not signed in. Run grok login", 0},
+		{"stderr tail", "warming up\nError: quota exceeded\n", "grok: exit status 1: warming up\nError: quota exceeded", 0},
+		{"no output", "", "grok: exit status 1", 0},
+		{"bounded", strings.Repeat("x", 5000), "", len("grok: exit status 1: ") + maxFailureDetail + len("[...truncated...]\n") + 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewCLI("grok", "grok", nil)
+			c.run = func(context.Context, string, string, ...string) (string, error) { return tc.out, exit }
+			_, err := c.Run(context.Background(), Task{Title: "t"})
+			if err == nil || !errors.Is(err, exit) {
+				t.Fatalf("err = %v, want it to wrap the exit error", err)
+			}
+			if tc.want != "" && err.Error() != tc.want {
+				t.Errorf("err = %q, want %q", err.Error(), tc.want)
+			}
+			if tc.maxLen > 0 && len(err.Error()) > tc.maxLen {
+				t.Errorf("err is %d bytes, want <= %d", len(err.Error()), tc.maxLen)
+			}
+		})
 	}
 }
