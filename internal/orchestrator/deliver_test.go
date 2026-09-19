@@ -26,10 +26,11 @@ type prHarness struct {
 	lastArgv string // the last call's argv, NUL-separated
 }
 
-// gitT runs git in dir with a fixed identity and returns its trimmed output.
+// gitT runs git in dir with a fixed identity and no signing, independent of the
+// user's git config, and returns its trimmed output.
 func gitT(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...).CombinedOutput()
+	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput()
 	require.NoError(t, err, "git %v: %s", args, out)
 	return strings.TrimSpace(string(out))
 }
