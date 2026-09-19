@@ -588,3 +588,155 @@ func TestApprovalDecisionIsRecorded(t *testing.T) {
 		})
 	}
 }
+
+// Ticket lifecycle steps for TestGoalOutcome, each appended to b and returned.
+func created(b *build, id, goal string) *build {
+	return b.add(api.TicketCreated, api.TicketCreatedPayload{TicketID: id, GoalID: goal, Title: id, IdempotencyKey: id})
+}
+
+func running(b *build, id string) *build {
+	return b.add(api.TicketReady, api.TicketReadyPayload{TicketID: id}).
+		add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: id, Worker: "w-" + id}).
+		add(api.WorkStarted, api.WorkStartedPayload{TicketID: id, Worker: "w-" + id})
+}
+
+func proposed(b *build, id string) *build {
+	return running(b, id).
+		add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: id, Worker: "w-" + id, Commit: "cand-" + id})
+}
+
+func awaiting(b *build, id string) *build {
+	return proposed(b, id).
+		add(api.ApprovalRequested, api.ApprovalRequestedPayload{TicketID: id, Worker: "w-" + id})
+}
+
+func merged(b *build, id string) *build {
+	return proposed(b, id).
+		add(api.Merged, api.MergedPayload{TicketID: id, Worker: "w-" + id, Commit: "merged-" + id})
+}
+
+func failed(b *build, id string) *build {
+	return running(b, id).
+		add(api.TicketFailed, api.TicketFailedPayload{TicketID: id, Worker: "w-" + id, Reason: "gate failed"})
+}
+
+// decomposed runs parent and splits it into children, creating each child
+// under goal first, as the Scheduler does.
+func decomposed(b *build, parent, goal string, children ...string) *build {
+	running(b, parent)
+	for _, c := range children {
+		created(b, c, goal)
+	}
+	return b.add(api.TicketDecomposed, api.TicketDecomposedPayload{TicketID: parent, Children: children})
+}
+
+func TestGoalOutcome(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps func(b *build) *build // run after g1 (and g2) are submitted
+		goal  string
+		want  string
+	}{
+		{name: "no ticket yet", steps: func(b *build) *build { return b }, want: api.OutcomeQueued},
+		{name: "unknown goal", steps: func(b *build) *build { return b }, goal: "nope", want: ""},
+		{name: "ticket created, not yet ready", steps: func(b *build) *build { return created(b, "t1", "g1") }, want: api.OutcomeRunning},
+		{name: "ticket running", steps: func(b *build) *build { return running(created(b, "t1", "g1"), "t1") }, want: api.OutcomeRunning},
+		{name: "proposal in the merge queue", steps: func(b *build) *build { return proposed(created(b, "t1", "g1"), "t1") }, want: api.OutcomeRunning},
+		{name: "parked for approval", steps: func(b *build) *build { return awaiting(created(b, "t1", "g1"), "t1") }, want: api.OutcomeAwaitingApproval},
+		{name: "merged", steps: func(b *build) *build { return merged(created(b, "t1", "g1"), "t1") }, want: api.OutcomeMerged},
+		{name: "failed", steps: func(b *build) *build { return failed(created(b, "t1", "g1"), "t1") }, want: api.OutcomeFailed},
+		{
+			name: "only ticket rejected by a human",
+			steps: func(b *build) *build {
+				return awaiting(created(b, "t1", "g1"), "t1").
+					add(api.ApprovalDenied, api.ApprovalDeniedPayload{TicketID: "t1", By: "octocat"})
+			},
+			want: api.OutcomeFailed,
+		},
+		{
+			name: "approved, back in the merge queue",
+			steps: func(b *build) *build {
+				return awaiting(created(b, "t1", "g1"), "t1").
+					add(api.ApprovalGranted, api.ApprovalGrantedPayload{TicketID: "t1"})
+			},
+			want: api.OutcomeRunning,
+		},
+		{
+			name: "decomposed, every child merged",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return merged(merged(b, "t1/a"), "t1/b")
+			},
+			want: api.OutcomeMerged,
+		},
+		{
+			name: "decomposed, partial success is failed",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return failed(merged(b, "t1/a"), "t1/b")
+			},
+			want: api.OutcomeFailed,
+		},
+		{
+			name: "decomposed, one child merged and one still running",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return running(merged(b, "t1/a"), "t1/b")
+			},
+			want: api.OutcomeRunning,
+		},
+		{
+			name: "awaiting approval outranks a failed sibling",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return awaiting(failed(b, "t1/a"), "t1/b")
+			},
+			want: api.OutcomeAwaitingApproval,
+		},
+		{
+			name: "decomposition names a child not on the log",
+			steps: func(b *build) *build {
+				running(created(b, "t1", "g1"), "t1")
+				return b.add(api.TicketDecomposed, api.TicketDecomposedPayload{TicketID: "t1", Children: []string{"t1/ghost"}})
+			},
+			want: api.OutcomeRunning,
+		},
+		{
+			name: "budget tripped, work still in flight",
+			steps: func(b *build) *build {
+				return running(created(b, "t1", "g1"), "t1").
+					add(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{GoalID: "g1", SpentTokens: 10, Limit: 5})
+			},
+			want: api.OutcomeRunning,
+		},
+		{
+			name: "budget tripped, settled",
+			steps: func(b *build) *build {
+				return merged(created(b, "t1", "g1"), "t1").
+					add(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{GoalID: "g1", SpentTokens: 10, Limit: 5})
+			},
+			want: api.OutcomeFailed,
+		},
+		{
+			name: "another goal's failure does not leak",
+			steps: func(b *build) *build {
+				return failed(created(merged(created(b, "t1", "g1"), "t1"), "t2", "g2"), "t2")
+			},
+			want: api.OutcomeMerged,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := newBuild(t).
+				add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "one"}).
+				add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "two"})
+			goal := tt.goal
+			if goal == "" {
+				goal = "g1"
+			}
+			if got := tt.steps(b).fold().GoalOutcome(goal); got != tt.want {
+				t.Errorf("GoalOutcome(%s) = %q, want %q", goal, got, tt.want)
+			}
+		})
+	}
+}

@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
+	"math"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
 )
@@ -44,7 +50,13 @@ func (b *logBuilder) add(secs int, typ api.EventType, payload any) *logBuilder {
 // ledger writes the events to a fresh Event Log and returns it open.
 func (b *logBuilder) ledger() *ledger.Ledger {
 	b.t.Helper()
-	led, err := ledger.Open(filepath.Join(b.t.TempDir(), "events.jsonl"))
+	return b.writeTo(filepath.Join(b.t.TempDir(), "events.jsonl"))
+}
+
+// writeTo appends the events to the Event Log at path and returns it open.
+func (b *logBuilder) writeTo(path string) *ledger.Ledger {
+	b.t.Helper()
+	led, err := ledger.Open(path)
 	if err != nil {
 		b.t.Fatalf("open ledger: %v", err)
 	}
@@ -189,6 +201,308 @@ func TestStatusTextGolden(t *testing.T) {
 			}
 			if out != string(want) {
 				t.Errorf("aoa status output changed:\n--- got ---\n%s--- want (%s) ---\n%s", out, path, want)
+			}
+		})
+	}
+}
+
+// partialLog is a goal decomposed into two children, one merged and one failed:
+// partial success, which is a failed outcome that still lists the merged commit.
+func partialLog(t *testing.T) *logBuilder {
+	return newLog(t).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "split me", Source: "human"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl", GoalID: "g-1", Title: "Implement: split me", IdempotencyKey: "g-1:impl"}).
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl", Worker: "w1"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl/a", GoalID: "g-1", Title: "half a", IdempotencyKey: "g-1:a", Depth: 1}).
+		add(0, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl/b", GoalID: "g-1", Title: "half b", IdempotencyKey: "g-1:b", Depth: 1}).
+		add(0, api.TicketDecomposed, api.TicketDecomposedPayload{TicketID: "g-1-impl", Worker: "w1", Children: []string{"g-1-impl/a", "g-1-impl/b"}}).
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl/a", Worker: "w2"}).
+		add(1, api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "g-1-impl/a", Worker: "w2", Commit: "cand-a"}).
+		add(1, api.Merged, api.MergedPayload{TicketID: "g-1-impl/a", Worker: "w2", Commit: "aaa1111"}).
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl/b", Worker: "w3"}).
+		add(1, api.TicketFailed, api.TicketFailedPayload{TicketID: "g-1-impl/b", Worker: "w3", Reason: "gate: build failed", Worktree: "/ws/handoff/b"})
+}
+
+// rejectedLog is a goal whose only task a human rejected at the approval gate.
+func rejectedLog(t *testing.T) *logBuilder {
+	return newLog(t).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "risky change", Source: "slack", By: "alice"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl", GoalID: "g-1", Title: "Implement: risky change", IdempotencyKey: "g-1:impl"}).
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl", Worker: "w1"}).
+		add(1, api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "g-1-impl", Worker: "w1", Commit: "cand-1"}).
+		add(1, api.ApprovalRequested, api.ApprovalRequestedPayload{TicketID: "g-1-impl", Worker: "w1", Commit: "cand-1"}).
+		add(5, api.ApprovalDenied, api.ApprovalDeniedPayload{TicketID: "g-1-impl", By: "bob", Reason: "not now"})
+}
+
+// queuedLog is a goal just submitted: the Scheduler has not created its task.
+func queuedLog(t *testing.T) *logBuilder {
+	return newLog(t).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "later", Source: "human"})
+}
+
+// goalWant is what TestStatusViewProjection expects of one GoalView; Tickets
+// lists its task ids in order.
+type goalWant struct {
+	ID, Outcome, Source, Ref, By string
+	Tokens                       int
+	CostUSD                      float64
+	Amendments, Commits, Tickets []string
+	Graph                        api.GraphView
+}
+
+func TestStatusViewProjection(t *testing.T) {
+	tests := []struct {
+		name        string
+		log         func(*testing.T) *logBuilder
+		pricing     map[string]float64
+		wantSettled bool
+		wantGoals   []goalWant
+		wantTickets map[string]api.TicketView // spot checks, compared whole
+		wantTotals  api.StatusTotals
+		wantQueue   api.MergeQueueView
+	}{
+		{
+			name: "empty workspace", log: newLog, wantSettled: true,
+		},
+		{
+			name: "mid-run, every section", log: mixedLog, pricing: fixturePricing,
+			wantGoals: []goalWant{ // submission order, not id order
+				{ID: "g-merged", Outcome: api.OutcomeMerged, Source: "human", Tokens: 1200, CostUSD: 1200 * 1.5 / 1e6,
+					Commits: []string{"c0ffee1"}, Tickets: []string{"g-merged-impl"}},
+				{ID: "g-split", Outcome: api.OutcomeMerged, Source: "linear", Ref: "https://linear.app/x/ENG-7", By: "octocat",
+					Tokens: 1300, CostUSD: 700*15/1e6 + 600*1.5/1e6, Amendments: []string{"prefer table-driven tests"},
+					Commits: []string{"b0b0b02", "a11ce01"}, Tickets: []string{"g-split-impl", "g-split-impl/b", "g-split-impl/a"},
+					Graph: api.GraphView{MaxDepth: 1, MaxFanOut: 2}},
+				{ID: "g-failed", Outcome: api.OutcomeFailed, Source: "github", Ref: "https://github.com/o/r/issues/3",
+					Tokens: 1200, CostUSD: 1200 * 1.5 / 1e6, Tickets: []string{"g-failed-impl"}},
+				{ID: "g-await", Outcome: api.OutcomeAwaitingApproval, Source: "human", Tokens: 250, CostUSD: 250 * 1.5 / 1e6,
+					Tickets: []string{"g-await-impl"}},
+				{ID: "g-queued", Outcome: api.OutcomeQueued, Source: "human"},
+			},
+			wantTickets: map[string]api.TicketView{
+				"g-failed-impl": {ID: "g-failed-impl", Title: "Implement: fix the flaky test", Status: "failed", Attempts: 2, Tokens: 1200,
+					FailReason: "gate: go test ./... failed (2 attempts)", Worktree: "/ws/.aoa/handoff/g-failed-impl"},
+				"g-await-impl": {ID: "g-await-impl", Title: "Implement: bump the version", Status: "awaiting", Attempts: 1, Tokens: 250,
+					Commit: "c-prop-5"},
+				"g-split-impl": {ID: "g-split-impl", Title: "Implement: build the parser", Status: "decomposed", Attempts: 1, Tokens: 300},
+				"g-split-impl/a": {ID: "g-split-impl/a", Title: "write the grammar", Status: "merged", Attempts: 1, Tokens: 400, Depth: 1,
+					Commit: "a11ce01"},
+			},
+			wantTotals: api.StatusTotals{Tokens: 3950, CostUSD: 3250*1.5/1e6 + 700*15/1e6, WallSeconds: 41,
+				Goals: 5, Tickets: 6, Merged: 3, Failed: 1, Awaiting: 1},
+			wantQueue: api.MergeQueueView{MaxDepth: 2, WaitMeanSeconds: 2.6, WaitMaxSeconds: 4},
+		},
+		{
+			name: "decomposed, partial success", log: partialLog, wantSettled: true,
+			wantGoals: []goalWant{{ID: "g-1", Outcome: api.OutcomeFailed, Source: "human", Commits: []string{"aaa1111"},
+				Tickets: []string{"g-1-impl", "g-1-impl/a", "g-1-impl/b"}, Graph: api.GraphView{MaxDepth: 1, MaxFanOut: 2}}},
+			wantTickets: map[string]api.TicketView{
+				"g-1-impl/b": {ID: "g-1-impl/b", Title: "half b", Status: "failed", Attempts: 1, Depth: 1,
+					FailReason: "gate: build failed", Worktree: "/ws/handoff/b"},
+			},
+			wantTotals: api.StatusTotals{WallSeconds: 8, Goals: 1, Tickets: 3, Merged: 1, Failed: 1},
+			wantQueue:  api.MergeQueueView{MaxDepth: 1, WaitMeanSeconds: 1, WaitMaxSeconds: 1},
+		},
+		{
+			name: "only task rejected by a human", log: rejectedLog, wantSettled: true,
+			wantGoals: []goalWant{{ID: "g-1", Outcome: api.OutcomeFailed, Source: "slack", By: "alice", Tickets: []string{"g-1-impl"}}},
+			wantTickets: map[string]api.TicketView{
+				"g-1-impl": {ID: "g-1-impl", Title: "Implement: risky change", Status: "failed", Attempts: 1, Rejected: true},
+			},
+			wantTotals: api.StatusTotals{WallSeconds: 9, Goals: 1, Tickets: 1, Failed: 1},
+			wantQueue:  api.MergeQueueView{MaxDepth: 1, WaitMeanSeconds: 1, WaitMaxSeconds: 1},
+		},
+		{
+			name:       "queued goal is not settled",
+			log:        queuedLog,
+			wantGoals:  []goalWant{{ID: "g-1", Outcome: api.OutcomeQueued, Source: "human"}},
+			wantTotals: api.StatusTotals{Goals: 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			events := tt.log(t).events
+			v, err := statusView(events, tt.pricing)
+			if err != nil {
+				t.Fatalf("statusView: %v", err)
+			}
+			if v.Schema != api.ContractVersion {
+				t.Errorf("schema = %d, want %d", v.Schema, api.ContractVersion)
+			}
+			if v.LastSeq != len(events) {
+				t.Errorf("last_seq = %d, want %d", v.LastSeq, len(events))
+			}
+			submittedAt := map[string]time.Time{}
+			for _, e := range events {
+				var p api.GoalSubmittedPayload
+				if e.Type == api.GoalSubmitted && e.DecodePayload(&p) == nil {
+					submittedAt[p.GoalID] = e.Timestamp
+				}
+			}
+			if v.Settled != tt.wantSettled {
+				t.Errorf("settled = %v, want %v", v.Settled, tt.wantSettled)
+			}
+			if v.Goals == nil {
+				t.Error("goals is nil; an empty workspace must encode as [], not null")
+			}
+			if len(v.Goals) != len(tt.wantGoals) {
+				t.Fatalf("got %d goals, want %d: %+v", len(v.Goals), len(tt.wantGoals), v.Goals)
+			}
+			var goalTokens int
+			var goalCost float64
+			for i, want := range tt.wantGoals {
+				g := v.Goals[i]
+				got := goalWant{ID: g.ID, Outcome: g.Outcome, Source: g.Source, Ref: g.Ref, By: g.By, Tokens: g.Tokens,
+					Amendments: g.Amendments, Commits: g.Commits, Graph: g.Graph}
+				for _, tv := range g.Tickets {
+					got.Tickets = append(got.Tickets, tv.ID)
+				}
+				if g.Tickets == nil {
+					t.Errorf("goal %s: tickets is nil, want [] when empty", g.ID)
+				}
+				if !floatNear(g.CostUSD, want.CostUSD) {
+					t.Errorf("goal %s: cost_usd = %v, want %v", g.ID, g.CostUSD, want.CostUSD)
+				}
+				want.CostUSD = 0 // compared above, within float tolerance
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("goal %d:\n got  %+v\n want %+v", i, got, want)
+				}
+				if want := submittedAt[g.ID]; !g.SubmittedAt.Equal(want) {
+					t.Errorf("goal %s: submitted_at = %v, want %v", g.ID, g.SubmittedAt, want)
+				}
+				goalTokens += g.Tokens
+				goalCost += g.CostUSD
+				for _, tv := range g.Tickets {
+					if want, ok := tt.wantTickets[tv.ID]; ok && tv != want {
+						t.Errorf("ticket %s:\n got  %+v\n want %+v", tv.ID, tv, want)
+					}
+				}
+			}
+			// One accounting: the goals add up to the totals.
+			if goalTokens != v.Totals.Tokens || !floatNear(goalCost, v.Totals.CostUSD) {
+				t.Errorf("goals sum to %d tokens / $%v, totals say %d / $%v", goalTokens, goalCost, v.Totals.Tokens, v.Totals.CostUSD)
+			}
+			if !floatNear(v.Totals.CostUSD, tt.wantTotals.CostUSD) {
+				t.Errorf("totals.cost_usd = %v, want %v", v.Totals.CostUSD, tt.wantTotals.CostUSD)
+			}
+			gotTotals, wantTotals := v.Totals, tt.wantTotals
+			gotTotals.CostUSD, wantTotals.CostUSD = 0, 0
+			if gotTotals != wantTotals {
+				t.Errorf("totals:\n got  %+v\n want %+v", gotTotals, wantTotals)
+			}
+			if !floatNear(v.MergeQueue.WaitMeanSeconds, tt.wantQueue.WaitMeanSeconds) ||
+				v.MergeQueue.MaxDepth != tt.wantQueue.MaxDepth || v.MergeQueue.WaitMaxSeconds != tt.wantQueue.WaitMaxSeconds {
+				t.Errorf("merge_queue = %+v, want %+v", v.MergeQueue, tt.wantQueue)
+			}
+		})
+	}
+}
+
+// floatNear reports whether two dollar or second amounts agree to well below
+// anything status prints.
+func floatNear(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+// The text output keeps its own, older notion of settled — no task in flight —
+// so a just-submitted goal still prints "all work settled" and ends --watch,
+// while the JSON view reports it unsettled until it reaches an outcome.
+func TestQueuedGoalTextStillSaysSettled(t *testing.T) {
+	var settled bool
+	var err error
+	out := captureStdout(t, func() { settled, _, err = printStatus(queuedLog(t).ledger(), nil) })
+	if err != nil {
+		t.Fatalf("printStatus: %v", err)
+	}
+	if !settled || !strings.HasSuffix(out, "all work settled\n") {
+		t.Errorf("printStatus settled = %v, output:\n%s", settled, out)
+	}
+}
+
+// statusWorkspace is a workspace whose Event Log holds b's events and whose
+// config prices the fixture models.
+func statusWorkspace(t *testing.T, b *logBuilder) (root string, events []api.Event) {
+	t.Helper()
+	root, ledgerPath := bareWorkspace(t)
+	cfg := "repo = \"./repo\"\n\n[pricing]\nm-small = 1.5\nm-large = 15\n"
+	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	events, err := b.writeTo(ledgerPath).Read()
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	return root, events
+}
+
+// A program reads `aoa status --json` with one decode: exactly one line, one
+// JSON value, with nothing else on stdout, carrying the same view statusView
+// builds — priced from the workspace config.
+func TestStatusJSONStdoutIsOneJSONValue(t *testing.T) {
+	tests := []struct {
+		name string
+		log  func(*testing.T) *logBuilder
+	}{
+		{name: "empty workspace", log: newLog},
+		{name: "mid-run", log: mixedLog},
+		{name: "partial success", log: partialLog},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root, events := statusWorkspace(t, tt.log(t))
+			var err error
+			out := captureStdout(t, func() { err = cmdStatus([]string{"--path", root, "--json"}) })
+			if err != nil {
+				t.Fatalf("aoa status --json: %v", err)
+			}
+			var got api.StatusView
+			decodeJSONLine(t, out, &got)
+			want, err := statusView(events, fixturePricing)
+			if err != nil {
+				t.Fatalf("statusView: %v", err)
+			}
+			wantJSON, err := json.Marshal(want)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			gotJSON, err := json.Marshal(got)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !bytes.Equal(gotJSON, wantJSON) {
+				t.Errorf("stdout view differs from statusView:\n got  %s\n want %s", gotJSON, wantJSON)
+			}
+			if !strings.Contains(out, `"goals":[`) {
+				t.Errorf("goals must be a JSON array, never null: %s", out)
+			}
+		})
+	}
+}
+
+// --json is one snapshot. Streaming belongs to `aoa events --follow`, so asking
+// for both is refused up front, whichever order the flags come in, and nothing
+// is printed. The log is settled, so were the pair accepted, --watch would
+// render once and return rather than hang the test.
+func TestStatusJSONRejectsWatch(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "json then watch", args: []string{"--json", "--watch"}},
+		{name: "watch then json", args: []string{"--watch", "--json"}},
+		{name: "with an interval", args: []string{"--json", "--watch", "--interval", "1s"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root, _ := statusWorkspace(t, settledLog(t))
+			var err error
+			out := captureStdout(t, func() { err = cmdStatus(append([]string{"--path", root}, tt.args...)) })
+			if err == nil {
+				t.Fatalf("aoa status %v succeeded; want a usage error", tt.args)
+			}
+			if !strings.Contains(err.Error(), "--watch") || !strings.Contains(err.Error(), "events") {
+				t.Errorf("error %q should name --watch and point at aoa events", err)
+			}
+			if out != "" {
+				t.Errorf("printed %q before refusing", out)
 			}
 		})
 	}

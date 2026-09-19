@@ -6,10 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
-// TestContractWireShape pins the --json output of the write verbs to golden
-// files. Front doors parse these bytes: a renamed field, a changed tag or a
+// TestContractWireShape pins the --json output of the write verbs and of
+// `aoa status` to golden files. Front doors parse these bytes: a renamed field, a changed tag or a
 // dropped omitempty here is a breaking change, and must fail a test rather than
 // ship. Values are fully populated so every field appears on the wire. If this
 // fails because a field was deliberately renamed or removed, ContractVersion
@@ -37,6 +38,34 @@ func TestContractWireShape(t *testing.T) {
 				Seq: 20, AlreadyDecided: true,
 			},
 			golden: "decision_result.json",
+		},
+		{
+			name: "StatusView",
+			value: StatusView{
+				Schema: ContractVersion, LastSeq: 42, Settled: true,
+				Goals: []GoalView{{
+					ID: "g-1a2b3c4d", Text: "add a greeting", Source: "linear",
+					Ref: "https://linear.app/x/ENG-1", By: "octocat",
+					SubmittedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+					Outcome:     OutcomeFailed, BudgetExceeded: true, Tokens: 3000, CostUSD: 0.0125,
+					Amendments: []string{"prefer table-driven tests"},
+					Commits:    []string{"c0ffee1"},
+					Graph:      GraphView{MaxDepth: 1, MaxFanOut: 2},
+					Tickets: []TicketView{
+						{ID: "g-1a2b3c4d-impl/a", Title: "write the lexer", Status: "merged", Attempts: 1, Tokens: 1000, Depth: 1, Commit: "c0ffee1"},
+						{
+							ID: "g-1a2b3c4d-impl/b", Title: "write the grammar", Status: "failed", Attempts: 2, Tokens: 2000, Depth: 1,
+							FailReason: "rejected by a human", Worktree: "/ws/.aoa/handoff/g-1a2b3c4d-impl-b", Rejected: true,
+						},
+					},
+				}},
+				Totals: StatusTotals{
+					Tokens: 3000, CostUSD: 0.0125, WallSeconds: 61.5,
+					Goals: 1, Tickets: 3, Merged: 1, Failed: 1, Awaiting: 0,
+				},
+				MergeQueue: MergeQueueView{MaxDepth: 2, WaitMeanSeconds: 2.5, WaitMaxSeconds: 4},
+			},
+			golden: "status_view.json",
 		},
 	}
 	for _, tc := range cases {

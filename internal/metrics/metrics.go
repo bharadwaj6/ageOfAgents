@@ -6,6 +6,8 @@
 package metrics
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"time"
 
@@ -54,23 +56,29 @@ type TicketCost struct {
 	DurationSeconds float64 `json:"duration_seconds"` // first event mentioning the ticket → its terminal event
 }
 
-// GoalCost is the per-goal cost and latency breakdown.
+// GoalCost is the per-goal cost and latency breakdown. TokensByModel splits
+// Tokens by the model that spent them, so a goal can be priced exactly as the
+// run is (see [USD]); tokens charged without a model are in Tokens only.
 type GoalCost struct {
-	GoalID          string  `json:"goal_id"`
-	Tokens          int     `json:"tokens"`
-	Merged          int     `json:"merged"`
-	Failed          int     `json:"failed"`
-	DurationSeconds float64 `json:"duration_seconds"`
+	GoalID          string         `json:"goal_id"`
+	Tokens          int            `json:"tokens"`
+	TokensByModel   map[string]int `json:"tokens_by_model,omitempty"`
+	Merged          int            `json:"merged"`
+	Failed          int            `json:"failed"`
+	DurationSeconds float64        `json:"duration_seconds"`
 }
 
 // USD converts a per-model token tally into a dollar cost using a price map of
 // USD per *million* tokens. Models absent from the price map contribute 0, so an
 // unpriced run reports $0 rather than a wrong number. Pure helper: pricing data
-// stays in config, the arithmetic stays here.
+// stays in config, the arithmetic stays here. Models are summed in name order:
+// floating-point addition is not associative, and a cost that differed in its
+// last digit from one call to the next would make `aoa status --json` differ
+// between two reads of the same log.
 func USD(tokensByModel map[string]int, pricePerMTok map[string]float64) float64 {
 	var total float64
-	for model, toks := range tokensByModel {
-		total += float64(toks) / 1e6 * pricePerMTok[model]
+	for _, model := range slices.Sorted(maps.Keys(tokensByModel)) {
+		total += float64(tokensByModel[model]) / 1e6 * pricePerMTok[model]
 	}
 	return total
 }
@@ -108,11 +116,12 @@ func Compute(events []api.Event) Metrics {
 		attemptsSum, attemptsCount       int
 		firstTS, lastTS                  time.Time
 		// per-ticket / per-model breakdown (cost & latency)
-		tokensByTicket  = map[string]int{}
-		modelByTicket   = map[string]string{}
-		tokensByModel   = map[string]int{}
-		firstTSByTicket = map[string]time.Time{}
-		lastTSByTicket  = map[string]time.Time{}
+		tokensByTicket      = map[string]int{}
+		modelByTicket       = map[string]string{}
+		tokensByModel       = map[string]int{}
+		tokensByTicketModel = map[string]map[string]int{}
+		firstTSByTicket     = map[string]time.Time{}
+		lastTSByTicket      = map[string]time.Time{}
 		// merge-queue instrumentation: depth (concurrent waiters) and wait time
 		// (ProposalSubmitted → resolution), all from the log.
 		inQueue    = map[string]bool{}
@@ -132,6 +141,10 @@ func Compute(events []api.Event) Metrics {
 			modelByTicket[id] = model
 			if tokens > 0 {
 				tokensByModel[model] += tokens
+				if tokensByTicketModel[id] == nil {
+					tokensByTicketModel[id] = map[string]int{}
+				}
+				tokensByTicketModel[id][model] += tokens
 			}
 		}
 	}
@@ -283,14 +296,14 @@ func Compute(events []api.Event) Metrics {
 	if len(tokensByModel) > 0 {
 		m.TokensByModel = tokensByModel
 	}
-	m.PerTicket, m.PerGoal = breakdown(s, tokensByTicket, modelByTicket, firstTSByTicket, lastTSByTicket)
+	m.PerTicket, m.PerGoal = breakdown(s, tokensByTicket, modelByTicket, tokensByTicketModel, firstTSByTicket, lastTSByTicket)
 	return m
 }
 
 // breakdown builds the per-ticket and per-goal cost & latency views from the
 // folded state plus the per-ticket token/timestamp tallies gathered in Compute.
 // Sorted by ID for deterministic output.
-func breakdown(s *state.State, tokensByTicket map[string]int, modelByTicket map[string]string, firstTS, lastTS map[string]time.Time) ([]TicketCost, []GoalCost) {
+func breakdown(s *state.State, tokensByTicket map[string]int, modelByTicket map[string]string, tokensByTicketModel map[string]map[string]int, firstTS, lastTS map[string]time.Time) ([]TicketCost, []GoalCost) {
 	ids := make([]string, 0, len(s.Tickets))
 	for id := range s.Tickets {
 		ids = append(ids, id)
@@ -299,6 +312,7 @@ func breakdown(s *state.State, tokensByTicket map[string]int, modelByTicket map[
 
 	type gacc struct {
 		tokens, merged, failed int
+		byModel                map[string]int
 		first, last            time.Time
 	}
 	goals := map[string]*gacc{}
@@ -323,6 +337,12 @@ func breakdown(s *state.State, tokensByTicket map[string]int, modelByTicket map[
 			goals[t.GoalID] = g
 		}
 		g.tokens += tc.Tokens
+		for model, n := range tokensByTicketModel[id] {
+			if g.byModel == nil {
+				g.byModel = map[string]int{}
+			}
+			g.byModel[model] += n
+		}
 		switch t.Status {
 		case state.StatusMerged:
 			g.merged++
@@ -348,6 +368,7 @@ func breakdown(s *state.State, tokensByTicket map[string]int, modelByTicket map[
 		perGoal = append(perGoal, GoalCost{
 			GoalID:          gid,
 			Tokens:          g.tokens,
+			TokensByModel:   g.byModel,
 			Merged:          g.merged,
 			Failed:          g.failed,
 			DurationSeconds: span(g.first, g.last),

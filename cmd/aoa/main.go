@@ -17,7 +17,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -762,11 +761,19 @@ func cmdOtel(args []string) error {
 
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	describe(fs, "aoa status \u2014 show goals, tasks, per-ticket tokens, run cost, and any\n\"needs human\" handoff left behind by a terminal failure.", "aoa status --path ./workspace --watch")
+	describe(fs, "aoa status \u2014 show goals, tasks, per-ticket tokens, run cost, and any\n\"needs human\" handoff left behind by a terminal failure.\n\n"+
+		"For programs: --json prints one snapshot as a single JSON line (pkg/api\nStatusView): every goal, where it came from, and its outcome.",
+		"aoa status --path ./workspace --watch")
 	path := fs.String("path", ".", "workspace root")
 	watch := fs.Bool("watch", false, "re-render until all work settles (poll the Event Log)")
 	interval := fs.Duration("interval", 2*time.Second, "refresh interval for --watch")
-	_ = fs.Parse(args)
+	asJSON := fs.Bool("json", false, "print one snapshot as a single JSON line (pkg/api StatusView)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *asJSON && *watch {
+		return fmt.Errorf("--json and --watch cannot be combined: --json prints one snapshot; to follow changes, stream the log with `aoa events --json --since <last_seq> --follow`")
+	}
 	ws, err := openWorkspace(*path)
 	if err != nil {
 		return err
@@ -780,6 +787,17 @@ func cmdStatus(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		events, err := led.Read()
+		if err != nil {
+			return err
+		}
+		v, err := statusView(events, cfg.Pricing)
+		if err != nil {
+			return err
+		}
+		return printJSON(v)
+	}
 	if !*watch {
 		_, _, err = printStatus(led, cfg.Pricing)
 		return err
@@ -1592,95 +1610,6 @@ func buildBackend(cfg config.Config) (agent.Backend, error) {
 }
 
 // --- presentation ---------------------------------------------------------
-
-// printStatus renders the run's live state and reports whether all work has
-// settled (the signal --watch uses to stop polling).
-func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, failed int, err error) {
-	events, err := led.Read()
-	if err != nil {
-		return false, 0, err
-	}
-	s, err := state.Fold(events)
-	if err != nil {
-		return false, 0, err
-	}
-	if len(s.Goals) == 0 {
-		fmt.Println("no goals submitted")
-		return true, 0, nil
-	}
-	for _, t := range s.Tickets {
-		if t.Status == state.StatusFailed {
-			failed++
-		}
-	}
-
-	m := metrics.Compute(events)
-	tokensByTicket := make(map[string]int, len(m.PerTicket))
-	for _, tc := range m.PerTicket {
-		tokensByTicket[tc.TicketID] = tc.Tokens
-	}
-
-	goalIDs := make([]string, 0, len(s.Goals))
-	for id := range s.Goals {
-		goalIDs = append(goalIDs, id)
-	}
-	sort.Strings(goalIDs)
-
-	for _, gid := range goalIDs {
-		fmt.Printf("goal %s: %s\n", gid, s.Goals[gid].Text)
-	}
-	for _, gs := range metrics.GraphShapes(s) {
-		fmt.Printf("  graph %s: tickets=%d depth=%d fan-out=%d\n",
-			gs.GoalID, gs.Tickets, gs.MaxDepth, gs.MaxFanOut)
-	}
-	fmt.Println()
-
-	ticketIDs := make([]string, 0, len(s.Tickets))
-	for id := range s.Tickets {
-		ticketIDs = append(ticketIDs, id)
-	}
-	sort.Strings(ticketIDs)
-
-	var needsHuman []*state.Ticket
-	for _, id := range ticketIDs {
-		t := s.Tickets[id]
-		fmt.Printf("  [%-8s] %s  (attempts=%d tokens=%d)\n", t.Status, t.ID, t.Attempts, tokensByTicket[id])
-		if t.Status == state.StatusFailed {
-			needsHuman = append(needsHuman, t)
-		}
-	}
-
-	// Warm handoff: list terminally-failed tickets with why they failed and the
-	// preserved worktree to take over (when one was kept).
-	if len(needsHuman) > 0 {
-		fmt.Println("\nneeds human — failed tickets:")
-		for _, t := range needsHuman {
-			reason := t.LastFailReason
-			if reason == "" {
-				reason = "(no reason recorded)"
-			}
-			fmt.Printf("  %s — %s\n", t.ID, reason)
-			if t.Worktree != "" {
-				fmt.Printf("      take over: cd %s\n", t.Worktree)
-			}
-		}
-	}
-
-	fmt.Printf("\ntotal: tokens=%d  wall=%.1fs", m.TokensTotal, m.DurationSeconds)
-	if cost := metrics.USD(m.TokensByModel, pricing); cost > 0 {
-		fmt.Printf("  cost=$%.4f", cost)
-	}
-	fmt.Println()
-	if m.MergeQueueMaxDepth > 0 {
-		fmt.Printf("merge queue: max-depth=%d  wait-mean=%.1fs  wait-max=%.1fs\n",
-			m.MergeQueueMaxDepth, m.MergeQueueWaitMean, m.MergeQueueWaitMax)
-	}
-	settled = s.Settled()
-	if settled {
-		fmt.Println("all work settled")
-	}
-	return settled, failed, nil
-}
 
 func formatEvent(e api.Event) string {
 	return fmt.Sprintf("#%-4d %-19s %s", e.Seq, e.Type, summarize(e))

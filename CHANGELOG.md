@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format follows
 - **Retrying a decision is safe.** Approving an approved ticket, or rejecting a rejected one, succeeds
   with `already_decided` and appends nothing; contradicting a decision is still an error.
 - `aoa goal --key K` passes an idempotency key: submitting it again returns the Goal it already names.
+- **`aoa status --json`: one snapshot a program can read.** It prints one line of JSON (`StatusView` in
+  `pkg/api/contract.go`) with every goal, where it came from, its tasks, tokens, cost and merged commits,
+  and an `outcome` of `queued`, `running`, `awaiting_approval`, `merged` or `failed`. The text `status`
+  is now rendered from the same projection, so the two cannot disagree. A golden-file test pins the text
+  output unchanged. Per-goal cost is priced by model, like the run total.
 - **The Event Log as a resumable stream: `aoa events --json --since N --follow`.** A program driving
   `aoa` can now consume the log without parsing human text. `--json` prints each event's Event Log line
   byte for byte — copied, not re-encoded, so an envelope field a newer `aoa` adds survives an older
