@@ -35,6 +35,12 @@ func TestNewEventRoundTrip(t *testing.T) {
 			decode:  func() any { return &ApprovalGrantedPayload{} },
 		},
 		{
+			name:    "GoalCancelled",
+			typ:     GoalCancelled,
+			payload: GoalCancelledPayload{GoalID: "g1", By: "linear-bot", Reason: "issue closed"},
+			decode:  func() any { return &GoalCancelledPayload{} },
+		},
+		{
 			name:    "TicketCreated",
 			typ:     TicketCreated,
 			payload: TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", DependsOn: []string{"t0"}, IdempotencyKey: "k1", CreatedBy: "alice"},

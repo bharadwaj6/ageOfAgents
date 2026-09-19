@@ -724,6 +724,25 @@ func TestGoalOutcome(t *testing.T) {
 			},
 			want: api.OutcomeMerged,
 		},
+		{
+			name:  "cancelled before any ticket",
+			steps: func(b *build) *build { return b.add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g1"}) },
+			want:  api.OutcomeCancelled,
+		},
+		{
+			name: "cancelled while an attempt is still in flight",
+			steps: func(b *build) *build {
+				return running(created(b, "t1", "g1"), "t1").add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g1"})
+			},
+			want: api.OutcomeCancelled,
+		},
+		{
+			name: "another goal's cancel does not leak",
+			steps: func(b *build) *build {
+				return merged(created(b, "t1", "g1"), "t1").add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g2"})
+			},
+			want: api.OutcomeMerged,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -738,5 +757,36 @@ func TestGoalOutcome(t *testing.T) {
 				t.Errorf("GoalOutcome(%s) = %q, want %q", goal, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGoalCancelledIsRecorded(t *testing.T) {
+	s := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build"}).
+		add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g1", By: "octocat", Reason: "issue closed"}).
+		add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g1"}).
+		add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "nope"}).
+		fold()
+	g := s.Goals["g1"]
+	if !g.Cancelled {
+		t.Fatal("Cancelled should be true after a GoalCancelled event")
+	}
+	if g.CancelledSeq != 2 {
+		t.Errorf("CancelledSeq = %d, want 2 (the first cancel)", g.CancelledSeq)
+	}
+	if s.Goals["nope"] != nil {
+		t.Error("cancelling an unknown goal must not create it")
+	}
+}
+
+// A cancel fails a proposal parked for approval, which no other TicketFailed
+// ever had to: the parked ticket must end failed, not stay awaiting.
+func TestTicketFailedEndsAParkedProposal(t *testing.T) {
+	b := newBuild(t).add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "one"})
+	s := awaiting(created(b, "t1", "g1"), "t1").
+		add(api.TicketFailed, api.TicketFailedPayload{TicketID: "t1", Worker: "w-t1", Reason: "goal cancelled"}).
+		fold()
+	if got := s.Tickets["t1"].Status; got != StatusFailed {
+		t.Errorf("status = %s, want failed", got)
 	}
 }

@@ -12,6 +12,8 @@
 //   - I4 no step repetition   -> NoDuplicateMergedKey
 //   - I5 DAG acyclic          -> AcyclicGraph
 //   - I6 liveness             -> Settled (asserted on completed runs)
+//
+// CancelHonored has no litmus row: it is the promise `aoa cancel` makes.
 package invariant
 
 import (
@@ -42,6 +44,7 @@ func Check(events []api.Event) []Violation {
 	vs = append(vs, AcyclicGraph(events)...)
 	vs = append(vs, ReplayDeterministicAndTotal(events)...)
 	vs = append(vs, ApprovalGate(events)...)
+	vs = append(vs, CancelHonored(events)...)
 	return vs
 }
 
@@ -165,6 +168,41 @@ func ApprovalGate(events []api.Event) []Violation {
 	return vs
 }
 
+// CancelHonored asserts a cancelled Goal's work does not land: nothing proposed
+// or approved after the Goal's GoalCancelled may merge. A merge of a proposal
+// made (and, when parked, approved) before the cancel is allowed, because a
+// cancel that arrives while that merge is already executing cannot stop it.
+func CancelHonored(events []api.Event) []Violation {
+	var vs []Violation
+	goalOf := map[string]string{}    // ticket id -> goal id
+	cancelledAt := map[string]int{}  // goal id -> seq of its first GoalCancelled
+	lastProposal := map[string]int{} // ticket id -> seq of its latest proposal or approval
+	for _, e := range events {
+		switch e.Type {
+		case api.TicketCreated:
+			var p api.TicketCreatedPayload
+			if e.DecodePayload(&p) == nil {
+				goalOf[p.TicketID] = p.GoalID
+			}
+		case api.GoalCancelled:
+			var p api.GoalCancelledPayload
+			if e.DecodePayload(&p) == nil && cancelledAt[p.GoalID] == 0 {
+				cancelledAt[p.GoalID] = e.Seq
+			}
+		case api.ProposalSubmitted, api.ApprovalGranted:
+			lastProposal[e.TicketID()] = e.Seq
+		case api.Merged:
+			id := e.TicketID()
+			if c := cancelledAt[goalOf[id]]; c > 0 && lastProposal[id] > c {
+				vs = append(vs, Violation{"CancelHonored",
+					fmt.Sprintf("ticket %q merged (seq %d) from a proposal or approval (seq %d) after goal %q was cancelled (seq %d)",
+						id, e.Seq, lastProposal[id], goalOf[id], c)})
+			}
+		}
+	}
+	return vs
+}
+
 // AcyclicGraph asserts the task graph is a DAG at the end of the history — a
 // cycle would deadlock dependency readiness (the emergent-graph guard, ADR 006).
 func AcyclicGraph(events []api.Event) []Violation {
@@ -198,15 +236,19 @@ func ReplayDeterministicAndTotal(events []api.Event) []Violation {
 }
 
 // Settled asserts the run reached a terminal state: every goal has at least one
-// ticket and every ticket is terminal (merged/failed/decomposed). This is the
-// liveness property and is asserted on histories from completed runs.
+// ticket — unless it was cancelled, possibly before it got one — and every
+// ticket is terminal (merged/failed/decomposed). This is the liveness property
+// and is asserted on histories from completed runs.
 func Settled(events []api.Event) []Violation {
 	s, err := state.Fold(events)
 	if err != nil {
 		return []Violation{{"Settled", "fold failed: " + err.Error()}}
 	}
 	var vs []Violation
-	for id := range s.Goals {
+	for id, g := range s.Goals {
+		if g.Cancelled {
+			continue
+		}
 		has := false
 		for _, t := range s.Tickets {
 			if t.GoalID == id {

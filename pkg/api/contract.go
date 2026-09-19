@@ -50,6 +50,17 @@ type DecisionResult struct {
 	AlreadyDecided bool   `json:"already_decided"`
 }
 
+// CancelResult is what `aoa cancel --json` prints. Cancelling a Goal already
+// cancelled appends nothing: AlreadyCancelled is true and Seq is the sequence
+// number of the original GoalCancelled. Otherwise Seq is the event just
+// appended.
+type CancelResult struct {
+	Schema           int    `json:"schema"`
+	GoalID           string `json:"goal_id"`
+	Seq              int    `json:"seq"`
+	AlreadyCancelled bool   `json:"already_cancelled"`
+}
+
 // Goal outcomes reported in [GoalView]. A Goal is queued until the Scheduler
 // has created its first task, running while any of its tasks is still in
 // flight, and awaiting_approval while any of them is parked for a human. Once
@@ -61,12 +72,18 @@ type DecisionResult struct {
 // and the commits that did merge are still listed in [GoalView].Commits. A task
 // a human rejected is a failed task, and a Goal whose token or cost budget
 // tripped is failed once it settles, whatever merged before the trip.
+//
+// Cancelled overrides every other outcome from the moment the Goal is
+// cancelled: none of its work will land from then on, even while an attempt
+// already in flight is still finishing. Work that merged before the cancel
+// stays merged and is still listed in [GoalView].Commits.
 const (
 	OutcomeQueued           = "queued"
 	OutcomeRunning          = "running"
 	OutcomeAwaitingApproval = "awaiting_approval"
 	OutcomeMerged           = "merged"
 	OutcomeFailed           = "failed"
+	OutcomeCancelled        = "cancelled"
 )
 
 // StatusView is what `aoa status --json` prints: a snapshot of every Goal on
@@ -77,8 +94,9 @@ const (
 // `aoa events --json --since <last_seq> --follow`.
 //
 // Settled is true when nothing more will happen without new input: every Goal
-// is merged or failed. A queued Goal or a task awaiting approval is not
-// settled. An empty workspace is settled, with an empty Goals list.
+// is merged or failed, or cancelled with none of its tasks still in flight. A
+// queued Goal or a task awaiting approval is not settled. An empty workspace is
+// settled, with an empty Goals list.
 //
 // Goals are listed in submission order (the seq of their GoalSubmitted event).
 type StatusView struct {

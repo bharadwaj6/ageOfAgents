@@ -40,6 +40,11 @@ func TestContractWireShape(t *testing.T) {
 			golden: "decision_result.json",
 		},
 		{
+			name:   "CancelResult",
+			value:  CancelResult{Schema: ContractVersion, GoalID: "g-1a2b3c4d", Seq: 30, AlreadyCancelled: true},
+			golden: "cancel_result.json",
+		},
+		{
 			name: "StatusView",
 			value: StatusView{
 				Schema: ContractVersion, LastSeq: 42, Settled: true,
