@@ -70,7 +70,8 @@ whether that work lands.**
    other goal: the Gate, the sandbox, the budgets and the approval gate.
 9. **"Lands" means the workspace's integration branch, for now.** Pushing to a remote or opening a PR
    is the next thing teams need, and it changes what the Gate guarantees. Delivery therefore gets its
-   own ADR ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128)).
+   own ADR ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128); decided in
+   [ADR 016](016-deliver-a-goal-as-a-pull-request.md)).
 
 Where the systems named above sit relative to `aoa`. These are positions, not claims about how the
 systems work internally:
