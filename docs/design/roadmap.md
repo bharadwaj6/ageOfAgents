@@ -50,8 +50,9 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status (2026-09-19):** v0.4.0 is released. The backend contract (#127, #133 to #142) and the #135
-fix (#144) are on `main`. Part 2 has started with ADR 016 (PR delivery); the replay events come next.
+**Last status (2026-09-19):** v0.4.0 is released. On `main`: ADR 016 (#147), PR delivery (#148, #149)
+and the GitHub Issues front door. Next is self-hosting on the maintainer's Mac, then the first dogfood
+issues, then v0.5.0.
 
 | | Increment | Depends on |
 |---|---|---|
@@ -74,9 +75,9 @@ on the maintainer's Mac on a subscription backend.
 | | Increment | Depends on |
 |---|---|---|
 | [x] | [ADR 016](adr/016-deliver-a-goal-as-a-pull-request.md): deliver a Goal as a pull request ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128)) | v0.4.0 |
-| [ ] | `Delivered` / `DeliveryFailed` events and the `delivered` outcome (replay only) | ADR 016 |
-| [ ] | `[delivery] mode = "pr"`: one PR per goal from a Gate-verified `aoa/<goal>` branch | replay |
-| [ ] | GitHub Issues front door + contract-conformance test ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130)) | PR mode |
+| [x] | `Delivered` / `DeliveryFailed` events and the `delivered` outcome, replay only ([#148](https://github.com/bharadwaj6/ageOfAgents/pull/148)) | ADR 016 |
+| [x] | `[delivery] mode = "pr"`: one PR per goal from a Gate-verified `aoa/<goal>` branch ([#149](https://github.com/bharadwaj6/ageOfAgents/pull/149)) | replay |
+| [x] | GitHub Issues front door + contract-conformance test, `examples/github-issues` ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130)) | PR mode |
 | [ ] | Self-hosting on the maintainer's Mac: dedicated clone, launchd, stop switches | front door |
 | [ ] | First dogfood PRs: a docs micro-issue, [#146](https://github.com/bharadwaj6/ageOfAgents/issues/146), [#143](https://github.com/bharadwaj6/ageOfAgents/issues/143), [#132](https://github.com/bharadwaj6/ageOfAgents/issues/132) | self-hosting |
 | [ ] | Release v0.5.0 | all of the above |
