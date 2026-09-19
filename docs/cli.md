@@ -223,7 +223,7 @@ that merged are still listed in `commits`. `last_seq` is the log position the sn
 ### `aoa events`
 
 Inspect the Event Log — the append-only record every other number is derived from. It is also how a
-program driving `aoa` follows what happened: `--json`, `--since` and `--follow` read the log as a
+program driving `aoa` follows what happened ([the backend contract](backend.md) shows the whole loop): `--json`, `--since` and `--follow` read the log as a
 resumable JSONL stream.
 
 ```bash
