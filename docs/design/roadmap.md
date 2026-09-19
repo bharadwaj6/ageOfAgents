@@ -50,11 +50,12 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status (2026-09-19):** in review: #127 (doc fixes), #133 (this ADR), and one linear stack:
-#134 (allowlist) ← #136 (ledger lock) ← #137 (one Scheduler) ← #138 (write verbs) ← #139 (event
-cursor) ← #140 (`status --json`). Merge bottom-up; GitHub retargets each PR to `main` as the one below
-it lands. In progress on top of #140: cancellation, then the contract reference page. Also filed: #135
-(a stopped Docker daemon is recorded as a Gate verdict).
+**Last status (2026-09-19):** every increment is built and in review. #127 (doc fixes) and #133 (this
+ADR) are independent. The rest is one linear stack: #134 (allowlist) ← #136 (ledger lock) ← #137 (one
+Scheduler) ← #138 (write verbs) ← #139 (event cursor) ← #140 (`status --json`) ← #141 (cancel) ← #142
+(contract docs). Merge bottom-up; GitHub retargets each PR to `main` as the one below it lands. Next are
+the later increments below, each with a design decision first. Also filed: #135 (a stopped Docker daemon
+is recorded as a Gate verdict).
 
 | | Increment | Depends on |
 |---|---|---|
@@ -66,8 +67,8 @@ it lands. In progress on top of #140: cancellation, then the contract reference 
 | [ ] | Write verbs: goal `--source/--ref/--key`, idempotent submit, `--json` on goal/amend/approve/reject ([#138](https://github.com/bharadwaj6/ageOfAgents/pull/138)) | ledger lock |
 | [ ] | `status --json` from one projection shared with text `status` ([#140](https://github.com/bharadwaj6/ageOfAgents/pull/140)) | write verbs |
 | [ ] | Event cursor: `events --json --since N` and `--follow` ([#139](https://github.com/bharadwaj6/ageOfAgents/pull/139)) | ledger lock |
-| [ ] | Cancellation: `GoalCancelled`, `aoa cancel`, invariant `CancelHonored` | write verbs, status |
-| [ ] | Contract reference `docs/backend.md`, skill switched to `--json`, README pointer | all of the above |
+| [ ] | Cancellation: `GoalCancelled`, `aoa cancel`, invariant `CancelHonored` ([#141](https://github.com/bharadwaj6/ageOfAgents/pull/141)) | write verbs, status |
+| [ ] | Contract reference `docs/backend.md` and README pointer ([#142](https://github.com/bharadwaj6/ageOfAgents/pull/142)) | all of the above |
 
 **Later increments** each need a design decision, and most need an ADR, before any code:
 
