@@ -33,6 +33,11 @@ export OTEL_SERVICE_NAME="aoa"
 
 See [`docs/integrations/`](../docs/integrations/README.md) for Honeycomb and other backends.
 
+## From GitHub Issues
+
+[`github-issues/`](github-issues/README.md) is a front door in one shell script: label an issue `aoa`,
+and aoa delivers it as a pull request and comments the outcome on the issue.
+
 ## Cost-sensitive evaluation
 
 ```sh

@@ -86,4 +86,15 @@ design is [ADR 016](design/adr/016-deliver-a-goal-as-a-pull-request.md).
   `aoa`. The Gate, the budgets and `require_approval` bound it. Read [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
 - **Take the result to where people look.** With `[delivery] mode = "pr"` aoa opens the pull request
   itself (see [Delivery](#delivery)). Reporting back to the origin, such as a comment on the issue, is
-  still yours ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129)).
+  still yours ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129)). The
+  [reference front door](#reference-front-door) does it with one issue comment per outcome.
+
+## Reference front door
+
+[`examples/github-issues`](https://github.com/bharadwaj6/ageOfAgents/tree/main/examples/github-issues)
+is a complete front door in one bash script. It uses nothing but this contract, `gh` and `jq`. An issue
+labelled `aoa` by a trusted person becomes a Goal and is delivered as a pull request, and its outcome goes
+back to the issue as one comment. Removing the label or closing the issue cancels the Goal. The script
+keeps no state of its own: markers in its own comments tell it what it has already reported. A
+conformance test runs it against the real CLI in `make check`, so a change to the contract that would
+break a front door fails the build.
