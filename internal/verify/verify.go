@@ -57,6 +57,15 @@ type Result struct {
 // An empty command list passes trivially (no gate configured).
 func (v Verifier) Run(ctx context.Context, dir string) Result {
 	var out strings.Builder
+	// Exit codes alone cannot tell a stopped daemon from a failing test: docker
+	// 29 exits 1 for both. Ask the daemon first, once per run.
+	if v.Sandbox == "docker" && len(v.Commands) > 0 {
+		if b, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput(); err != nil {
+			out.Write(b)
+			out.WriteString("\n[gate could not run: the docker daemon is unreachable]\n")
+			return Result{Passed: false, Failed: "docker version", Output: out.String(), Infra: true}
+		}
+	}
 	for _, c := range v.Commands {
 		if len(c) == 0 {
 			continue
