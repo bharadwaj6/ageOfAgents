@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -182,6 +183,39 @@ func TestVersionString(t *testing.T) {
 	want := "aoa v0.2.0 (abc1234, 2026-08-24)"
 	if got := versionString(); got != want {
 		t.Errorf("stamped versionString() = %q, want %q", got, want)
+	}
+}
+
+// `go install ...@v0.4.0` builds carry the module version in the embedded build
+// info but no ldflags, and used to report "dev".
+func TestResolveBuild(t *testing.T) {
+	info := func(mainVersion string, settings ...debug.BuildSetting) *debug.BuildInfo {
+		return &debug.BuildInfo{Main: debug.Module{Version: mainVersion}, Settings: settings}
+	}
+	rev := debug.BuildSetting{Key: "vcs.revision", Value: "f0d9693aabbccddeeff00112233445566778899"}
+	at := debug.BuildSetting{Key: "vcs.time", Value: "2026-08-24T10:00:00Z"}
+
+	tests := []struct {
+		name                              string
+		version, commit, date             string
+		info                              *debug.BuildInfo
+		wantVersion, wantCommit, wantDate string
+	}{
+		{"go install of a tag", "dev", "", "", info("v0.4.0"), "v0.4.0", "", ""},
+		{"go build in a checkout", "dev", "", "", info("(devel)", rev, at), "dev", "f0d9693", "2026-08-24T10:00:00Z"},
+		{"tag with vcs settings", "dev", "", "", info("v0.4.0", rev, at), "v0.4.0", "f0d9693", "2026-08-24T10:00:00Z"},
+		{"short revision kept whole", "dev", "", "", info("", debug.BuildSetting{Key: "vcs.revision", Value: "abc"}), "dev", "abc", ""},
+		{"no build info", "dev", "", "", nil, "dev", "", ""},
+		{"empty build info", "dev", "", "", info(""), "dev", "", ""},
+		{"ldflags-stamped release wins", "0.4.0", "f0d9693", "2026-08-24", info("v9.9.9", rev, at), "0.4.0", "f0d9693", "2026-08-24"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, c, d := resolveBuild(tt.version, tt.commit, tt.date, tt.info)
+			if v != tt.wantVersion || c != tt.wantCommit || d != tt.wantDate {
+				t.Errorf("resolveBuild = (%q, %q, %q), want (%q, %q, %q)", v, c, d, tt.wantVersion, tt.wantCommit, tt.wantDate)
+			}
+		})
 	}
 }
 

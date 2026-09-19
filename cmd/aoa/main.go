@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -168,15 +169,47 @@ var (
 // versionString renders the build for `aoa version`. Without this every
 // published binary was unable to say which build it was.
 func versionString() string {
-	s := "aoa " + version
-	if commit != "" {
-		s += " (" + commit
-		if date != "" {
-			s += ", " + date
+	info, _ := debug.ReadBuildInfo()
+	v, c, d := resolveBuild(version, commit, date, info)
+	s := "aoa " + v
+	if c != "" {
+		s += " (" + c
+		if d != "" {
+			s += ", " + d
 		}
 		s += ")"
 	}
 	return s
+}
+
+// resolveBuild fills in what -ldflags did not stamp from the build info the Go
+// toolchain embeds. `go install ...@v0.4.0` never runs GoReleaser, so without
+// this it reported "dev" although the module version is right there. A stamped
+// version is never overridden. info may be nil (binaries built without module
+// support).
+func resolveBuild(version, commit, date string, info *debug.BuildInfo) (string, string, string) {
+	if version != "dev" || info == nil {
+		return version, commit, date
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		version = v
+	}
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if commit == "" && s.Value != "" {
+				commit = s.Value
+				if len(commit) > 7 { // match GoReleaser's short commit
+					commit = commit[:7]
+				}
+			}
+		case "vcs.time":
+			if date == "" {
+				date = s.Value
+			}
+		}
+	}
+	return version, commit, date
 }
 
 // workspace resolves the standard paths for a workspace root.
