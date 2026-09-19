@@ -20,7 +20,7 @@ aoa goal --path "$WS" --json --source linear --ref "$ISSUE_URL" --key "linear:$I
 aoa run --path "$WS"            # or a cron / systemd timer / Actions schedule (see Scheduling)
 
 # 3. Learn the outcome: poll a snapshot...
-aoa status --path "$WS" --json  # goals[].outcome: queued | running | awaiting_approval | merged | failed | cancelled
+aoa status --path "$WS" --json  # goals[].outcome: queued | running | awaiting_approval | merged | delivered | failed | cancelled
 #    ...or follow the log from where you left off.
 aoa events --path "$WS" --json --since "$LAST_SEQ" --follow
 
@@ -41,6 +41,24 @@ aoa cancel  --path "$WS" --json --by "$WHO" --reason "issue closed" "$GOAL"
 | **Nothing lands that fails the Gate, or that was cancelled.** | The Gate runs on the post-merge state ([ADR 002](design/adr/002-verifier-gated-merge-queue.md)). A cancelled goal gets no new attempts, and its proposals are dropped before merging. A merge already executing when the cancel arrives can still complete. |
 | **The JSON is versioned.** | Every result carries `schema`. Within a version, fields are only ever added. Ignore fields you don't know. |
 
+## Delivery
+
+By default a verified change lands on the branch the adopted repository has checked out, and nothing is
+pushed. For a team repository set `[delivery] mode = "pr"`
+([configuration](config-reference.md#delivery)), and each Goal becomes **one pull request**:
+
+- The Goal's tasks merge onto its own branch, `aoa/<goal-id>`, cut from the remote base. The Gate
+  guards that branch; the forge's required checks guard `main`.
+- Once every task of the Goal is complete, aoa pushes the branch and opens the pull request. A failed or
+  partial Goal is never pushed.
+- `status --json` reports the Goal's `branch`, then `outcome: "delivered"` with its `pr_url`. While
+  delivery is pending the Goal stays `running`. If a push or the opener fails, `delivery_error` says why
+  and the next `aoa run` retries it. Until then `aoa run` exits `1`.
+- aoa stops once the pull request is open. Review and merging belong to the forge and its people.
+
+The events are `Delivered` and `DeliveryFailed`. `Merged` carries the Goal `branch` it landed on. The
+design is [ADR 016](design/adr/016-deliver-a-goal-as-a-pull-request.md).
+
 ## Keys and refs
 
 - **`--key` names one submission**, and it is global to the workspace. Prefix it with its source, such
@@ -56,7 +74,7 @@ aoa cancel  --path "$WS" --json --by "$WHO" --reason "issue closed" "$GOAL"
 | Code | Meaning |
 |---|---|
 | `0` | Success. For `run`, all work settled and nothing failed. |
-| `1` | An error, or (for `run`) a task failed. Tasks of a cancelled goal do not count. Read `status --json` for which one and why. |
+| `1` | An error, or (for `run`) a task failed or a delivery is stuck. Tasks of a cancelled goal do not count. Read `status --json` for which one and why. |
 | `2` | Usage: a flag could not be parsed. |
 | `75` | `run` only: another Scheduler holds the workspace. Nothing to retry; your goal is on the log. |
 
@@ -66,6 +84,6 @@ aoa cancel  --path "$WS" --json --by "$WHO" --reason "issue closed" "$GOAL"
   If ADR 008's gate should mean *a person looked*, don't give `approve` to an automated front door.
 - **Treat goal text as untrusted.** The agent runs what the model decides, on the machine running
   `aoa`. The Gate, the budgets and `require_approval` bound it. Read [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
-- **Take the result to where people look.** Today "lands" means the workspace's branch. Pushing and
-  opening PRs is [#128](https://github.com/bharadwaj6/ageOfAgents/issues/128). Reporting back to the
-  origin is [#129](https://github.com/bharadwaj6/ageOfAgents/issues/129).
+- **Take the result to where people look.** With `[delivery] mode = "pr"` aoa opens the pull request
+  itself (see [Delivery](#delivery)). Reporting back to the origin, such as a comment on the issue, is
+  still yours ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129)).

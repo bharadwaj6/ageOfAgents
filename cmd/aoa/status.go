@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
@@ -187,7 +188,8 @@ func renderStatus(w io.Writer, v api.StatusView) error {
 			fmt.Fprintf(&b, "  pr: %s\n", g.PRURL)
 		}
 		if g.DeliveryError != "" {
-			fmt.Fprintf(&b, "  delivery pending: %s\n", g.DeliveryError)
+			// git's error output runs to several lines; keep them under the goal.
+			fmt.Fprintf(&b, "  delivery pending: %s\n", strings.ReplaceAll(g.DeliveryError, "\n", "\n    "))
 		}
 		tickets = append(tickets, g.Tickets...)
 	}

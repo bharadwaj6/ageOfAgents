@@ -10,6 +10,8 @@ import (
 
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
+	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
+	"github.com/stretchr/testify/require"
 )
 
 // A mistyped --path used to mint the directory and report "no goals submitted",
@@ -180,5 +182,43 @@ func TestVersionString(t *testing.T) {
 	want := "aoa v0.2.0 (abc1234, 2026-08-24)"
 	if got := versionString(); got != want {
 		t.Errorf("stamped versionString() = %q, want %q", got, want)
+	}
+}
+
+// PR delivery mode fails at startup, not at the first push, when the remote
+// is missing or the opener is not installed.
+func TestBuildOrchestratorPreflightsPRDelivery(t *testing.T) {
+	tests := []struct {
+		name    string
+		remote  bool
+		openPR  []string
+		wantErr string
+	}{
+		{name: "no such remote", openPR: []string{}, wantErr: `remote "origin"`},
+		{name: "opener not on PATH", remote: true, openPR: []string{"aoa-no-such-opener"}, wantErr: `"aoa-no-such-opener"`},
+		{name: "push only", remote: true, openPR: []string{}},
+		{name: "default opener", remote: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp, ws := newMockWorkspace(t)
+			cfg, err := config.Load(ws.configPath)
+			require.NoError(t, err)
+			if tt.remote {
+				runGit(t, resolve(tmp, cfg.Repo), "remote", "add", "origin", filepath.Join(tmp, "origin.git"))
+			}
+			cfg.Delivery = config.DeliveryConfig{Mode: "pr", OpenPR: tt.openPR}
+			require.NoError(t, cfg.Save(ws.configPath))
+			led, err := ledger.Open(ws.ledgerPath)
+			require.NoError(t, err)
+
+			o, err := buildOrchestrator(ws, led)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, o)
+		})
 	}
 }

@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`[delivery] mode = "pr"`: one pull request per Goal** ([ADR 016](docs/design/adr/016-deliver-a-goal-as-a-pull-request.md)).
+  For a repository whose `main` is protected, aoa can now hand back a change a team can merge. Before a
+  Goal's first task runs, aoa fetches `<remote>/<base>` and cuts `aoa/<goal-id>` from it. Every task of
+  the Goal is cut from that branch, so a dependent task sees its siblings' merged work. The merge queue
+  runs the unchanged Gate there, and only a pass moves the branch, by compare-and-swap. Once every task is
+  complete, aoa pushes the branch (never with force) and runs a configurable opener, by default `gh pr
+  view || gh pr create`, so a re-run after a crash still yields one pull request. It then records a new
+  `Delivered` event. `aoa status` reports the Goal's `branch`, `pr_url` and the new outcome `delivered`.
+  A failed push or opener is recorded as `DeliveryFailed` with the reason, shown as `delivery_error`,
+  and retried by the next `aoa run`, at most once per run. `aoa run` exits `1` until it succeeds. A
+  remote branch holding a commit aoa did not make is refused, never overwritten. A failed, partial or
+  cancelled Goal is never pushed. Neither the remote base nor the adopted repository's checked-out branch
+  is written, though the repository is left checked out, detached, at the last Goal branch it merged
+  onto. Disjoint-file batching is off in pr mode. A new invariant, `DeliveredOnceAndVerified`, checks
+  that each Goal is delivered at most once, only after every task is complete, and only as its branch's
+  last verified commit. The default `mode = "local"` behaves as before. **A log containing `Delivered` or
+  `DeliveryFailed` cannot be read by an older `aoa` binary.**
+
 ## [0.4.0] — 2026-09-19
 
 `aoa` becomes a backend that front doors (task boards, bots, orchestrators, CI) drive through a stable JSON

@@ -61,6 +61,45 @@ gateway's endpoint and the gateway's own budgets stack on top of the in-process 
 | `regression_verify` | list of argv | `[]` (off) | A broader test set run against post-merge `main` after a proposal passes the Gate. **Never blocks a merge** — it measures the regression-escape rate (the Gate's blind spot; see [metrics](design/metrics.md)). |
 | `require_approval` | bool | `false` | Park every Gate-verified proposal for a human decision (`aoa approve` / `aoa reject`) before it merges (ADR 008). |
 
+## Delivery
+
+Where a verified change goes, set in a `[delivery]` table. The default, `mode = "local"`, merges onto
+whatever branch the adopted repository has checked out and pushes nothing.
+
+With `mode = "pr"`, each Goal becomes one pull request
+([ADR 016](design/adr/016-deliver-a-goal-as-a-pull-request.md)):
+
+- Before the Goal's first task runs, aoa fetches `<remote>/<base>` and cuts the branch `aoa/<goal-id>` from it.
+- Every task of the Goal works from that branch, so a task that depends on another sees its merged work.
+- The Gate runs on that branch, and only a pass moves it. Neither the remote base nor the repository's
+  checked-out branch is ever written.
+- Once every task of the Goal is complete, aoa pushes the branch (never with force) and runs `open_pr`.
+- A failed or partial Goal is never pushed.
+
+| Field | Type | Default | What it does |
+|-------|------|---------|--------------|
+| `mode` | string | `"local"` | `"local"` or `"pr"`. Any other value is an error. |
+| `remote` | string | `"origin"` in pr mode | The remote the base is fetched from and Goal branches are pushed to. `aoa run` checks it exists before starting. |
+| `base` | string | `"main"` in pr mode | The branch each Goal branch is cut from and its pull request targets. |
+| `open_pr` | list of string | the `gh` opener below, in pr mode | The command that opens the pull request, run in the repository without a shell. `{branch}`, `{base}`, `{title}` and `{body}` are replaced inside each element, so each stays one argument. The last line it prints that starts with `http` is recorded as the pull request's URL. `open_pr = []` means push only. |
+
+The default opener shows an existing pull request for the branch, or creates one, so re-running after a
+crash still yields exactly one:
+
+```toml
+[delivery]
+mode    = "pr"
+remote  = "origin"
+base    = "main"
+open_pr = ["sh", "-c", "gh pr view \"$1\" --json url --jq .url 2>/dev/null || gh pr create --head \"$1\" --base \"$2\" --title \"$3\" --body \"$4\"", "aoa-open-pr", "{branch}", "{base}", "{title}", "{body}"]
+```
+
+The title is the first line of the Goal's text. The body is the whole text, then `Closes <ref>` when the
+Goal's `--ref` is a URL. Another forge only needs a different `open_pr` (`glab mr create …`, `tea pr create
+…`). A push or opener failure is recorded as `DeliveryFailed` and retried by the next `aoa run`, at most
+once per run. A remote branch holding a commit aoa did not make is refused, never overwritten. Disjoint-file
+batching in the merge queue is off in pr mode.
+
 ## Cost & safety governors
 
 All default to off/unlimited, so they never change behavior until set.

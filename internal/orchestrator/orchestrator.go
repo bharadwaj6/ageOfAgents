@@ -51,6 +51,7 @@ type Options struct {
 	RequireApproval    bool               // park each verified proposal for human approval before merge (ADR 008)
 	RetryBackoff       time.Duration      // base wait before re-dispatching a failed ticket (exponential per attempt); 0 = off
 	CrashLoopThreshold int                // N identical-reason verify failures in a row → give up even under MaxAttempts; default 3
+	Delivery           Delivery           // pull-request delivery (ADR 016); the zero value is local mode
 	Now                func() time.Time
 	Sleep              func(time.Duration) // injectable for tests; default time.Sleep
 }
@@ -87,6 +88,14 @@ type Orchestrator struct {
 	// has, so when the log itself is the thing that broke, the failure would
 	// otherwise vanish. ReconcileOnce surfaces it after the wave joins.
 	dispatchErr error
+
+	// PR delivery mode only, both touched by the Scheduler goroutine alone.
+	// branched holds the Goals whose branch this process has already cut (or
+	// found), so the remote base is fetched once per Goal, not per dispatch.
+	// deliveryTried holds the Goals delivery was attempted for in this Run, so a
+	// failure is retried by the next Run rather than on every pass.
+	branched      map[string]bool
+	deliveryTried map[string]bool
 }
 
 // New builds an Orchestrator and fills in default options.
@@ -142,7 +151,9 @@ func New(led *ledger.Ledger, repo *worktree.Repo, backend agent.Backend, mq *mer
 	}
 	return &Orchestrator{
 		led: led, repo: repo, backend: backend, mq: mq, opt: opt,
-		worktrees: map[string]*worktree.Worktree{},
+		worktrees:     map[string]*worktree.Worktree{},
+		branched:      map[string]bool{},
+		deliveryTried: map[string]bool{},
 	}
 }
 
@@ -169,6 +180,7 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 	// wall-clock timeout of MaxPasses x PollInterval — 100 seconds — and every
 	// real agent takes longer than that. The bound still does its real job,
 	// which is to stop a run that keeps emitting events without converging.
+	o.deliveryTried = map[string]bool{} // each Run tries each pending delivery once
 	for pass := 0; pass < o.opt.MaxPasses; {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -271,6 +283,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	ready := o.dispatchable(s.ReadyTickets(), o.opt.Now())
 	n := min(slots, len(ready))
 	for _, t := range ready[:max(n, 0)] {
+		// PR mode: the task's worktree is cut from its Goal branch, which must
+		// exist first. Failing here stops the pass before TicketClaimed, so no
+		// attempt is burned.
+		if o.prMode() {
+			if err := o.ensureGoalBranch(ctx, t.GoalID); err != nil {
+				return fmt.Errorf("goal %s: %w", t.GoalID, err)
+			}
+		}
 		job := dispatchJob{
 			ticketID: t.ID,
 			goalID:   t.GoalID,
@@ -302,12 +322,12 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	// When several proposals are waiting and neither the approval gate nor a
 	// Shadow set is in play, batch disjoint-file ones into a single Gate run;
 	// otherwise process them one at a time (the approval/shadow paths need a
-	// per-proposal Gate).
+	// per-proposal Gate, and in PR mode a batch would span Goal branches).
 	if s, err = o.loadState(); err != nil {
 		return err
 	}
 	proposed := s.Proposed()
-	if len(proposed) > 1 && !o.opt.RequireApproval && len(o.mq.Shadow.Commands) == 0 {
+	if len(proposed) > 1 && !o.opt.RequireApproval && len(o.mq.Shadow.Commands) == 0 && !o.prMode() {
 		if proposed, err = o.dropCancelled(ctx, proposed); err != nil {
 			return err
 		}
@@ -329,6 +349,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 			if err := o.processProposal(ctx, t); err != nil {
 				return err
 			}
+		}
+	}
+
+	// 4b. PR mode: push each Goal whose work is now complete on its branch and
+	// open its pull request (ADR 016).
+	if o.prMode() {
+		if err := o.deliverReady(ctx); err != nil {
+			return err
 		}
 	}
 
@@ -458,7 +486,11 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 
 	branch := "aoa/" + worktree.SanitizeBranch(j.ticketID) + "-" + ShortID()
 	dest := filepath.Join(o.opt.WorktreeBase, worktree.SanitizeBranch(branch))
-	wt, err := o.repo.AddWorktree(ctx, dest, branch)
+	base := "HEAD"
+	if o.prMode() {
+		base = "refs/heads/" + goalBranch(j.goalID) // siblings' merged work included
+	}
+	wt, err := o.repo.AddWorktreeFrom(ctx, dest, branch, base)
 	if err != nil {
 		o.failAttempt(ctx, j, worker, fmt.Sprintf("worktree: %v", err), usage{})
 		return
@@ -868,9 +900,20 @@ func (o *Orchestrator) failCancelled(ctx context.Context, t *state.Ticket) error
 // real verify+merge happens on a later pass once ApprovalGranted has returned
 // the ticket to the queue. A ticket whose Goal has been cancelled is failed
 // instead (dropCancelled).
+//
+// In PR mode (ADR 016) the queue works on the Goal branch: the repository is
+// detached onto its tip, the unchanged verify → merge → roll back runs there,
+// and only a merge that passed moves the branch, by compare-and-swap.
 func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) error {
 	if live, err := o.dropCancelled(ctx, []*state.Ticket{t}); err != nil || len(live) == 0 {
 		return err
+	}
+	var tip string // PR mode: the Goal branch's tip the merge builds on
+	if o.prMode() {
+		var err error
+		if tip, err = o.repo.Detach(ctx, "refs/heads/"+goalBranch(t.GoalID)); err != nil {
+			return fmt.Errorf("check out %s: %w", goalBranch(t.GoalID), err)
+		}
 	}
 	if o.opt.RequireApproval && !t.Approved {
 		out, err := o.mq.DryRun(ctx, mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch})
@@ -893,6 +936,13 @@ func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) err
 		// Infrastructure failure: treat as a failed attempt.
 		return o.rejectOrFail(ctx, t, t.Worker, fmt.Sprintf("merge queue: %v", err), "")
 	}
+	if out.Merged && o.prMode() {
+		// Before Merged is recorded, so the log never names a merge the branch
+		// lacks. A crash in between re-merges idempotently on the next run.
+		if err := o.repo.UpdateRef(ctx, "refs/heads/"+goalBranch(t.GoalID), out.MergeCommit, tip); err != nil {
+			return fmt.Errorf("advance %s: %w", goalBranch(t.GoalID), err)
+		}
+	}
 	return o.applyMergeOutcome(ctx, t, out)
 }
 
@@ -905,7 +955,11 @@ func (o *Orchestrator) applyMergeOutcome(ctx context.Context, t *state.Ticket, o
 		if err := o.emit(api.VerificationPassed, api.VerificationPassedPayload{TicketID: t.ID, Worker: t.Worker}); err != nil {
 			return err
 		}
-		if err := o.emit(api.Merged, api.MergedPayload{TicketID: t.ID, Worker: t.Worker, Commit: out.MergeCommit}); err != nil {
+		merged := api.MergedPayload{TicketID: t.ID, Worker: t.Worker, Commit: out.MergeCommit}
+		if o.prMode() {
+			merged.Branch = goalBranch(t.GoalID)
+		}
+		if err := o.emit(api.Merged, merged); err != nil {
 			return err
 		}
 		// The Gate accepted the merge but the broader Shadow set caught a
