@@ -537,3 +537,32 @@ func TestStatusJSONRejectsWatch(t *testing.T) {
 		})
 	}
 }
+
+// `aoa run` exits 1 when printStatus reports failed tasks, so a cron job can
+// alert on it. A cancel is a front door's deliberate choice, not a failure: its
+// tasks must not count. A human rejection still does.
+func TestPrintStatusFailedExcludesCancelledGoals(t *testing.T) {
+	tests := []struct {
+		name string
+		log  func(*testing.T) *logBuilder
+		want int
+	}{
+		{"cancelled goal", cancelledLog(true), 0},
+		{"rejected goal", rejectedLog, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			led := tt.log(t).ledger()
+			var failed int
+			captureStdout(t, func() {
+				var err error
+				if _, failed, err = printStatus(led, nil); err != nil {
+					t.Fatalf("printStatus: %v", err)
+				}
+			})
+			if failed != tt.want {
+				t.Errorf("failed = %d, want %d", failed, tt.want)
+			}
+		})
+	}
+}

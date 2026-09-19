@@ -253,8 +253,17 @@ func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, 
 	if err := renderStatus(os.Stdout, v); err != nil {
 		return false, 0, err
 	}
-	if len(v.Goals) == 0 {
-		return true, 0, nil
+	// A cancelled goal's tasks end failed, but a cancel is a front door's
+	// choice, not something for `aoa run`'s exit status to alert on.
+	for _, g := range v.Goals {
+		if g.Outcome == api.OutcomeCancelled {
+			continue
+		}
+		for _, t := range g.Tickets {
+			if t.Status == string(state.StatusFailed) {
+				failed++
+			}
+		}
 	}
-	return workSettled(v), v.Totals.Failed, nil
+	return workSettled(v), failed, nil
 }
