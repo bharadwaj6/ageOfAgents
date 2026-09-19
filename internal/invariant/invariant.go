@@ -13,7 +13,8 @@
 //   - I5 DAG acyclic          -> AcyclicGraph
 //   - I6 liveness             -> Settled (asserted on completed runs)
 //
-// CancelHonored has no litmus row: it is the promise `aoa cancel` makes.
+// CancelHonored has no litmus row: it is the promise `aoa cancel` makes, and
+// DeliveredOnceAndVerified is the promise of pull-request delivery (ADR 016).
 package invariant
 
 import (
@@ -45,6 +46,7 @@ func Check(events []api.Event) []Violation {
 	vs = append(vs, ReplayDeterministicAndTotal(events)...)
 	vs = append(vs, ApprovalGate(events)...)
 	vs = append(vs, CancelHonored(events)...)
+	vs = append(vs, DeliveredOnceAndVerified(events)...)
 	return vs
 }
 
@@ -197,6 +199,45 @@ func CancelHonored(events []api.Event) []Violation {
 				vs = append(vs, Violation{"CancelHonored",
 					fmt.Sprintf("ticket %q merged (seq %d) from a proposal or approval (seq %d) after goal %q was cancelled (seq %d)",
 						id, e.Seq, lastProposal[id], goalOf[id], c)})
+			}
+		}
+	}
+	return vs
+}
+
+// DeliveredOnceAndVerified asserts pull-request delivery (ADR 016) happens at
+// most once per Goal, only once every task of the Goal is complete, and only
+// for the Goal branch's last verified commit: a Delivered event's commit is
+// the commit of the Goal's latest Merged.
+func DeliveredOnceAndVerified(events []api.Event) []Violation {
+	var vs []Violation
+	s := state.New()
+	delivered := map[string]bool{}
+	lastMerge := map[string]string{} // goal id -> commit of its latest Merged
+	for _, e := range events {
+		var p api.DeliveredPayload
+		if e.Type == api.Delivered && e.DecodePayload(&p) == nil {
+			if delivered[p.GoalID] {
+				vs = append(vs, Violation{"DeliveredOnceAndVerified",
+					fmt.Sprintf("goal %q delivered more than once (seq %d)", p.GoalID, e.Seq)})
+			}
+			delivered[p.GoalID] = true
+			if !s.GoalComplete(p.GoalID) {
+				vs = append(vs, Violation{"DeliveredOnceAndVerified",
+					fmt.Sprintf("goal %q delivered (seq %d) before every task of it was complete", p.GoalID, e.Seq)})
+			}
+			if p.Commit != lastMerge[p.GoalID] {
+				vs = append(vs, Violation{"DeliveredOnceAndVerified",
+					fmt.Sprintf("goal %q delivered commit %q (seq %d), but its last verified merge is %q",
+						p.GoalID, p.Commit, e.Seq, lastMerge[p.GoalID])})
+			}
+		}
+		if err := s.Apply(e); err != nil {
+			return vs // a log that does not fold is ReplayDeterministicAndTotal's to report
+		}
+		if e.Type == api.Merged {
+			if t := s.Tickets[e.TicketID()]; t != nil {
+				lastMerge[t.GoalID] = t.Commit
 			}
 		}
 	}

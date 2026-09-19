@@ -97,6 +97,9 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 			Tokens:         goalCost[g.ID].Tokens,
 			CostUSD:        metrics.USD(goalCost[g.ID].TokensByModel, pricing),
 			Amendments:     g.Amendments,
+			Branch:         g.Branch,
+			PRURL:          g.PRURL,
+			DeliveryError:  g.DeliveryError,
 			Graph:          api.GraphView{MaxDepth: graph[g.ID].MaxDepth, MaxFanOut: graph[g.ID].MaxFanOut},
 			Tickets:        tickets[g.ID],
 		}
@@ -109,7 +112,7 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 			}
 		}
 		switch gv.Outcome {
-		case api.OutcomeMerged, api.OutcomeFailed:
+		case api.OutcomeMerged, api.OutcomeFailed, api.OutcomeDelivered:
 		case api.OutcomeCancelled:
 			// Settled once the Scheduler has nothing of it left to finish or fail.
 			for _, tv := range gv.Tickets {
@@ -164,7 +167,8 @@ func workSettled(v api.StatusView) bool {
 	return true
 }
 
-// renderStatus writes the human `aoa status` text for v: goals and their graph
+// renderStatus writes the human `aoa status` text for v: goals (with their pull
+// request, or why delivery is pending, in PR delivery mode) and their graph
 // shapes by id, every task by id, a "needs human" handoff for each failed task,
 // then the totals. It formats the view and computes nothing of its own.
 func renderStatus(w io.Writer, v api.StatusView) error {
@@ -179,6 +183,12 @@ func renderStatus(w io.Writer, v api.StatusView) error {
 	var tickets []api.TicketView
 	for _, g := range goals {
 		fmt.Fprintf(&b, "goal %s: %s\n", g.ID, g.Text)
+		if g.PRURL != "" {
+			fmt.Fprintf(&b, "  pr: %s\n", g.PRURL)
+		}
+		if g.DeliveryError != "" {
+			fmt.Fprintf(&b, "  delivery pending: %s\n", g.DeliveryError)
+		}
 		tickets = append(tickets, g.Tickets...)
 	}
 	for _, g := range goals {
@@ -240,7 +250,8 @@ func writeAll(w io.Writer, p []byte) error {
 
 // printStatus renders the run's live state to stdout and reports whether all
 // work has settled (the signal --watch uses to stop polling) and how many tasks
-// failed (which makes `aoa run` exit non-zero).
+// failed (which makes `aoa run` exit non-zero). A goal whose delivery failed and
+// is still pending counts as one failure, so a stuck delivery is alertable.
 func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, failed int, err error) {
 	events, err := led.Read()
 	if err != nil {
@@ -258,6 +269,9 @@ func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, 
 	for _, g := range v.Goals {
 		if g.Outcome == api.OutcomeCancelled {
 			continue
+		}
+		if g.DeliveryError != "" && g.Outcome != api.OutcomeDelivered {
+			failed++
 		}
 		for _, t := range g.Tickets {
 			if t.Status == string(state.StatusFailed) {

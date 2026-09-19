@@ -77,6 +77,12 @@ type CancelResult struct {
 // cancelled: none of its work will land from then on, even while an attempt
 // already in flight is still finishing. Work that merged before the cancel
 // stays merged and is still listed in [GoalView].Commits.
+//
+// In pull-request delivery mode (ADR 016) a Goal's tasks merge onto its own
+// branch, and a Goal whose work has all merged there stays running until the
+// branch is pushed and its pull request opened: then it is delivered. A failed
+// delivery keeps it running, with [GoalView].DeliveryError saying why, until a
+// later run delivers it.
 const (
 	OutcomeQueued           = "queued"
 	OutcomeRunning          = "running"
@@ -84,6 +90,7 @@ const (
 	OutcomeMerged           = "merged"
 	OutcomeFailed           = "failed"
 	OutcomeCancelled        = "cancelled"
+	OutcomeDelivered        = "delivered"
 )
 
 // StatusView is what `aoa status --json` prints: a snapshot of every Goal on
@@ -94,7 +101,8 @@ const (
 // `aoa events --json --since <last_seq> --follow`.
 //
 // Settled is true when nothing more will happen without new input: every Goal
-// is merged or failed, or cancelled with none of its tasks still in flight. A
+// is merged, delivered or failed, or cancelled with none of its tasks still in
+// flight. A
 // queued Goal or a task awaiting approval is not settled. An empty workspace is
 // settled, with an empty Goals list.
 //
@@ -121,6 +129,11 @@ type StatusView struct {
 // Goal, oldest first. Commits lists the merged commits of its tasks, in task
 // order — present on a failed Goal too, when part of its work merged.
 //
+// Branch, PRURL and DeliveryError are set only in pull-request delivery mode:
+// the Goal branch its tasks merged onto, the pull request opened for it once
+// delivered, and why the latest delivery attempt failed while it is still
+// pending (cleared once it is delivered).
+//
 // Tickets lists the Goal's tasks in creation order, so a decomposed task comes
 // before its children. It is empty, not absent, for a queued Goal.
 type GoalView struct {
@@ -136,6 +149,9 @@ type GoalView struct {
 	CostUSD        float64      `json:"cost_usd"`
 	Amendments     []string     `json:"amendments,omitempty"`
 	Commits        []string     `json:"commits,omitempty"`
+	Branch         string       `json:"branch,omitempty"`
+	PRURL          string       `json:"pr_url,omitempty"`
+	DeliveryError  string       `json:"delivery_error,omitempty"`
 	Graph          GraphView    `json:"graph"`
 	Tickets        []TicketView `json:"tickets"`
 }

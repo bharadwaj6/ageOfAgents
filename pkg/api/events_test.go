@@ -64,6 +64,24 @@ func TestNewEventRoundTrip(t *testing.T) {
 			payload: MergedPayload{TicketID: "t1", Worker: "alice", Commit: "def456"},
 			decode:  func() any { return &MergedPayload{} },
 		},
+		{
+			name:    "Merged onto a Goal branch",
+			typ:     Merged,
+			payload: MergedPayload{TicketID: "t1", Worker: "alice", Commit: "def456", Branch: "aoa/g1"},
+			decode:  func() any { return &MergedPayload{} },
+		},
+		{
+			name:    "Delivered",
+			typ:     Delivered,
+			payload: DeliveredPayload{GoalID: "g1", Branch: "aoa/g1", Commit: "def456", URL: "https://github.com/o/r/pull/7"},
+			decode:  func() any { return &DeliveredPayload{} },
+		},
+		{
+			name:    "DeliveryFailed",
+			typ:     DeliveryFailed,
+			payload: DeliveryFailedPayload{GoalID: "g1", Branch: "aoa/g1", Reason: "push: rejected (fetch first)"},
+			decode:  func() any { return &DeliveryFailedPayload{} },
+		},
 	}
 
 	for _, tc := range cases {

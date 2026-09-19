@@ -403,7 +403,8 @@ func TestCancelJSONIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	live, err := submitGoal(led, goalRequest{Text: "fix the flaky test", Source: "linear"})
 	require.NoError(t, err)
-	// g-merged settled with its work landed, g-failed with its only task failed.
+	// g-merged settled with its work landed, g-failed with its only task failed,
+	// g-delivered with its Goal branch pushed and its pull request opened.
 	for _, ev := range []struct {
 		typ     api.EventType
 		payload any
@@ -415,6 +416,10 @@ func TestCancelJSONIdempotent(t *testing.T) {
 		{api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-failed", Text: "doomed"}},
 		{api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-failed-impl", GoalID: "g-failed", Title: "impl"}},
 		{api.TicketFailed, api.TicketFailedPayload{TicketID: "g-failed-impl", Reason: "gate failed"}},
+		{api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-delivered", Text: "shipped"}},
+		{api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-delivered-impl", GoalID: "g-delivered", Title: "impl"}},
+		{api.Merged, api.MergedPayload{TicketID: "g-delivered-impl", Worker: "w1", Commit: "d00d", Branch: "aoa/g-delivered"}},
+		{api.Delivered, api.DeliveredPayload{GoalID: "g-delivered", Branch: "aoa/g-delivered", Commit: "d00d", URL: "https://github.com/o/r/pull/1"}},
 	} {
 		e, err := api.NewEvent(ev.typ, "test", ev.payload)
 		require.NoError(t, err)
@@ -430,11 +435,12 @@ func TestCancelJSONIdempotent(t *testing.T) {
 		wantAlready bool
 		wantSeq     int
 	}{
-		{name: "first cancel", goalID: live.GoalID, wantSeq: 9},
-		{name: "cancel again", goalID: live.GoalID, wantAlready: true, wantSeq: 9},
+		{name: "first cancel", goalID: live.GoalID, wantSeq: 13},
+		{name: "cancel again", goalID: live.GoalID, wantAlready: true, wantSeq: 13},
 		{name: "unknown goal", goalID: "g-nope", wantErr: `unknown goal "g-nope"`},
 		{name: "merged goal", goalID: "g-merged", wantErr: `goal "g-merged" already settled as merged; nothing to cancel`},
 		{name: "failed goal", goalID: "g-failed", wantErr: `goal "g-failed" already settled as failed; nothing to cancel`},
+		{name: "delivered goal", goalID: "g-delivered", wantErr: `goal "g-delivered" already settled as delivered; nothing to cancel`},
 	}
 	for _, st := range steps {
 		t.Run(st.name, func(t *testing.T) {

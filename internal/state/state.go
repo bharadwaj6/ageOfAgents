@@ -75,6 +75,10 @@ type Goal struct {
 	BudgetExceeded bool           // the per-Goal token/USD budget tripped; no more work is dispatched
 	Cancelled      bool           // withdrawn (GoalCancelled); none of its work may land from here on
 	CancelledSeq   int            // seq of the first GoalCancelled for it; 0 if never cancelled
+	Branch         string         // Goal branch its tickets merge onto (PR delivery mode, ADR 016); empty in local mode
+	Delivered      bool           // its branch was pushed and its pull request opened (Delivered)
+	PRURL          string         // the pull request Delivered reported; empty when delivery was push only
+	DeliveryError  string         // why the latest delivery attempt failed; cleared once delivered
 }
 
 // EffectiveText is the Goal's text plus any mid-run amendments, as handed to a
@@ -354,6 +358,10 @@ func (s *State) Apply(e api.Event) error {
 			t.ActiveWorkers = nil
 			t.Commit = p.Commit
 			t.LastActivity = e.Timestamp
+			// In PR delivery mode the merge landed on the Goal's own branch.
+			if g := s.Goals[t.GoalID]; g != nil && p.Branch != "" {
+				g.Branch = p.Branch
+			}
 		}
 
 	case api.TicketFailed:
@@ -446,6 +454,26 @@ func (s *State) Apply(e api.Event) error {
 		if g := s.Goals[p.GoalID]; g != nil && !g.Cancelled {
 			g.Cancelled = true
 			g.CancelledSeq = e.Seq
+		}
+
+	case api.Delivered:
+		var p api.DeliveredPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if g := s.Goals[p.GoalID]; g != nil {
+			g.Delivered = true
+			g.PRURL = p.URL
+			g.DeliveryError = ""
+		}
+
+	case api.DeliveryFailed:
+		var p api.DeliveryFailedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if g := s.Goals[p.GoalID]; g != nil {
+			g.DeliveryError = p.Reason
 		}
 
 	case api.RegressionEscaped:
@@ -756,17 +784,45 @@ func (s *State) Settled() bool {
 	return true
 }
 
+// Deliverable reports whether a Goal is ready for pull-request delivery (ADR
+// 016): its tickets merged onto its own branch, every one of them is complete,
+// and it is neither cancelled nor delivered yet. A Goal whose last delivery
+// failed stays deliverable, so the next run retries it. A failed or partial
+// Goal never is.
+func (s *State) Deliverable(goalID string) bool {
+	g := s.Goals[goalID]
+	return g != nil && !g.Cancelled && !g.Delivered && g.Branch != "" && s.GoalComplete(goalID)
+}
+
+// GoalComplete reports whether a Goal has at least one ticket and every one of
+// them is complete: merged, or decomposed into children that all are.
+func (s *State) GoalComplete(goalID string) bool {
+	has := false
+	for _, t := range s.Tickets {
+		if t.GoalID != goalID {
+			continue
+		}
+		if !s.ticketComplete(t.ID) {
+			return false
+		}
+		has = true
+	}
+	return has
+}
+
 // GoalOutcome reports where a Goal stands, as one of the api.Outcome values,
 // judged over its tickets:
 //
 //   - queued: it has no ticket yet — the Scheduler has not picked it up;
 //   - awaiting_approval: any of its tickets is parked for a human decision;
-//   - running: any of its tickets is still in flight;
+//   - running: any of its tickets is still in flight, or all of its work
+//     merged onto its Goal branch and delivery is pending (ADR 016);
 //   - failed: none is in flight and some of its work can never land — a
 //     ticket failed (the Gate, a human rejection, a dead dependency) — or its
 //     budget tripped;
 //   - merged: none is in flight and all of its work landed: every ticket
-//     merged, or decomposed into children that all did.
+//     merged, or decomposed into children that all did;
+//   - delivered: its Goal branch was pushed and its pull request opened.
 //
 // Partial success is failed: a Goal decomposed into children, some merged and
 // some failed, did not get what it asked for. What did merge stays merged, and
@@ -784,6 +840,9 @@ func (s *State) GoalOutcome(goalID string) string {
 	}
 	if g.Cancelled {
 		return api.OutcomeCancelled
+	}
+	if g.Delivered {
+		return api.OutcomeDelivered
 	}
 	var hasTickets, awaiting, inFlight, dead bool
 	complete := true
@@ -811,6 +870,8 @@ func (s *State) GoalOutcome(goalID string) string {
 		return api.OutcomeAwaitingApproval
 	case inFlight:
 		return api.OutcomeRunning
+	case complete && g.Branch != "":
+		return api.OutcomeRunning // all merged onto the Goal branch; delivery pending
 	case dead || g.BudgetExceeded:
 		return api.OutcomeFailed
 	case complete:

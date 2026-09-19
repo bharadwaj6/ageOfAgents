@@ -256,6 +256,25 @@ func cancelledLog(failed bool) func(t *testing.T) *logBuilder {
 	}
 }
 
+// deliveryLog is a goal whose only task merged onto its Goal branch in
+// pull-request delivery mode, and whose first delivery failed; with delivered,
+// a later run has delivered it.
+func deliveryLog(delivered bool) func(t *testing.T) *logBuilder {
+	return func(t *testing.T) *logBuilder {
+		b := newLog(t).
+			add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "ship it", Source: "github"}).
+			add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl", GoalID: "g-1", Title: "Implement: ship it", IdempotencyKey: "g-1:impl"}).
+			add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl", Worker: "w1"}).
+			add(1, api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "g-1-impl", Worker: "w1", Commit: "cand-1"}).
+			add(1, api.Merged, api.MergedPayload{TicketID: "g-1-impl", Worker: "w1", Commit: "m1", Branch: "aoa/g-1"}).
+			add(1, api.DeliveryFailed, api.DeliveryFailedPayload{GoalID: "g-1", Branch: "aoa/g-1", Reason: "push aoa/g-1: rejected"})
+		if delivered {
+			b.add(1, api.Delivered, api.DeliveredPayload{GoalID: "g-1", Branch: "aoa/g-1", Commit: "m1", URL: "https://github.com/o/r/pull/9"})
+		}
+		return b
+	}
+}
+
 // goalWant is what TestStatusViewProjection expects of one GoalView; Tickets
 // lists its task ids in order.
 type goalWant struct {
@@ -263,6 +282,7 @@ type goalWant struct {
 	Tokens                       int
 	CostUSD                      float64
 	Amendments, Commits, Tickets []string
+	Branch, PRURL, DeliveryError string
 	Graph                        api.GraphView
 }
 
@@ -348,6 +368,20 @@ func TestStatusViewProjection(t *testing.T) {
 			wantGoals:  []goalWant{{ID: "g-1", Outcome: api.OutcomeQueued, Source: "human"}},
 			wantTotals: api.StatusTotals{Goals: 1},
 		},
+		{
+			name: "delivery failed, still pending", log: deliveryLog(false),
+			wantGoals: []goalWant{{ID: "g-1", Outcome: api.OutcomeRunning, Source: "github", Commits: []string{"m1"},
+				Tickets: []string{"g-1-impl"}, Branch: "aoa/g-1", DeliveryError: "push aoa/g-1: rejected"}},
+			wantTotals: api.StatusTotals{WallSeconds: 5, Goals: 1, Tickets: 1, Merged: 1},
+			wantQueue:  api.MergeQueueView{MaxDepth: 1, WaitMeanSeconds: 1, WaitMaxSeconds: 1},
+		},
+		{
+			name: "delivered", log: deliveryLog(true), wantSettled: true,
+			wantGoals: []goalWant{{ID: "g-1", Outcome: api.OutcomeDelivered, Source: "github", Commits: []string{"m1"},
+				Tickets: []string{"g-1-impl"}, Branch: "aoa/g-1", PRURL: "https://github.com/o/r/pull/9"}},
+			wantTotals: api.StatusTotals{WallSeconds: 6, Goals: 1, Tickets: 1, Merged: 1},
+			wantQueue:  api.MergeQueueView{MaxDepth: 1, WaitMeanSeconds: 1, WaitMaxSeconds: 1},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -383,7 +417,8 @@ func TestStatusViewProjection(t *testing.T) {
 			for i, want := range tt.wantGoals {
 				g := v.Goals[i]
 				got := goalWant{ID: g.ID, Outcome: g.Outcome, Source: g.Source, Ref: g.Ref, By: g.By, Tokens: g.Tokens,
-					Amendments: g.Amendments, Commits: g.Commits, Graph: g.Graph}
+					Amendments: g.Amendments, Commits: g.Commits, Graph: g.Graph,
+					Branch: g.Branch, PRURL: g.PRURL, DeliveryError: g.DeliveryError}
 				for _, tv := range g.Tickets {
 					got.Tickets = append(got.Tickets, tv.ID)
 				}
@@ -540,7 +575,8 @@ func TestStatusJSONRejectsWatch(t *testing.T) {
 
 // `aoa run` exits 1 when printStatus reports failed tasks, so a cron job can
 // alert on it. A cancel is a front door's deliberate choice, not a failure: its
-// tasks must not count. A human rejection still does.
+// tasks must not count. A human rejection still does, and so does a delivery
+// that is stuck, until a later run delivers it.
 func TestPrintStatusFailedExcludesCancelledGoals(t *testing.T) {
 	tests := []struct {
 		name string
@@ -549,6 +585,8 @@ func TestPrintStatusFailedExcludesCancelledGoals(t *testing.T) {
 	}{
 		{"cancelled goal", cancelledLog(true), 0},
 		{"rejected goal", rejectedLog, 1},
+		{"delivery failed", deliveryLog(false), 1},
+		{"delivered after a failed delivery", deliveryLog(true), 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -562,6 +600,34 @@ func TestPrintStatusFailedExcludesCancelledGoals(t *testing.T) {
 			})
 			if failed != tt.want {
 				t.Errorf("failed = %d, want %d", failed, tt.want)
+			}
+		})
+	}
+}
+
+// The text output names the pull request once a goal is delivered, and why
+// delivery is still pending after a failure — lines that appear only in
+// pull-request delivery mode, so the local-mode goldens above never change.
+func TestStatusTextShowsDelivery(t *testing.T) {
+	tests := []struct {
+		name, want, notWant string
+		log                 func(*testing.T) *logBuilder
+	}{
+		{name: "pending", log: deliveryLog(false), want: "goal g-1: ship it\n  delivery pending: push aoa/g-1: rejected\n", notWant: "  pr: "},
+		{name: "delivered", log: deliveryLog(true), want: "goal g-1: ship it\n  pr: https://github.com/o/r/pull/9\n", notWant: "delivery pending"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, err := statusView(tt.log(t).events, nil)
+			if err != nil {
+				t.Fatalf("statusView: %v", err)
+			}
+			var b bytes.Buffer
+			if err := renderStatus(&b, v); err != nil {
+				t.Fatalf("renderStatus: %v", err)
+			}
+			if out := b.String(); !strings.Contains(out, tt.want) || strings.Contains(out, tt.notWant) {
+				t.Errorf("status text should contain %q and not %q:\n%s", tt.want, tt.notWant, out)
 			}
 		})
 	}

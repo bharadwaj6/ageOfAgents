@@ -55,7 +55,9 @@ func TestContractWireShape(t *testing.T) {
 					Outcome:     OutcomeFailed, BudgetExceeded: true, Tokens: 3000, CostUSD: 0.0125,
 					Amendments: []string{"prefer table-driven tests"},
 					Commits:    []string{"c0ffee1"},
-					Graph:      GraphView{MaxDepth: 1, MaxFanOut: 2},
+					Branch:     "aoa/g-1a2b3c4d", PRURL: "https://github.com/o/r/pull/7",
+					DeliveryError: "push aoa/g-1a2b3c4d: rejected (fetch first)",
+					Graph:         GraphView{MaxDepth: 1, MaxFanOut: 2},
 					Tickets: []TicketView{
 						{ID: "g-1a2b3c4d-impl/a", Title: "write the lexer", Status: "merged", Attempts: 1, Tokens: 1000, Depth: 1, Commit: "c0ffee1"},
 						{

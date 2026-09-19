@@ -72,6 +72,12 @@ const (
 	// for it and fails every task of it that is not in flight, parked proposals
 	// included; an attempt already running finishes and its proposal is failed.
 	GoalCancelled EventType = "GoalCancelled"
+	// Delivered: in pull-request delivery mode (ADR 016), a complete Goal's
+	// branch was pushed and its pull request opened. Recorded once per Goal.
+	Delivered EventType = "Delivered"
+	// DeliveryFailed: pushing a complete Goal's branch or opening its pull
+	// request failed. The Goal stays pending delivery; the next run retries.
+	DeliveryFailed EventType = "DeliveryFailed"
 	// StateSnapshot: a compaction event containing the full derived state.
 	// Used to bootstrap state without replaying the entire history.
 	StateSnapshot EventType = "StateSnapshot"
@@ -229,11 +235,14 @@ type VerificationFailedPayload struct {
 	Output   string `json:"output,omitempty"`
 }
 
-// MergedPayload accompanies [Merged].
+// MergedPayload accompanies [Merged]. Branch is the Goal branch the proposal
+// merged into in pull-request delivery mode (ADR 016); it is empty in local
+// mode, where the merge lands on the adopted repository's checked-out branch.
 type MergedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker"`
 	Commit   string `json:"commit"`
+	Branch   string `json:"branch,omitempty"`
 }
 
 // TicketFailedPayload accompanies [TicketFailed]. Worktree, when set, is the
@@ -325,6 +334,24 @@ type GoalCancelledPayload struct {
 	GoalID string `json:"goal_id"`
 	By     string `json:"by,omitempty"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// DeliveredPayload accompanies [Delivered]. Commit is the Goal branch's tip
+// that was pushed, and URL the pull request the opener reported (empty when
+// no opener is configured and delivery is push only).
+type DeliveredPayload struct {
+	GoalID string `json:"goal_id"`
+	Branch string `json:"branch"`
+	Commit string `json:"commit"`
+	URL    string `json:"url,omitempty"`
+}
+
+// DeliveryFailedPayload accompanies [DeliveryFailed]. Reason says what failed
+// — the push or the opener — with the tail of the command's error output.
+type DeliveryFailedPayload struct {
+	GoalID string `json:"goal_id"`
+	Branch string `json:"branch"`
+	Reason string `json:"reason"`
 }
 
 // RegressionEscapedPayload accompanies [RegressionEscaped]. Reason is what the
