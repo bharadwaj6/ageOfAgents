@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -165,14 +166,56 @@ var (
 	date    = ""
 )
 
+type buildMeta struct {
+	version, commit, date string
+}
+
 // versionString renders the build for `aoa version`. Without this every
 // published binary was unable to say which build it was.
 func versionString() string {
-	s := "aoa " + version
-	if commit != "" {
-		s += " (" + commit
-		if date != "" {
-			s += ", " + date
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		info = nil
+	}
+	return formatVersion(resolveBuild(version, commit, date, info))
+}
+
+// resolveBuild prefers GoReleaser ldflags. When those still say "dev" (go
+// install, a plain `go build`), it fills in module version and VCS metadata
+// from *debug.BuildInfo so `aoa version` matches `go version -m`.
+func resolveBuild(ldVersion, ldCommit, ldDate string, info *debug.BuildInfo) buildMeta {
+	m := buildMeta{version: ldVersion, commit: ldCommit, date: ldDate}
+	if m.version != "dev" || info == nil {
+		return m
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		m.version = strings.TrimPrefix(v, "v")
+	}
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if m.commit == "" && s.Value != "" {
+				rev := s.Value
+				if len(rev) > 7 {
+					rev = rev[:7]
+				}
+				m.commit = rev
+			}
+		case "vcs.time":
+			if m.date == "" && s.Value != "" {
+				m.date = s.Value
+			}
+		}
+	}
+	return m
+}
+
+func formatVersion(m buildMeta) string {
+	s := "aoa " + m.version
+	if m.commit != "" {
+		s += " (" + m.commit
+		if m.date != "" {
+			s += ", " + m.date
 		}
 		s += ")"
 	}
