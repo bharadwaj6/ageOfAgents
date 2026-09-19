@@ -50,9 +50,8 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status (2026-09-19):** the backend contract is on `main`. #127 and #133–#142 merged bottom-up,
-and #144 fixed #135. v0.4.0 is being cut. Part 2 (ADR 016 PR delivery, then the GitHub Issues front
-door) starts next.
+**Last status (2026-09-19):** v0.4.0 is released. The backend contract (#127, #133 to #142) and the #135
+fix (#144) are on `main`. Part 2 has started with ADR 016 (PR delivery); the replay events come next.
 
 | | Increment | Depends on |
 |---|---|---|
@@ -67,19 +66,19 @@ door) starts next.
 | [x] | Cancellation: `GoalCancelled`, `aoa cancel`, invariant `CancelHonored` ([#141](https://github.com/bharadwaj6/ageOfAgents/pull/141)) | write verbs, status |
 | [x] | Contract reference `docs/backend.md` and README pointer ([#142](https://github.com/bharadwaj6/ageOfAgents/pull/142)) | all of the above |
 | [x] | A stopped Docker daemon is infrastructure, not a Gate verdict ([#144](https://github.com/bharadwaj6/ageOfAgents/pull/144), fixes #135) | — |
-| [ ] | Release v0.4.0 | all of the above |
+| [x] | Release [v0.4.0](https://github.com/bharadwaj6/ageOfAgents/releases/tag/v0.4.0) | all of the above |
 
 **Part 2: `aoa` builds `aoa`.** A GitHub Issue labelled `aoa` becomes a goal, and `aoa` opens a PR. It runs
 on the maintainer's Mac on a subscription backend.
 
 | | Increment | Depends on |
 |---|---|---|
-| [ ] | ADR 016: deliver a Goal as a pull request ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128)) | v0.4.0 |
+| [x] | [ADR 016](adr/016-deliver-a-goal-as-a-pull-request.md): deliver a Goal as a pull request ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128)) | v0.4.0 |
 | [ ] | `Delivered` / `DeliveryFailed` events and the `delivered` outcome (replay only) | ADR 016 |
 | [ ] | `[delivery] mode = "pr"`: one PR per goal from a Gate-verified `aoa/<goal>` branch | replay |
 | [ ] | GitHub Issues front door + contract-conformance test ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130)) | PR mode |
 | [ ] | Self-hosting on the maintainer's Mac: dedicated clone, launchd, stop switches | front door |
-| [ ] | First dogfood PRs: a docs micro-issue, [#143](https://github.com/bharadwaj6/ageOfAgents/issues/143), [#132](https://github.com/bharadwaj6/ageOfAgents/issues/132) | self-hosting |
+| [ ] | First dogfood PRs: a docs micro-issue, [#146](https://github.com/bharadwaj6/ageOfAgents/issues/146), [#143](https://github.com/bharadwaj6/ageOfAgents/issues/143), [#132](https://github.com/bharadwaj6/ageOfAgents/issues/132) | self-hosting |
 | [ ] | Release v0.5.0 | all of the above |
 
 **Later increments** each need a design decision, and most need an ADR, before any code:
