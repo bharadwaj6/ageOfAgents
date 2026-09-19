@@ -24,3 +24,4 @@ ordinary engineering practice rather than research, and say so.
 | [014](014-cli-backends-as-data.md) | A CLI backend is a table row, and the table is reachable from `aoa.toml` |
 | [015](015-aoa-is-a-backend.md) | `aoa` is a backend: front doors decide what, `aoa` decides whether it lands (extends 003, 008, 010) |
 | [016](016-deliver-a-goal-as-a-pull-request.md) | Deliver a Goal as one pull request from a Gate-verified branch; the forge owns landing (extends 002, 015) |
+| [017](017-spend-is-bounded-before-it-happens.md) | Budgets are enforced before work starts, from the log: harness-reported cost, per attempt/goal/run/day; automation runs only on a budget (extends 015, 016; resolves #77 per workspace) |

@@ -99,6 +99,7 @@ nav:
           - 014 CLI backends as data: design/adr/014-cli-backends-as-data.md
           - 015 aoa is a backend: design/adr/015-aoa-is-a-backend.md
           - 016 Deliver a Goal as a PR: design/adr/016-deliver-a-goal-as-a-pull-request.md
+          - 017 Spend is bounded before it happens: design/adr/017-spend-is-bounded-before-it-happens.md
       - Metrics: design/metrics.md
       - Live evaluation: design/live_eval.md
       - Formal model (TLA+): design/formal/README.md
