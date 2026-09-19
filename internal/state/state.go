@@ -733,3 +733,60 @@ func (s *State) Settled() bool {
 	}
 	return true
 }
+
+// GoalOutcome reports where a Goal stands, as one of the api.Outcome values,
+// judged over its tickets:
+//
+//   - queued: it has no ticket yet — the Scheduler has not picked it up;
+//   - awaiting_approval: any of its tickets is parked for a human decision;
+//   - running: any of its tickets is still in flight;
+//   - failed: none is in flight and some of its work can never land — a
+//     ticket failed (the Gate, a human rejection, a dead dependency) — or its
+//     budget tripped;
+//   - merged: none is in flight and all of its work landed: every ticket
+//     merged, or decomposed into children that all did.
+//
+// Partial success is failed: a Goal decomposed into children, some merged and
+// some failed, did not get what it asked for. What did merge stays merged, and
+// callers can still list those commits. A Goal whose tickets are all terminal
+// but whose decomposition names a child not on the log yet is running, since
+// that work may still be created. An id that names no Goal reports "".
+func (s *State) GoalOutcome(goalID string) string {
+	g := s.Goals[goalID]
+	if g == nil {
+		return ""
+	}
+	var hasTickets, awaiting, inFlight, dead bool
+	complete := true
+	for _, t := range s.Tickets {
+		if t.GoalID != goalID {
+			continue
+		}
+		hasTickets = true
+		switch {
+		case t.Status == StatusAwaiting:
+			awaiting = true
+		case !t.Status.IsTerminal():
+			inFlight = true
+		case s.ticketDead(t.ID):
+			dead = true
+		}
+		if !s.ticketComplete(t.ID) {
+			complete = false
+		}
+	}
+	switch {
+	case !hasTickets:
+		return api.OutcomeQueued
+	case awaiting:
+		return api.OutcomeAwaitingApproval
+	case inFlight:
+		return api.OutcomeRunning
+	case dead || g.BudgetExceeded:
+		return api.OutcomeFailed
+	case complete:
+		return api.OutcomeMerged
+	default:
+		return api.OutcomeRunning
+	}
+}

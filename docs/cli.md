@@ -170,6 +170,22 @@ preserved worktree for each failure.
 | `--path DIR` | `.` | workspace root |
 | `--watch` | `false` | re-render until all work settles |
 | `--interval D` | `2s` | refresh interval for `--watch` |
+| `--json` | `false` | print one snapshot as a single JSON line; cannot be combined with `--watch` |
+
+`--json` prints a `StatusView` (`pkg/api/contract.go`). It has every goal with its origin (`source`,
+`ref`, `by`), its tasks, tokens, cost and merged `commits`, plus an `outcome`:
+
+| `outcome` | Meaning |
+|---|---|
+| `queued` | submitted; the Scheduler has not created a task for it yet |
+| `running` | some task is still in flight |
+| `awaiting_approval` | a verified task is parked for `aoa approve` / `aoa reject` |
+| `merged` | every task landed |
+| `failed` | nothing is in flight and some work can never land: the Gate, a rejection or the budget |
+
+Partial success counts as `failed`: some tasks of a decomposed goal merged and others did not. The ones
+that merged are still listed in `commits`. `last_seq` is the log position the snapshot reflects, so
+`aoa events --json --since <last_seq> --follow` continues from exactly there.
 
 ### `aoa events`
 

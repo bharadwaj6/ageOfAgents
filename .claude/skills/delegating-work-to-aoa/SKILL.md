@@ -54,7 +54,9 @@ aoa diagnose --path <workspace>                 # failure-mode histogram when th
 ```
 
 `status` is the one to quote to the user. A failed task prints a "needs human" line with the worktree
-path, so you can `cd` there and take over rather than starting again.
+path, so you can `cd` there and take over rather than starting again. From a script, use
+`aoa status --json`. It prints one line, with each goal's `outcome` (`queued`, `running`,
+`awaiting_approval`, `merged` or `failed`).
 
 ## Steering a run
 

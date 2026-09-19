@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"maps"
 	"testing"
 	"time"
 
@@ -253,6 +254,10 @@ func TestComputeCostBreakdown(t *testing.T) {
 	if g.GoalID != "g1" || g.Tokens != 3000 || g.Merged != 2 || g.Failed != 0 {
 		t.Errorf("PerGoal[0] = %+v, want goal=g1 tokens=3000 merged=2 failed=0", g)
 	}
+	// The goal's model split prices it exactly as the run is priced.
+	if got := g.TokensByModel; got["modelA"] != 1000 || got["modelB"] != 2000 || len(got) != 2 {
+		t.Errorf("PerGoal[0].TokensByModel = %v, want {modelA:1000 modelB:2000}", got)
+	}
 	// Goal spans t1's first event (seq2) → t2's last event (seq15): 13 ticks.
 	if g.DurationSeconds != 13 {
 		t.Errorf("PerGoal[0].DurationSeconds = %v, want 13", g.DurationSeconds)
@@ -373,5 +378,62 @@ func TestComputeChargesTerminalFailures(t *testing.T) {
 
 	if m := Compute(s.events); m.TokensTotal != 4242 {
 		t.Errorf("TokensTotal = %d, want 4242 — a failed ticket still cost money", m.TokensTotal)
+	}
+}
+
+// TestGoalCostSplitsTokensByModel checks each goal's model split holds exactly
+// the tokens its own tickets spent on each model — failed attempts included —
+// and that tokens charged without a model count in Tokens but not in the split.
+func TestGoalCostSplitsTokensByModel(t *testing.T) {
+	s := newStream(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "a"}).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g2", Text: "b"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "a", IdempotencyKey: "g1:a"}).
+		add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t2", GoalID: "g2", Title: "b", IdempotencyKey: "g2:b"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
+		add(api.WorkerRestarted, "orchestrator", api.WorkerRestartedPayload{TicketID: "t1", Worker: "w1", Tokens: 100, Model: "big"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t1", Worker: "w2"}).
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t1", Worker: "w2", Commit: "c1", Tokens: 50, Model: "small"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t2", Worker: "w3"}).
+		add(api.TicketFailed, "orchestrator", api.TicketFailedPayload{TicketID: "t2", Worker: "w3", Reason: "x", Tokens: 30, Model: "big"}).
+		add(api.TicketClaimed, "orchestrator", api.TicketClaimedPayload{TicketID: "t2", Worker: "w4"}).
+		add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: "t2", Worker: "w4", Commit: "c2", Tokens: 7})
+
+	m := Compute(s.events)
+	want := map[string]struct {
+		tokens  int
+		byModel map[string]int
+	}{
+		"g1": {tokens: 150, byModel: map[string]int{"big": 100, "small": 50}},
+		"g2": {tokens: 37, byModel: map[string]int{"big": 30}},
+	}
+	if len(m.PerGoal) != len(want) {
+		t.Fatalf("PerGoal = %+v, want %d goals", m.PerGoal, len(want))
+	}
+	for _, g := range m.PerGoal {
+		w := want[g.GoalID]
+		if g.Tokens != w.tokens || !maps.Equal(g.TokensByModel, w.byModel) {
+			t.Errorf("PerGoal[%s] = tokens %d by model %v, want %d by model %v", g.GoalID, g.Tokens, g.TokensByModel, w.tokens, w.byModel)
+		}
+	}
+}
+
+// TestUSDIsIndependentOfMapOrder prices three models whose float sum depends
+// on the order it is taken in ((0.1+0.2)+0.3 != (0.3+0.2)+0.1). Go randomizes
+// map iteration, so without a fixed order repeated calls disagree in the last
+// digit — and `aoa status --json` would print a different cost_usd for the same
+// log from one read to the next.
+func TestUSDIsIndependentOfMapOrder(t *testing.T) {
+	a, b, c := 0.1, 0.2, 0.3 // variables, so the sum is float64 arithmetic, not an exact constant
+	tokens := map[string]int{"a": 1_000_000, "b": 1_000_000, "c": 1_000_000}
+	prices := map[string]float64{"a": a, "b": b, "c": c}
+	want := (a + b) + c // name order
+	if want == (c+b)+a {
+		t.Fatal("fixture no longer order-sensitive; pick other prices")
+	}
+	for i := range 200 {
+		if got := USD(tokens, prices); got != want {
+			t.Fatalf("call %d: USD = %v, want %v (models summed out of name order)", i, got, want)
+		}
 	}
 }
