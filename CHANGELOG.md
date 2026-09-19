@@ -121,6 +121,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A stopped Docker daemon is no longer recorded as a failing Gate.** Docker 29 exits `1`, not `125`,
+  when its daemon is unreachable, so with `sandbox = "docker"` every proposal was rejected as though its
+  tests had failed, and retries were spent on code that was never tested. The Gate now asks the daemon
+  first (`docker version`) and reports an unreachable one as infrastructure. `make check` now passes on a
+  machine that has the docker CLI but a stopped daemon.
 - **A new Goal id never collides with an existing one.** Ids are 32 random bits; on the rare collision
   the second Goal was silently dropped on replay. A colliding id is now regenerated.
 - **The Event Log is safe to append from several processes.** `aoa goal`, `approve`, `reject` and

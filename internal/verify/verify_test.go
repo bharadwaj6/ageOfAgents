@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +121,43 @@ func TestDockerInfraFailureIsNotAVerdict(t *testing.T) {
 	}
 	if !res.Infra {
 		t.Errorf("missing image should be flagged as an infrastructure failure, got Output:\n%s", res.Output)
+	}
+}
+
+// fakeDocker puts a `docker` on PATH whose `version` exits versionExit and whose
+// `run` prints a daemon error and exits 1 — what docker 29.x does with its
+// daemon stopped, and what a failing contained command also looks like.
+func fakeDocker(t *testing.T, versionExit int) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake docker is a shell script")
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncase \"$1\" in\n" +
+		"version) exit " + strconv.Itoa(versionExit) + " ;;\n" +
+		"*) echo 'failed to connect to the docker API'; exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// Docker 29 exits 1, not 125, when its daemon is unreachable, so the exit code
+// alone called a stopped daemon a failing test (issue #135).
+func TestDockerDaemonDownIsInfra(t *testing.T) {
+	fakeDocker(t, 1)
+	res := Verifier{Commands: []Command{{"true"}}, Sandbox: "docker"}.Run(context.Background(), t.TempDir())
+	if res.Passed || !res.Infra {
+		t.Errorf("daemon down: Passed=%v Infra=%v, want a failing infrastructure result; Output:\n%s", res.Passed, res.Infra, res.Output)
+	}
+}
+
+// With the daemon up, the contained command's exit 1 is still a verdict.
+func TestDockerCommandFailureIsAVerdict(t *testing.T) {
+	fakeDocker(t, 0)
+	res := Verifier{Commands: []Command{{"false"}}, Sandbox: "docker"}.Run(context.Background(), t.TempDir())
+	if res.Passed || res.Infra {
+		t.Errorf("daemon up, command failed: Passed=%v Infra=%v, want a verdict", res.Passed, res.Infra)
 	}
 }
 
