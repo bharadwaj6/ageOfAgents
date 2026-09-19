@@ -144,6 +144,7 @@ confident than they have earned.
 |---|---|
 | First run, explained step by step | [Get started](https://bharadwaj6.github.io/ageOfAgents/getting-started/) |
 | Every command, flag and `aoa.toml` field | [CLI](https://bharadwaj6.github.io/ageOfAgents/cli/) · [Configuration](https://bharadwaj6.github.io/ageOfAgents/config-reference/) |
+| Driving it from a task board, bot or orchestrator | [Backend contract](https://bharadwaj6.github.io/ageOfAgents/backend/) |
 | Why it's built this way | [Architecture](https://bharadwaj6.github.io/ageOfAgents/design/architecture/) + [decision records](https://bharadwaj6.github.io/ageOfAgents/design/adr/) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CHANGELOG.md`](CHANGELOG.md) |
 

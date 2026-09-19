@@ -22,6 +22,7 @@ $ aoa run
 - :material-robot: **[Harnesses](harnesses/README.md)** — drive Claude Code, Codex, Cursor, Grok, Gemini, or any CLI you already have
 - :material-tune: **[Configuration](config-reference.md)** — every `aoa.toml` field, with defaults
 - :material-console: **[CLI reference](cli.md)** — every command and flag
+- :material-api: **[Drive it from another system](backend.md)** — the JSON contract for task boards, bots and orchestrators
 
 </div>
 
