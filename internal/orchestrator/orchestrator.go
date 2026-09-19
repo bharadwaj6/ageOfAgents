@@ -80,6 +80,11 @@ type Orchestrator struct {
 	// starts, so the window cannot exist.
 	dispatching map[string]int
 
+	// decomposeMu makes a decomposition's appends (child TicketCreated events,
+	// then the TicketDecomposed that charges the parent) atomic with respect to
+	// the Scheduler's govern/promote/dispatch steps. See ReconcileOnce.
+	decomposeMu sync.RWMutex
+
 	mu        sync.Mutex
 	worktrees map[string]*worktree.Worktree
 	// dispatchErr holds the first error a dispatch goroutine could not report
@@ -254,6 +259,28 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		return err
 	}
 
+	// Steps 1c-3 read the log as a set of decisions (govern, promote, dispatch),
+	// so they must not straddle a decomposition landing: children are appended
+	// before the TicketDecomposed event that charges the parent's tokens, and a
+	// pass that saw the children uncharged — or charged only after the governor
+	// had already looked — would promote and dispatch work the budget forbids.
+	// decompose holds the write side while it appends both.
+	if err := func() error {
+		o.decomposeMu.RLock()
+		defer o.decomposeMu.RUnlock()
+		return o.governPromoteDispatch(ctx)
+	}(); err != nil {
+		return err
+	}
+	return o.drainMergeQueue(ctx)
+}
+
+// governPromoteDispatch is steps 1c-3 of ReconcileOnce: the spend governor,
+// dependency promotion and the top-up of the worker pool.
+func (o *Orchestrator) governPromoteDispatch(ctx context.Context) error {
+	var s *state.State
+	var err error
+
 	// 1c. Spend governor: stop Goals that have exhausted their token or USD budget
 	// before dispatching any more work (circuit breaker).
 	if o.opt.MaxTokensPerGoal > 0 || o.opt.MaxUsdPerGoal > 0 {
@@ -314,16 +341,18 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	// for its slowest sibling before the merge queue below could look at it.
 	// ActiveCount() above is the authoritative in-flight count, derived from the
 	// log, so the next pass tops the pool back up. Run joins the workers.
-	if err := o.takeDispatchErr(); err != nil {
-		return err
-	}
+	return o.takeDispatchErr()
+}
 
+// drainMergeQueue is step 4 of ReconcileOnce.
+func (o *Orchestrator) drainMergeQueue(ctx context.Context) error {
 	// 4. Drain the merge queue for proposed tickets (serialized writes to main).
 	// When several proposals are waiting and neither the approval gate nor a
 	// Shadow set is in play, batch disjoint-file ones into a single Gate run;
 	// otherwise process them one at a time (the approval/shadow paths need a
 	// per-proposal Gate, and in PR mode a batch would span Goal branches).
-	if s, err = o.loadState(); err != nil {
+	s, err := o.loadState()
+	if err != nil {
 		return err
 	}
 	proposed := s.Proposed()
@@ -749,6 +778,8 @@ func (o *Orchestrator) decompose(j dispatchJob, worker string, subs []agent.Subt
 		return
 	}
 
+	o.decomposeMu.Lock()
+	defer o.decomposeMu.Unlock()
 	for _, c := range children {
 		if c.adopt {
 			continue // already exists; it is referenced in Children, not re-created
@@ -1078,8 +1109,15 @@ func (o *Orchestrator) nextBackoffWait(s *state.State, now time.Time) (time.Dura
 		}
 		d := backoffFor(o.opt.RetryBackoff, t.Attempts)
 		remaining := d - now.Sub(t.LastActivity)
-		if d <= 0 || remaining <= 0 {
+		if d <= 0 {
 			return 0, false // something is dispatchable now; not a backoff stall
+		}
+		if remaining <= 0 {
+			// The backoff elapsed after this pass's dispatch step looked at the
+			// clock, so it was still blocking the ticket then. Under load the
+			// gap is real; report it as a zero wait so Run loops again and
+			// dispatches, rather than mistaking it for a stall.
+			return 0, true
 		}
 		if wait < 0 || remaining < wait {
 			wait = remaining

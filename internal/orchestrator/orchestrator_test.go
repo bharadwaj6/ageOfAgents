@@ -650,6 +650,62 @@ func TestBackoffDelaysRedispatch(t *testing.T) {
 	}
 }
 
+// The backoff can elapse between the dispatch step's clock read and Run's own:
+// under load that gap is real. Reporting "no wait" there made Run call a
+// dispatchable ticket a stall; it must ask for a zero wait and loop instead.
+func TestNextBackoffWaitElapsedIsNotAStall(t *testing.T) {
+	o := &Orchestrator{opt: Options{RetryBackoff: time.Minute, BestOfN: 1}}
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mk := func(typ api.EventType, payload any) api.Event {
+		e, err := api.NewEvent(typ, "o", payload)
+		require.NoError(t, err)
+		e.Timestamp = t0
+		return e
+	}
+	events := []api.Event{
+		mk(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", Title: "x", IdempotencyKey: "k"}),
+		mk(api.TicketReady, api.TicketReadyPayload{TicketID: "t1"}),
+		mk(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w"}),
+		mk(api.VerificationFailed, api.VerificationFailedPayload{TicketID: "t1", Worker: "w", Reason: "boom"}),
+	}
+	for i := range events {
+		events[i].Seq = i + 1
+	}
+	s, err := state.Fold(events)
+	require.NoError(t, err)
+
+	if wait, ok := o.nextBackoffWait(s, t0.Add(30*time.Second)); !ok || wait != 30*time.Second {
+		t.Errorf("mid-backoff = (%v, %v), want (30s, true)", wait, ok)
+	}
+	if wait, ok := o.nextBackoffWait(s, t0.Add(2*time.Minute)); !ok || wait != 0 {
+		t.Errorf("backoff just elapsed = (%v, %v), want (0, true): a dispatchable ticket is not a stall", wait, ok)
+	}
+}
+
+// A decomposition appends its children and then the event that charges the
+// parent's tokens. A pass that ran between the two saw uncharged children and
+// dispatched them past the budget, so ReconcileOnce must wait for one in flight.
+func TestReconcileOnceWaitsForDecompositionInFlight(t *testing.T) {
+	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
+	o, h := setup(t, agent.NewMock(), pass, Options{Concurrency: 1})
+	h.submitGoal(t, "g1", "x")
+
+	o.decomposeMu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- o.ReconcileOnce(context.Background()) }()
+	select {
+	case err := <-done:
+		o.decomposeMu.Unlock()
+		t.Fatalf("ReconcileOnce returned (%v) while a decomposition held the lock", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	o.decomposeMu.Unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileOnce: %v", err)
+	}
+	o.workers.Wait()
+}
+
 func TestCrashLoopGivesUpEarly(t *testing.T) {
 	fail := verify.Verifier{Commands: []verify.Command{{"false"}}} // always fails the gate
 	o, h := setup(t, agent.NewMock(), fail, Options{
