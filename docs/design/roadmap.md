@@ -50,9 +50,10 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status (2026-09-19):** v0.4.0 is released. On `main`: ADR 016 (#147), PR delivery (#148, #149)
-and the GitHub Issues front door. Next is self-hosting on the maintainer's Mac, then the first dogfood
-issues, then v0.5.0.
+**Last status (2026-09-20):** PR delivery and the GitHub Issues front door are on `main`, and `aoa` has
+merged its first PR for itself (#155). Automation is paused until budgets land: ADR 017 first, then
+honest cost, run and daily budgets, and a budget-bound front door. After that come supervised dogfood
+runs and v0.5.0.
 
 | | Increment | Depends on |
 |---|---|---|
@@ -70,7 +71,8 @@ issues, then v0.5.0.
 | [x] | Release [v0.4.0](https://github.com/bharadwaj6/ageOfAgents/releases/tag/v0.4.0) | all of the above |
 
 **Part 2: `aoa` builds `aoa`.** A GitHub Issue labelled `aoa` becomes a goal, and `aoa` opens a PR. It runs
-on the maintainer's Mac on a subscription backend.
+on the maintainer's Mac on a subscription backend, and only in runs the maintainer starts and watches, on a budget
+([ADR 017](adr/017-spend-is-bounded-before-it-happens.md)).
 
 | | Increment | Depends on |
 |---|---|---|
@@ -78,8 +80,19 @@ on the maintainer's Mac on a subscription backend.
 | [x] | `Delivered` / `DeliveryFailed` events and the `delivered` outcome, replay only ([#148](https://github.com/bharadwaj6/ageOfAgents/pull/148)) | ADR 016 |
 | [x] | `[delivery] mode = "pr"`: one PR per goal from a Gate-verified `aoa/<goal>` branch ([#149](https://github.com/bharadwaj6/ageOfAgents/pull/149)) | replay |
 | [x] | GitHub Issues front door + contract-conformance test, `examples/github-issues` ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130)) | PR mode |
-| [ ] | Self-hosting on the maintainer's Mac: dedicated clone, launchd, stop switches | front door |
-| [ ] | First dogfood PRs: a docs micro-issue, [#146](https://github.com/bharadwaj6/ageOfAgents/issues/146), [#143](https://github.com/bharadwaj6/ageOfAgents/issues/143), [#132](https://github.com/bharadwaj6/ageOfAgents/issues/132) | self-hosting |
+| [x] | Self-hosting on the maintainer's Mac: dedicated clone with a push guard, workspace in PR mode. A launchd schedule was tried and removed: no unattended runs | front door |
+| [x] | First dogfood PR: [#152](https://github.com/bharadwaj6/ageOfAgents/issues/152) → [#155](https://github.com/bharadwaj6/ageOfAgents/pull/155), built by `aoa`, 125k tokens, 1 attempt. Its first try exposed a test bug fixed in [#153](https://github.com/bharadwaj6/ageOfAgents/pull/153) | self-hosting |
+| [x] | [#146](https://github.com/bharadwaj6/ageOfAgents/issues/146) fixed by an outside contributor ([#150](https://github.com/bharadwaj6/ageOfAgents/pull/150)), so taken off `aoa`'s list | — |
+
+**Budgets before any more automation** ([ADR 017](adr/017-spend-is-bounded-before-it-happens.md)).
+
+| | Increment | Depends on |
+|---|---|---|
+| [x] | ADR 017: spend is bounded before it happens | — |
+| [ ] | Charge the harness's reported cost, including failed attempts; one accounting path | ADR 017 |
+| [ ] | Run and daily budgets enforced before dispatch, `BudgetExhausted`, `require_run_budget` ([#77](https://github.com/bharadwaj6/ageOfAgents/issues/77)) | honest cost |
+| [ ] | The front door runs only on a budget: run cap, goals per cycle, quota headroom | budgets |
+| [ ] | Supervised dogfood on a budget: [#143](https://github.com/bharadwaj6/ageOfAgents/issues/143), [#158](https://github.com/bharadwaj6/ageOfAgents/issues/158), [#132](https://github.com/bharadwaj6/ageOfAgents/issues/132) | front door |
 | [ ] | Release v0.5.0 | all of the above |
 
 **Later increments** each need a design decision, and most need an ADR, before any code:
