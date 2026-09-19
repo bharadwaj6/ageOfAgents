@@ -76,6 +76,9 @@ metric come for free rather than being built.
 No agent-to-agent messaging, no voting, no debate, no LLM coordinator, no role hierarchy. Those are
 [deliberate refusals](design/adr/README.md), each with an ADR saying why.
 
+It doesn't decide what to work on, either. A task board, a chat bot, an orchestrator or CI does that, and
+hands the work over through `aoa`'s JSON contract: [drive it from another system](backend.md).
+
 ## Where things stand
 
 The loop closes end to end on real repositories, with real backends, on real money — with cost

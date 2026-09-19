@@ -16,6 +16,7 @@ works in a throwaway git worktree, and a merge queue merges only what passes the
 | Merge Queue | `mergequeue.Queue` | `internal/mergequeue` |
 | Replay | `state.Fold` | `internal/state` |
 | Backend | `agent.Backend` | `internal/agent` |
+| Front door | — (an external caller driving the CLI's JSON contract; ADR 015) | `pkg/api/contract.go`, `docs/backend.md` |
 
 ## Golden rules
 
@@ -33,6 +34,8 @@ The design is opinionated on purpose. Contradicting one of these needs a new ADR
 6. **Keep it small and portable.** One static binary, one config file, git only. A new dependency or a
    required external service needs strong justification. The OpenTelemetry SDK is the one sanctioned
    cluster, isolated in `internal/otel` and opt-in. (ADR 012)
+7. **`aoa` is a backend.** Front doors decide what gets worked on and drive `aoa` through its JSON
+   contract; no triage, discovery or LLM intake inside `aoa`. (ADR 015)
 
 ## Build and test
 
@@ -44,7 +47,7 @@ other target. The suite is hermetic: the `mock` backend never networks, and test
 
 | Path | Responsibility | When changing |
 |---|---|---|
-| `pkg/api` | Event envelope + typed payloads | New event → payload type + `state.Apply` case |
+| `pkg/api` | Event envelope + typed payloads; the CLI's JSON contract (`contract.go`) | New event → payload type + `state.Apply` case; contract fields are additive only |
 | `internal/ledger` | Append-only JSONL Event Log | Keep `Append` safe across goroutines and processes (sidecar flock) |
 | `internal/filelock` | Cross-platform advisory file lock | flock on unix, LockFileEx on Windows; lock sidecar files only |
 | `internal/state` | Replay → state, Task Graph readiness | Pure functions, no I/O |
@@ -57,7 +60,7 @@ other target. The suite is hermetic: the `mock` backend never networks, and test
 | `internal/otel` | Replay projection to OTLP traces + metrics | Off by default, never in the hot path, never networks in tests |
 | `internal/bench`, `internal/liveeval` | Hermetic benchmark + live eval harness | `liveeval` networks only with a networked Backend |
 | `internal/config` | `aoa.toml` loading | New field → default in `Default()` |
-| `cmd/aoa` | Tiny stdlib CLI | No CLI framework; document new commands in `docs/cli.md` |
+| `cmd/aoa` | Tiny stdlib CLI; one-Scheduler lock (`lock.go`), status projection (`status.go`) | No CLI framework; document new commands in `docs/cli.md` |
 | `scripts/` | Eval + benchmark harnesses, installer | Not covered by `make check`; keep runnable from a clean clone |
 
 ## Conventions

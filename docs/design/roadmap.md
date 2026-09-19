@@ -50,35 +50,46 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status (2026-09-19):** every increment is built and in review. #127 (doc fixes) and #133 (this
-ADR) are independent. The rest is one linear stack: #134 (allowlist) ← #136 (ledger lock) ← #137 (one
-Scheduler) ← #138 (write verbs) ← #139 (event cursor) ← #140 (`status --json`) ← #141 (cancel) ← #142
-(contract docs). Merge bottom-up; GitHub retargets each PR to `main` as the one below it lands. Next are
-the later increments below, each with a design decision first. Also filed: #135 (a stopped Docker daemon
-is recorded as a Gate verdict).
+**Last status (2026-09-19):** the backend contract is on `main`. #127 and #133–#142 merged bottom-up,
+and #144 fixed #135. v0.4.0 is being cut. Part 2 (ADR 016 PR delivery, then the GitHub Issues front
+door) starts next.
 
 | | Increment | Depends on |
 |---|---|---|
-| [ ] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |
-| [ ] | ADR 015, tracker and positioning ([#133](https://github.com/bharadwaj6/ageOfAgents/pull/133)) | — |
-| [ ] | `serve` queues work only from trusted commenters, `--allow` ([#134](https://github.com/bharadwaj6/ageOfAgents/pull/134)) | — |
-| [ ] | Event Log safe for writers in several processes, `internal/filelock` ([#136](https://github.com/bharadwaj6/ageOfAgents/pull/136), stacked on #134) | — |
-| [ ] | One Scheduler per workspace, `aoa run` exits `75` when busy ([#137](https://github.com/bharadwaj6/ageOfAgents/pull/137)) | ledger lock |
-| [ ] | Write verbs: goal `--source/--ref/--key`, idempotent submit, `--json` on goal/amend/approve/reject ([#138](https://github.com/bharadwaj6/ageOfAgents/pull/138)) | ledger lock |
-| [ ] | `status --json` from one projection shared with text `status` ([#140](https://github.com/bharadwaj6/ageOfAgents/pull/140)) | write verbs |
-| [ ] | Event cursor: `events --json --since N` and `--follow` ([#139](https://github.com/bharadwaj6/ageOfAgents/pull/139)) | ledger lock |
-| [ ] | Cancellation: `GoalCancelled`, `aoa cancel`, invariant `CancelHonored` ([#141](https://github.com/bharadwaj6/ageOfAgents/pull/141)) | write verbs, status |
-| [ ] | Contract reference `docs/backend.md` and README pointer ([#142](https://github.com/bharadwaj6/ageOfAgents/pull/142)) | all of the above |
+| [x] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |
+| [x] | ADR 015, tracker and positioning ([#133](https://github.com/bharadwaj6/ageOfAgents/pull/133)) | — |
+| [x] | `serve` queues work only from trusted commenters, `--allow` ([#134](https://github.com/bharadwaj6/ageOfAgents/pull/134)) | — |
+| [x] | Event Log safe for writers in several processes, `internal/filelock` ([#136](https://github.com/bharadwaj6/ageOfAgents/pull/136)) | — |
+| [x] | One Scheduler per workspace, `aoa run` exits `75` when busy ([#137](https://github.com/bharadwaj6/ageOfAgents/pull/137)) | ledger lock |
+| [x] | Write verbs: goal `--source/--ref/--key`, idempotent submit, `--json` on goal/amend/approve/reject ([#138](https://github.com/bharadwaj6/ageOfAgents/pull/138)) | ledger lock |
+| [x] | `status --json` from one projection shared with text `status` ([#140](https://github.com/bharadwaj6/ageOfAgents/pull/140)) | write verbs |
+| [x] | Event cursor: `events --json --since N` and `--follow` ([#139](https://github.com/bharadwaj6/ageOfAgents/pull/139)) | ledger lock |
+| [x] | Cancellation: `GoalCancelled`, `aoa cancel`, invariant `CancelHonored` ([#141](https://github.com/bharadwaj6/ageOfAgents/pull/141)) | write verbs, status |
+| [x] | Contract reference `docs/backend.md` and README pointer ([#142](https://github.com/bharadwaj6/ageOfAgents/pull/142)) | all of the above |
+| [x] | A stopped Docker daemon is infrastructure, not a Gate verdict ([#144](https://github.com/bharadwaj6/ageOfAgents/pull/144), fixes #135) | — |
+| [ ] | Release v0.4.0 | all of the above |
+
+**Part 2: `aoa` builds `aoa`.** A GitHub Issue labelled `aoa` becomes a goal, and `aoa` opens a PR. It runs
+on the maintainer's Mac on a subscription backend.
+
+| | Increment | Depends on |
+|---|---|---|
+| [ ] | ADR 016: deliver a Goal as a pull request ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128)) | v0.4.0 |
+| [ ] | `Delivered` / `DeliveryFailed` events and the `delivered` outcome (replay only) | ADR 016 |
+| [ ] | `[delivery] mode = "pr"`: one PR per goal from a Gate-verified `aoa/<goal>` branch | replay |
+| [ ] | GitHub Issues front door + contract-conformance test ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130)) | PR mode |
+| [ ] | Self-hosting on the maintainer's Mac: dedicated clone, launchd, stop switches | front door |
+| [ ] | First dogfood PRs: a docs micro-issue, [#143](https://github.com/bharadwaj6/ageOfAgents/issues/143), [#132](https://github.com/bharadwaj6/ageOfAgents/issues/132) | self-hosting |
+| [ ] | Release v0.5.0 | all of the above |
 
 **Later increments** each need a design decision, and most need an ADR, before any code:
 
-- delivery by push or PR ([#128](https://github.com/bharadwaj6/ageOfAgents/issues/128));
 - reporting back to the origin ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129));
 - a team HTTP transport for the same verbs, with auth and several workspaces
   ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)), plus a cross-run budget
   ([#77](https://github.com/bharadwaj6/ageOfAgents/issues/77));
-- reference integrations for firstmate, Linear, GitHub labels and Symphony
-  ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130));
+- reference integrations for firstmate, Linear and Symphony
+  ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130); GitHub Issues is Part 2);
 - one repo adopted by two workspaces ([#131](https://github.com/bharadwaj6/ageOfAgents/issues/131)).
 
 ## Not yet scheduled

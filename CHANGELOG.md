@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-19
+
+`aoa` becomes a backend that front doors (task boards, bots, orchestrators, CI) drive through a stable JSON
+contract ([ADR 015](docs/design/adr/015-aoa-is-a-backend.md)).
+
 ### Added
 
 - **Write verbs a front door can drive.** `aoa goal`, `amend`, `approve` and `reject` take `--json` and
@@ -304,6 +309,7 @@ Docker sandboxing for the Gate, GitHub Actions integration, and a TLA+ model of 
 
 **Its release notes claim a SWE-bench result that this project cannot support.** See the 0.2.0 entry.
 
+[0.4.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/bharadwaj6/ageOfAgents/releases/tag/v0.1.0
