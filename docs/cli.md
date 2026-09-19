@@ -347,6 +347,8 @@ status, which GitHub would redeliver — queues nothing, and logs one line namin
     work: adding `CONTRIBUTOR` or `NONE` lets strangers on a public repository run agents on your machine.
     See [Scheduling](scheduling.md) and [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
 
+No public endpoint? The reference front door in [`examples/github-issues`](https://github.com/bharadwaj6/ageOfAgents/tree/main/examples/github-issues) polls issues labelled `aoa` instead of receiving webhooks.
+
 ## Shell integration
 
 ### `aoa version`
