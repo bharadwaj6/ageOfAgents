@@ -106,7 +106,7 @@ next run). With `--interval`, a pass that finds the workspace busy is skipped an
 | Exit status | Meaning |
 |---|---|
 | `0` | all work settled and no task failed |
-| `1` | a task failed, or the run hit an error |
+| `1` | a task failed (not counting cancelled goals), or the run hit an error |
 | `2` | a flag could not be parsed |
 | `75` | another `aoa run` holds the workspace (`EX_TEMPFAIL`); nothing was done |
 
@@ -161,7 +161,7 @@ Goal and dispatches nothing more for it — no new attempt, no retry — and fai
 not in flight with the reason `goal cancelled`: queued tasks, proposals waiting for the merge queue, and
 proposals parked for `aoa approve`. An attempt already running is left to finish, and its proposal is
 failed instead of merged. The Goal's `outcome` in `aoa status` is `cancelled` from the moment it is
-cancelled. Its failed tasks count toward `aoa run`'s exit status like any other failed task.
+cancelled. Its failed tasks do not make `aoa run` exit `1`: a cancel is a decision, not a failure.
 
 The one thing a cancel cannot stop is a merge already executing when it lands: the merge queue checks
 for a cancel immediately before each merge, not during one. Work that merged before the cancel stays
