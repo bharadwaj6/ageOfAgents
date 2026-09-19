@@ -215,13 +215,13 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 
 // ReconcileOnce performs one full reconcile pass.
 func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
-	// 1. Decompose goals that have no tickets yet.
+	// 1. Decompose goals that have no tickets yet (a cancelled Goal never gets one).
 	s, err := o.loadState()
 	if err != nil {
 		return err
 	}
 	for _, g := range sortedGoals(s) {
-		if !o.goalHasTickets(s, g.ID) {
+		if !g.Cancelled && !o.goalHasTickets(s, g.ID) {
 			if err := o.emit(api.TicketCreated, api.TicketCreatedPayload{
 				TicketID:       g.ID + "-impl",
 				GoalID:         g.ID,
@@ -233,7 +233,16 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		}
 	}
 
-	// 1b. Spend governor: stop Goals that have exhausted their token or USD budget
+	// 1b. Cancellation: fail the work of cancelled Goals that is not in flight
+	// before anything more is dispatched or merged.
+	if s, err = o.loadState(); err != nil {
+		return err
+	}
+	if err := o.enforceCancellations(ctx, s); err != nil {
+		return err
+	}
+
+	// 1c. Spend governor: stop Goals that have exhausted their token or USD budget
 	// before dispatching any more work (circuit breaker).
 	if o.opt.MaxTokensPerGoal > 0 || o.opt.MaxUsdPerGoal > 0 {
 		if s, err = o.loadState(); err != nil {
@@ -299,6 +308,9 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	}
 	proposed := s.Proposed()
 	if len(proposed) > 1 && !o.opt.RequireApproval && len(o.mq.Shadow.Commands) == 0 {
+		if proposed, err = o.dropCancelled(ctx, proposed); err != nil {
+			return err
+		}
 		props := make([]mergequeue.Proposal, len(proposed))
 		for i, t := range proposed {
 			props[i] = mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch}
@@ -798,12 +810,68 @@ func (o *Orchestrator) enforceBudgets(s *state.State) error {
 	return nil
 }
 
+// enforceCancellations fails the work of cancelled Goals that is not in flight:
+// pending and ready tickets, and proposals, parked for approval or not. The
+// spend governor lets proposed work merge; a cancel must not, since it promises
+// that none of the Goal's work lands. An attempt in flight (claimed, running, or
+// launched and not yet claimed) is left to finish, and its proposal is failed on
+// a later pass.
+func (o *Orchestrator) enforceCancellations(ctx context.Context, s *state.State) error {
+	for _, id := range s.TicketOrder {
+		t := s.Tickets[id]
+		if t == nil || t.Status.IsTerminal() || t.Status == state.StatusClaimed || t.Status == state.StatusRunning {
+			continue
+		}
+		if g := s.Goals[t.GoalID]; g == nil || !g.Cancelled || o.inFlightFor(t.ID) > 0 {
+			continue
+		}
+		if err := o.failCancelled(ctx, t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropCancelled fails each proposal whose Goal is cancelled per a fresh read of
+// the log, and returns the rest to merge. The state a pass read at its start is
+// stale by the time a later proposal reaches the queue — an earlier proposal's
+// Gate can run for minutes — and a cancel appended meanwhile must still stop
+// it. Only a cancel that lands once a merge is already executing is too late.
+func (o *Orchestrator) dropCancelled(ctx context.Context, proposed []*state.Ticket) ([]*state.Ticket, error) {
+	s, err := o.loadState()
+	if err != nil {
+		return nil, err
+	}
+	var keep []*state.Ticket
+	for _, t := range proposed {
+		if g := s.Goals[t.GoalID]; g != nil && g.Cancelled {
+			if err := o.failCancelled(ctx, t); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		keep = append(keep, t)
+	}
+	return keep, nil
+}
+
+// failCancelled terminally fails a ticket whose Goal was cancelled. Nobody will
+// take the work over, so its worktree is removed rather than preserved.
+func (o *Orchestrator) failCancelled(ctx context.Context, t *state.Ticket) error {
+	o.cleanupWorktree(ctx, t.ID)
+	return o.emit(api.TicketFailed, api.TicketFailedPayload{TicketID: t.ID, Worker: t.Worker, Reason: "goal cancelled"})
+}
+
 // processProposal verifies and merges a proposed ticket, or rejects it. When
 // RequireApproval is set and the ticket is not yet approved, it instead dry-runs
 // the Gate and parks the verified candidate for a human decision (ADR 008); the
 // real verify+merge happens on a later pass once ApprovalGranted has returned
-// the ticket to the queue.
+// the ticket to the queue. A ticket whose Goal has been cancelled is failed
+// instead (dropCancelled).
 func (o *Orchestrator) processProposal(ctx context.Context, t *state.Ticket) error {
+	if live, err := o.dropCancelled(ctx, []*state.Ticket{t}); err != nil || len(live) == 0 {
+		return err
+	}
 	if o.opt.RequireApproval && !t.Approved {
 		out, err := o.mq.DryRun(ctx, mergequeue.Proposal{TicketID: t.ID, Worker: t.Worker, Branch: t.Branch})
 		if err != nil {
@@ -1087,9 +1155,11 @@ func (o *Orchestrator) goalHasTickets(s *state.State, goalID string) bool {
 	return false
 }
 
+// allGoalsDecomposed reports whether every Goal has a ticket, except a
+// cancelled one, which may never get one.
 func (o *Orchestrator) allGoalsDecomposed(s *state.State) bool {
-	for id := range s.Goals {
-		if !o.goalHasTickets(s, id) {
+	for id, g := range s.Goals {
+		if !g.Cancelled && !o.goalHasTickets(s, id) {
 			return false
 		}
 	}

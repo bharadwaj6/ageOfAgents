@@ -108,7 +108,16 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 				gv.Commits = append(gv.Commits, tv.Commit)
 			}
 		}
-		if gv.Outcome != api.OutcomeMerged && gv.Outcome != api.OutcomeFailed {
+		switch gv.Outcome {
+		case api.OutcomeMerged, api.OutcomeFailed:
+		case api.OutcomeCancelled:
+			// Settled once the Scheduler has nothing of it left to finish or fail.
+			for _, tv := range gv.Tickets {
+				if !state.TicketStatus(tv.Status).IsTerminal() {
+					v.Settled = false
+				}
+			}
+		default:
 			v.Settled = false
 		}
 		v.Goals = append(v.Goals, gv)

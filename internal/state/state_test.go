@@ -790,3 +790,19 @@ func TestTicketFailedEndsAParkedProposal(t *testing.T) {
 		t.Errorf("status = %s, want failed", got)
 	}
 }
+
+func TestCancelledGoalHasNothingToDispatch(t *testing.T) {
+	b := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "one"}).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "two"})
+	created(b, "pending", "g1")
+	created(b, "ready", "g1").add(api.TicketReady, api.TicketReadyPayload{TicketID: "ready"})
+	created(b, "other", "g2")
+	s := b.add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g1"}).fold()
+	if got := ids(s.NewlyReady()); len(got) != 1 || got[0] != "other" {
+		t.Errorf("NewlyReady = %v, want [other]: a cancelled goal's ticket is never promoted", got)
+	}
+	if got := ids(s.ReadyTickets()); len(got) != 0 {
+		t.Errorf("ReadyTickets = %v, want none: a cancelled goal's ticket is never dispatched", got)
+	}
+}
