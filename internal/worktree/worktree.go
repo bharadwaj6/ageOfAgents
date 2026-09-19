@@ -45,6 +45,8 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	if dir != "" {
 		cmd.Dir = dir
 	}
+	// Never wait on a credential prompt nobody will answer (fetch and push).
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("git %s: %w\n%s", strings.Join(args, " "), err, out)
@@ -100,6 +102,12 @@ func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 // "main" lets aoa adopt an existing repo on any branch (master, a feature
 // branch, …); for a scaffolded repo HEAD is main, so behavior is unchanged.
 func (r *Repo) AddWorktree(ctx context.Context, dest, branch string) (*Worktree, error) {
+	return r.AddWorktreeFrom(ctx, dest, branch, "HEAD")
+}
+
+// AddWorktreeFrom creates a new worktree at dest on a fresh branch cut from
+// base — in pull-request delivery mode, the Goal branch (ADR 016).
+func (r *Repo) AddWorktreeFrom(ctx context.Context, dest, branch, base string) (*Worktree, error) {
 	// Normalize to absolute: MkdirAll resolves against the process CWD while
 	// `git worktree add` resolves against the repo dir, so a relative dest would
 	// create the directory in two different places (scattering worktrees wherever
@@ -111,7 +119,7 @@ func (r *Repo) AddWorktree(ctx context.Context, dest, branch string) (*Worktree,
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return nil, fmt.Errorf("create worktree parent: %w", err)
 	}
-	if _, err := git(ctx, r.Dir, "worktree", "add", "-b", branch, dest, "HEAD"); err != nil {
+	if _, err := git(ctx, r.Dir, "worktree", "add", "-b", branch, dest, base); err != nil {
 		return nil, err
 	}
 	return &Worktree{Path: dest, Branch: branch}, nil
@@ -235,6 +243,55 @@ func (r *Repo) Remove(ctx context.Context, w *Worktree) error {
 	// empty dir, so a base still holding sibling worktrees is left untouched.
 	_ = os.Remove(filepath.Dir(w.Path))
 	return nil
+}
+
+// RevParse resolves ref to a commit SHA.
+func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
+	out, err := git(ctx, r.Dir, "rev-parse", "--verify", ref)
+	return strings.TrimSpace(out), err
+}
+
+// Fetch updates remote's tracking ref for one branch,
+// refs/remotes/<remote>/<branch>, and nothing else.
+func (r *Repo) Fetch(ctx context.Context, remote, branch string) error {
+	_, err := git(ctx, r.Dir, "fetch", remote, "+refs/heads/"+branch+":refs/remotes/"+remote+"/"+branch)
+	return err
+}
+
+// EnsureBranch creates branch name at start unless it already exists, in
+// which case it is left where it is.
+func (r *Repo) EnsureBranch(ctx context.Context, name, start string) error {
+	if _, err := git(ctx, r.Dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+name); err == nil {
+		return nil
+	}
+	_, err := git(ctx, r.Dir, "branch", "--no-track", name, start)
+	return err
+}
+
+// Detach checks out ref's commit with a detached HEAD in the repository's
+// working tree, moving no branch, and returns that commit. The merge queue
+// then merges onto it, so a Goal branch is written only by UpdateRef.
+func (r *Repo) Detach(ctx context.Context, ref string) (tip string, err error) {
+	if _, err := git(ctx, r.Dir, "checkout", "--detach", ref); err != nil {
+		return "", err
+	}
+	return r.Head(ctx)
+}
+
+// UpdateRef moves ref to newSHA only if it still points at oldSHA: a
+// compare-and-swap, so a ref that moved underneath fails instead of being
+// overwritten.
+func (r *Repo) UpdateRef(ctx context.Context, ref, newSHA, oldSHA string) error {
+	_, err := git(ctx, r.Dir, "update-ref", ref, newSHA, oldSHA)
+	return err
+}
+
+// Push publishes branch to the branch of the same name on remote. It never
+// forces: a remote branch that has diverged is rejected, not overwritten, and
+// pushing a branch the remote already has is a no-op.
+func (r *Repo) Push(ctx context.Context, remote, branch string) error {
+	_, err := git(ctx, r.Dir, "push", remote, "refs/heads/"+branch+":refs/heads/"+branch)
+	return err
 }
 
 // SanitizeBranch turns an arbitrary id into a safe branch component.

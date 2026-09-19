@@ -1,8 +1,10 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +18,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		BestOfN:         1,
 		ConventionsFile: "CONVENTIONS.md",
 		Verify:          [][]string{{"go", "build", "./..."}, {"go", "test", "./..."}},
+		Delivery:        DeliveryConfig{Mode: "local"},
 	}
 	if err := want.Save(path); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -92,5 +95,63 @@ func TestTerminationGatesDefaultToZero(t *testing.T) {
 	if got.StallTimeout != "" || got.MaxPasses != 0 || got.MaxGraphDepth != 0 ||
 		got.MaxTicketsPerGoal != 0 || got.MaxFanOut != 0 {
 		t.Errorf("unset termination gates should stay zero, got %+v", got)
+	}
+}
+
+func TestDeliveryDefaults(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		want    DeliveryConfig
+		wantErr string
+	}{
+		{name: "absent is local", toml: "", want: DeliveryConfig{Mode: "local"}},
+		{name: "local leaves the rest unset", toml: "[delivery]\nmode = \"local\"\n", want: DeliveryConfig{Mode: "local"}},
+		{
+			name: "pr fills remote, base and the gh opener",
+			toml: "[delivery]\nmode = \"pr\"\n",
+			want: DeliveryConfig{Mode: "pr", Remote: "origin", Base: "main", OpenPR: DefaultOpenPR},
+		},
+		{
+			name: "pr keeps what is set",
+			toml: "[delivery]\nmode = \"pr\"\nremote = \"upstream\"\nbase = \"trunk\"\nopen_pr = [\"glab\", \"mr\", \"create\", \"{branch}\"]\n",
+			want: DeliveryConfig{Mode: "pr", Remote: "upstream", Base: "trunk", OpenPR: []string{"glab", "mr", "create", "{branch}"}},
+		},
+		{
+			name: "an empty opener means push only",
+			toml: "[delivery]\nmode = \"pr\"\nopen_pr = []\n",
+			want: DeliveryConfig{Mode: "pr", Remote: "origin", Base: "main", OpenPR: []string{}},
+		},
+		{name: "invalid mode", toml: "[delivery]\nmode = \"push\"\n", wantErr: `[delivery] mode "push"`},
+	}
+	// A push-only config survives a save: open_pr = [] must not come back as
+	// unset, which would mean the default opener.
+	pushOnly := filepath.Join(t.TempDir(), FileName)
+	if err := (Config{Repo: "./x", Delivery: DeliveryConfig{Mode: "pr", OpenPR: []string{}}}).Save(pushOnly); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got, err := Load(pushOnly); err != nil || got.Delivery.OpenPR == nil || len(got.Delivery.OpenPR) != 0 {
+		t.Errorf("push-only round trip: open_pr = %#v, err = %v; want [] (push only)", got.Delivery.OpenPR, err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), FileName)
+			if err := os.WriteFile(path, []byte("repo = \"./x\"\n"+tt.toml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load(path)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Load error = %v, want it to mention %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if !reflect.DeepEqual(got.Delivery, tt.want) {
+				t.Errorf("delivery = %#v, want %#v", got.Delivery, tt.want)
+			}
+		})
 	}
 }

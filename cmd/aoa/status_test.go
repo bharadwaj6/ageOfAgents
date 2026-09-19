@@ -267,7 +267,7 @@ func deliveryLog(delivered bool) func(t *testing.T) *logBuilder {
 			add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl", Worker: "w1"}).
 			add(1, api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "g-1-impl", Worker: "w1", Commit: "cand-1"}).
 			add(1, api.Merged, api.MergedPayload{TicketID: "g-1-impl", Worker: "w1", Commit: "m1", Branch: "aoa/g-1"}).
-			add(1, api.DeliveryFailed, api.DeliveryFailedPayload{GoalID: "g-1", Branch: "aoa/g-1", Reason: "push aoa/g-1: rejected"})
+			add(1, api.DeliveryFailed, api.DeliveryFailedPayload{GoalID: "g-1", Branch: "aoa/g-1", Reason: "push aoa/g-1: exit status 1\n ! [rejected] aoa/g-1 (fetch first)"})
 		if delivered {
 			b.add(1, api.Delivered, api.DeliveredPayload{GoalID: "g-1", Branch: "aoa/g-1", Commit: "m1", URL: "https://github.com/o/r/pull/9"})
 		}
@@ -371,7 +371,7 @@ func TestStatusViewProjection(t *testing.T) {
 		{
 			name: "delivery failed, still pending", log: deliveryLog(false),
 			wantGoals: []goalWant{{ID: "g-1", Outcome: api.OutcomeRunning, Source: "github", Commits: []string{"m1"},
-				Tickets: []string{"g-1-impl"}, Branch: "aoa/g-1", DeliveryError: "push aoa/g-1: rejected"}},
+				Tickets: []string{"g-1-impl"}, Branch: "aoa/g-1", DeliveryError: "push aoa/g-1: exit status 1\n ! [rejected] aoa/g-1 (fetch first)"}},
 			wantTotals: api.StatusTotals{WallSeconds: 5, Goals: 1, Tickets: 1, Merged: 1},
 			wantQueue:  api.MergeQueueView{MaxDepth: 1, WaitMeanSeconds: 1, WaitMaxSeconds: 1},
 		},
@@ -606,14 +606,15 @@ func TestPrintStatusFailedExcludesCancelledGoals(t *testing.T) {
 }
 
 // The text output names the pull request once a goal is delivered, and why
-// delivery is still pending after a failure — lines that appear only in
-// pull-request delivery mode, so the local-mode goldens above never change.
+// delivery is still pending after a failure — indented under the goal, though
+// git's output runs to several lines. Both appear only in pull-request
+// delivery mode, so the local-mode goldens above never change.
 func TestStatusTextShowsDelivery(t *testing.T) {
 	tests := []struct {
 		name, want, notWant string
 		log                 func(*testing.T) *logBuilder
 	}{
-		{name: "pending", log: deliveryLog(false), want: "goal g-1: ship it\n  delivery pending: push aoa/g-1: rejected\n", notWant: "  pr: "},
+		{name: "pending", log: deliveryLog(false), want: "goal g-1: ship it\n  delivery pending: push aoa/g-1: exit status 1\n     ! [rejected] aoa/g-1 (fetch first)\n", notWant: "  pr: "},
 		{name: "delivered", log: deliveryLog(true), want: "goal g-1: ship it\n  pr: https://github.com/o/r/pull/9\n", notWant: "delivery pending"},
 	}
 	for _, tt := range tests {

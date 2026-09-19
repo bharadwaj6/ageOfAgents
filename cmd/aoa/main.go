@@ -1529,6 +1529,10 @@ func buildOrchestrator(ws workspace, led *ledger.Ledger) (*orchestrator.Orchestr
 		return nil, err
 	}
 	repo := worktree.OpenRepo(resolve(ws.root, cfg.Repo))
+	delivery, err := preflightDelivery(cfg.Delivery, repo.Dir)
+	if err != nil {
+		return nil, err
+	}
 	backend, err := buildBackend(cfg)
 	if err != nil {
 		return nil, err
@@ -1587,12 +1591,33 @@ func buildOrchestrator(ws workspace, led *ledger.Ledger) (*orchestrator.Orchestr
 		MaxGraphDepth:     cfg.MaxGraphDepth,
 		MaxTicketsPerGoal: cfg.MaxTicketsPerGoal,
 		MaxFanOut:         cfg.MaxFanOut,
+		Delivery:          delivery,
 	}
 	mq := mergequeue.New(repo, gate)
 	if len(cfg.RegressionVerify) > 0 {
 		mq.Shadow = verify.Verifier{Commands: verify.ToCommands(cfg.RegressionVerify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage}
 	}
 	return orchestrator.New(led, repo, backend, mq, opt), nil
+}
+
+// preflightDelivery maps the [delivery] table onto the Scheduler's options.
+// In pr mode it checks, before any work starts, that the repository has the
+// remote to push to and that the opener's binary is installed; otherwise the
+// first sign of either would be a failed delivery after all the work was done.
+func preflightDelivery(d config.DeliveryConfig, repoDir string) (orchestrator.Delivery, error) {
+	if d.Mode != "pr" {
+		return orchestrator.Delivery{}, nil
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "remote", "get-url", d.Remote).CombinedOutput(); err != nil {
+		return orchestrator.Delivery{}, fmt.Errorf("[delivery] mode = \"pr\" pushes to remote %q, which %s does not have: %s",
+			d.Remote, repoDir, strings.TrimSpace(string(out)))
+	}
+	if len(d.OpenPR) > 0 {
+		if _, err := exec.LookPath(d.OpenPR[0]); err != nil {
+			return orchestrator.Delivery{}, fmt.Errorf("[delivery] open_pr needs %q on your PATH, but it was not found — install it, or change open_pr in %s", d.OpenPR[0], config.FileName)
+		}
+	}
+	return orchestrator.Delivery{Remote: d.Remote, Base: d.Base, OpenPR: d.OpenPR}, nil
 }
 
 // requireCLI fails fast when a CLI-driven backend's binary is missing. Without

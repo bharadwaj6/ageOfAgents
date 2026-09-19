@@ -106,7 +106,7 @@ next run). With `--interval`, a pass that finds the workspace busy is skipped an
 | Exit status | Meaning |
 |---|---|
 | `0` | all work settled and no task failed |
-| `1` | a task failed (not counting cancelled goals), or the run hit an error |
+| `1` | a task failed (not counting cancelled goals), a pull request could not be delivered (pr mode), or the run hit an error |
 | `2` | a flag could not be parsed |
 | `75` | another `aoa run` holds the workspace (`EX_TEMPFAIL`); nothing was done |
 
@@ -168,8 +168,8 @@ for a cancel immediately before each merge, not during one. Work that merged bef
 merged.
 
 Cancelling a Goal already cancelled succeeds, says `goal g-… already cancelled`, and appends nothing, so a
-retry is safe. An unknown goal id is an error, as is a Goal that has already settled as `merged` or
-`failed` (`goal "g-…" already settled as merged; nothing to cancel`). Neither appends anything.
+retry is safe. An unknown goal id is an error, as is a Goal that has already settled as `merged`,
+`delivered` or `failed` (`goal "g-…" already settled as merged; nothing to cancel`). Neither appends anything.
 
 ### Machine-readable output
 
@@ -210,14 +210,17 @@ preserved worktree for each failure.
 | `outcome` | Meaning |
 |---|---|
 | `queued` | submitted; the Scheduler has not created a task for it yet |
-| `running` | some task is still in flight |
+| `running` | some task is still in flight, or, in pr delivery mode, its pull request is not open yet |
 | `awaiting_approval` | a verified task is parked for `aoa approve` / `aoa reject` |
 | `merged` | every task landed |
+| `delivered` | `[delivery] mode = "pr"`: every task landed on the Goal branch, which was pushed and its pull request opened (`pr_url`) |
 | `failed` | nothing is in flight and some work can never land: the Gate, a rejection or the budget |
 | `cancelled` | withdrawn with `aoa cancel`; none of its work lands from then on, even while an attempt finishes |
 
 Partial success counts as `failed`: some tasks of a decomposed goal merged and others did not. The ones
-that merged are still listed in `commits`. `last_seq` is the log position the snapshot reflects, so
+that merged are still listed in `commits`. In pr delivery mode a goal whose work has all landed stays
+`running` until it is delivered; `delivery_error` says why when a push or the opener failed, and the text
+output prints it as `delivery pending: …` (and the pull request as `pr: …` once delivered). `last_seq` is the log position the snapshot reflects, so
 `aoa events --json --since <last_seq> --follow` continues from exactly there.
 
 ### `aoa events`

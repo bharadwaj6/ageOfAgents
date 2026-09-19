@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 )
@@ -29,6 +30,33 @@ type BackendConfig struct {
 	// argument, as a single argv element (no shell). A harness that wants the
 	// prompt somewhere else is a three-line wrapper script on your PATH.
 	Args []string `toml:"args"`
+}
+
+// DeliveryConfig is the [delivery] table: where a verified change goes (ADR
+// 016). Mode "local" (the default) merges onto the adopted repository's
+// checked-out branch and pushes nothing. Mode "pr" merges each Goal's work onto
+// its own branch, aoa/<goal-id>, cut from Remote's Base; once every task of
+// the Goal is complete it pushes that branch to Remote (never with force) and
+// runs OpenPR to open a pull request against Base.
+type DeliveryConfig struct {
+	Mode   string `toml:"mode"`
+	Remote string `toml:"remote,omitempty"` // default "origin" in pr mode
+	Base   string `toml:"base,omitempty"`   // default "main" in pr mode
+	// OpenPR is the opener argv, run in the repository without a shell. The
+	// placeholders {branch} {base} {title} {body} are replaced inside each
+	// element, so each stays one argument. The last stdout line starting with
+	// "http" is the pull request's URL. Unset in pr mode means DefaultOpenPR;
+	// open_pr = [] means push only.
+	OpenPR []string `toml:"open_pr"`
+}
+
+// DefaultOpenPR opens a pull request with the GitHub CLI, returning the one
+// already open for the branch instead when there is one, so re-running it
+// after a crash yields exactly one pull request.
+var DefaultOpenPR = []string{
+	"sh", "-c",
+	`gh pr view "$1" --json url --jq .url 2>/dev/null || gh pr create --head "$1" --base "$2" --title "$3" --body "$4"`,
+	"aoa-open-pr", "{branch}", "{base}", "{title}", "{body}",
 }
 
 // Config is the on-disk workspace configuration.
@@ -130,6 +158,9 @@ type Config struct {
 	// FallbackBackends specifies an ordered list of backend IDs to try if the
 	// primary Backend fails (e.g., rate limits or API errors).
 	FallbackBackends []string `toml:"fallback_backends"`
+	// Delivery says where verified work goes: the local branch, or a pull
+	// request per Goal (ADR 016).
+	Delivery DeliveryConfig `toml:"delivery"`
 }
 
 // Default returns a config with sensible defaults: an offline mock Backend and
@@ -145,6 +176,7 @@ func Default() Config {
 			{"go", "build", "./..."},
 			{"go", "test", "./..."},
 		},
+		Delivery: DeliveryConfig{Mode: "local"},
 	}
 }
 
@@ -154,7 +186,11 @@ func Load(path string) (Config, error) {
 	if _, err := toml.DecodeFile(path, &c); err != nil {
 		return Config{}, fmt.Errorf("load %s: %w", path, err)
 	}
-	return c.withDefaults(), nil
+	c = c.withDefaults()
+	if m := c.Delivery.Mode; m != "local" && m != "pr" {
+		return Config{}, fmt.Errorf("load %s: [delivery] mode %q: want \"local\" or \"pr\"", path, m)
+	}
+	return c, nil
 }
 
 // LoadPricing reads a standalone TOML file holding a [pricing] table (the same
@@ -205,6 +241,20 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Verify == nil {
 		c.Verify = d.Verify
+	}
+	if c.Delivery.Mode == "" {
+		c.Delivery.Mode = d.Delivery.Mode
+	}
+	if c.Delivery.Mode == "pr" {
+		if c.Delivery.Remote == "" {
+			c.Delivery.Remote = "origin"
+		}
+		if c.Delivery.Base == "" {
+			c.Delivery.Base = "main"
+		}
+		if c.Delivery.OpenPR == nil {
+			c.Delivery.OpenPR = slices.Clone(DefaultOpenPR)
+		}
 	}
 	return c
 }

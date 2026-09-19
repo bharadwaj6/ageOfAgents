@@ -5,7 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func requireGit(t *testing.T) {
@@ -137,4 +140,106 @@ func TestInitRepoIgnoresTheGlobalGitTemplate(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo.Dir, ".git", "hooks", "pre-commit")); !os.IsNotExist(err) {
 		t.Error("a repo aoa creates should start with no inherited hooks")
 	}
+}
+
+// cloneOfBare makes a bare origin and a clone of it with one commit on main
+// pushed, the shape pull-request delivery works against (ADR 016).
+func cloneOfBare(t *testing.T) (origin string, repo *Repo) {
+	t.Helper()
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	origin = filepath.Join(base, "origin.git")
+	if _, err := git(ctx, "", "init", "--bare", "--template=", "-b", DefaultBranch, origin); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	repo, err := InitRepo(ctx, filepath.Join(base, "repo"))
+	if err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+	if _, err := git(ctx, repo.Dir, "remote", "add", "origin", origin); err != nil {
+		t.Fatalf("remote add: %v", err)
+	}
+	if err := repo.Push(ctx, "origin", DefaultBranch); err != nil {
+		t.Fatalf("push main: %v", err)
+	}
+	return origin, repo
+}
+
+// revParse resolves ref in dir, failing the test when it does not exist.
+func revParse(t *testing.T, dir, ref string) string {
+	t.Helper()
+	out, err := git(context.Background(), dir, "rev-parse", "--verify", ref)
+	if err != nil {
+		t.Fatalf("rev-parse %s: %v", ref, err)
+	}
+	return strings.TrimSpace(out)
+}
+
+// commitOn adds a commit touching name on branch in a throwaway worktree cut
+// from base, and returns it.
+func commitOn(t *testing.T, repo *Repo, branch, base, name string) string {
+	t.Helper()
+	ctx := context.Background()
+	wt, err := repo.AddWorktreeFrom(ctx, filepath.Join(t.TempDir(), "wt"), branch, base)
+	if err != nil {
+		t.Fatalf("AddWorktreeFrom: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt.Path, name), []byte(name+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sha, _, err := wt.Commit(ctx, "feat: "+name)
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if _, err := git(ctx, repo.Dir, "worktree", "remove", "--force", wt.Path); err != nil {
+		t.Fatalf("worktree remove: %v", err)
+	}
+	return sha
+}
+
+func TestDeliveryGitPrimitives(t *testing.T) {
+	ctx := context.Background()
+	origin, repo := cloneOfBare(t)
+	mainSHA := revParse(t, origin, "refs/heads/main")
+
+	// Fetch creates the remote-tracking ref for just that branch.
+	require.NoError(t, repo.Fetch(ctx, "origin", "main"))
+	require.Equal(t, mainSHA, revParse(t, repo.Dir, "refs/remotes/origin/main"))
+
+	// EnsureBranch cuts the branch once and leaves it alone after that.
+	require.NoError(t, repo.EnsureBranch(ctx, "aoa/g1", "refs/remotes/origin/main"))
+	require.Equal(t, mainSHA, revParse(t, repo.Dir, "refs/heads/aoa/g1"))
+	work := commitOn(t, repo, "aoa/g1-t1", "refs/heads/aoa/g1", "a.txt")
+	require.NoError(t, repo.UpdateRef(ctx, "refs/heads/aoa/g1", work, mainSHA))
+	require.NoError(t, repo.EnsureBranch(ctx, "aoa/g1", "refs/remotes/origin/main"))
+	require.Equal(t, work, revParse(t, repo.Dir, "refs/heads/aoa/g1"), "EnsureBranch must not reset an existing branch")
+
+	// UpdateRef is a compare-and-swap: a stale old value moves nothing.
+	require.Error(t, repo.UpdateRef(ctx, "refs/heads/aoa/g1", mainSHA, mainSHA))
+	require.Equal(t, work, revParse(t, repo.Dir, "refs/heads/aoa/g1"))
+
+	// Detach checks the branch's commit out without moving any branch.
+	tip, err := repo.Detach(ctx, "refs/heads/aoa/g1")
+	require.NoError(t, err)
+	require.Equal(t, work, tip)
+	head, err := repo.CurrentBranch(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "HEAD", head, "detached")
+	require.Equal(t, mainSHA, revParse(t, repo.Dir, "refs/heads/main"))
+
+	// Push publishes the branch; pushing it again is a no-op.
+	require.NoError(t, repo.Push(ctx, "origin", "aoa/g1"))
+	require.NoError(t, repo.Push(ctx, "origin", "aoa/g1"))
+	require.Equal(t, work, revParse(t, origin, "refs/heads/aoa/g1"))
+	require.Equal(t, mainSHA, revParse(t, origin, "refs/heads/main"), "origin main untouched")
+
+	// A remote branch that diverged is refused, never overwritten.
+	foreign := commitOn(t, repo, "foreign", "refs/heads/main", "b.txt")
+	_, err = git(ctx, repo.Dir, "push", "origin", foreign+":refs/heads/aoa/g2")
+	require.NoError(t, err)
+	require.NoError(t, repo.EnsureBranch(ctx, "aoa/g2", "refs/heads/aoa/g1"))
+	err = repo.Push(ctx, "origin", "aoa/g2")
+	require.ErrorContains(t, err, "rejected")
+	require.Equal(t, foreign, revParse(t, origin, "refs/heads/aoa/g2"))
 }
