@@ -32,6 +32,18 @@ All notable changes to this project are documented here. The format follows
   as they are appended, checking every `--poll` (default 500ms), until interrupted. Underneath,
   `ledger.ReadFrom(offset)` returns only complete lines and takes no lock, so a reader never sees a
   writer's half-written line and never holds a writer up.
+- **`aoa cancel`: withdraw a Goal so none of its work lands.** When the issue behind a Goal is closed,
+  a front door runs `aoa cancel [--by B] [--reason R] [--json] <goal-id>`, which appends a new
+  `GoalCancelled` event. The Scheduler then creates no task for the Goal, dispatches nothing more for it,
+  and fails every task of it not in flight with `goal cancelled` — parked proposals included, which the
+  spend governor would have let merge. An attempt already running finishes and its proposal is failed;
+  the merge queue re-reads the log immediately before each merge, so only a cancel landing while a merge
+  is already executing is too late. `aoa status` reports the Goal as `cancelled`. Cancelling twice
+  succeeds with `already_cancelled` and appends nothing; cancelling an unknown or already merged or
+  failed Goal is an error. A new invariant, `CancelHonored`, checks that nothing proposed or approved
+  after a cancel merges. **A log containing `GoalCancelled` cannot be read by an older `aoa` binary**,
+  which stops with `unknown event type "GoalCancelled"`; upgrade every binary that reads a workspace
+  before cancelling anything in it. The TLA+ model in `docs/design/formal/` does not cover cancellation.
 - **A leaner agent brief, with the recipes as skills.** `CLAUDE.md` is now a pointer and `AGENTS.md` keeps
   only what every session needs — vocabulary, the golden rules, the repo map, conventions. The per-job
   detail moved into project skills that cost nothing until they fire: `change-architecture`,

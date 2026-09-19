@@ -141,20 +141,52 @@ Repeating a decision already made — approving an approved ticket, rejecting a 
 says `already approved`/`already rejected`, and appends nothing, so a retry is safe. Contradicting one
 (rejecting an approved ticket) is an error, as is deciding a ticket that is not awaiting approval.
 
+### `aoa cancel`
+
+Withdraw a Goal so none of its work lands — for a front door whose issue was closed. Takes a goal id.
+
+```bash
+aoa cancel --path ./ws --by linear-bot --reason "issue closed" g-45973ca0
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--path DIR` | `.` | workspace root |
+| `--json` | `false` | print the result as one JSON line |
+| `--by B` | — | who cancelled, recorded as given |
+| `--reason R` | — | why, recorded with the cancel |
+
+It appends a `GoalCancelled` event; the next `aoa run` acts on it. The Scheduler creates no task for the
+Goal and dispatches nothing more for it — no new attempt, no retry — and fails every task of it that is
+not in flight with the reason `goal cancelled`: queued tasks, proposals waiting for the merge queue, and
+proposals parked for `aoa approve`. An attempt already running is left to finish, and its proposal is
+failed instead of merged. The Goal's `outcome` in `aoa status` is `cancelled` from the moment it is
+cancelled. Its failed tasks count toward `aoa run`'s exit status like any other failed task.
+
+The one thing a cancel cannot stop is a merge already executing when it lands: the merge queue checks
+for a cancel immediately before each merge, not during one. Work that merged before the cancel stays
+merged.
+
+Cancelling a Goal already cancelled succeeds, says `goal g-… already cancelled`, and appends nothing, so a
+retry is safe. An unknown goal id is an error, as is a Goal that has already settled as `merged` or
+`failed` (`goal "g-…" already settled as merged; nothing to cancel`). Neither appends anything.
+
 ### Machine-readable output
 
-With `--json`, `goal`, `amend`, `approve` and `reject` print exactly one line of JSON to stdout, and
-nothing else. The shapes are the result types in
+With `--json`, `goal`, `amend`, `approve`, `reject` and `cancel` print exactly one line of JSON to
+stdout, and nothing else. The shapes are the result types in
 [`pkg/api/contract.go`](https://github.com/bharadwaj6/ageOfAgents/blob/main/pkg/api/contract.go):
 
 ```json
 {"schema":1,"goal_id":"g-1a2b3c4d","duplicate":false,"seq":7}
 {"schema":1,"goal_id":"g-1a2b3c4d","seq":12}
 {"schema":1,"ticket_id":"g-1a2b3c4d-impl","decision":"approved","seq":20,"already_decided":false}
+{"schema":1,"goal_id":"g-1a2b3c4d","seq":30,"already_cancelled":false}
 ```
 
-`seq` is the sequence number of the event written — or, for a duplicate submit (`"duplicate":true`) or
-a repeated decision (`"already_decided":true`), of the original event, since nothing new was written.
+`seq` is the sequence number of the event written — or, for a duplicate submit (`"duplicate":true`), a
+repeated decision (`"already_decided":true`) or a repeated cancel (`"already_cancelled":true`), of the
+original event, since nothing new was written.
 `schema` is the contract version: within a version fields are only ever added, so ignore any you do not
 know; renaming or removing one bumps it. Errors still go to stderr with a non-zero exit.
 
@@ -182,6 +214,7 @@ preserved worktree for each failure.
 | `awaiting_approval` | a verified task is parked for `aoa approve` / `aoa reject` |
 | `merged` | every task landed |
 | `failed` | nothing is in flight and some work can never land: the Gate, a rejection or the budget |
+| `cancelled` | withdrawn with `aoa cancel`; none of its work lands from then on, even while an attempt finishes |
 
 Partial success counts as `failed`: some tasks of a decomposed goal merged and others did not. The ones
 that merged are still listed in `commits`. `last_seq` is the log position the snapshot reflects, so

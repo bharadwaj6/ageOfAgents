@@ -15,7 +15,7 @@ import (
 var commands = []string{
 	"quickstart", "doctor", "init", "goal", "amend", "run", "status", "events",
 	"bench", "serve", "eval", "diagnose", "otel", "approve", "reject",
-	"version", "completion", "help",
+	"cancel", "version", "completion", "help",
 }
 
 // commonFlags are shared by nearly every subcommand; per-command extras are

@@ -240,6 +240,22 @@ func queuedLog(t *testing.T) *logBuilder {
 		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "later", Source: "human"})
 }
 
+// cancelledLog is a goal cancelled while its only task's attempt ran; with
+// failed, the Scheduler has since failed that task.
+func cancelledLog(failed bool) func(t *testing.T) *logBuilder {
+	return func(t *testing.T) *logBuilder {
+		b := newLog(t).
+			add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "withdrawn", Source: "linear"}).
+			add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl", GoalID: "g-1", Title: "Implement: withdrawn", IdempotencyKey: "g-1:impl"}).
+			add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl", Worker: "w1"}).
+			add(1, api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g-1", Reason: "issue closed"})
+		if failed {
+			b.add(1, api.TicketFailed, api.TicketFailedPayload{TicketID: "g-1-impl", Worker: "w1", Reason: "goal cancelled"})
+		}
+		return b
+	}
+}
+
 // goalWant is what TestStatusViewProjection expects of one GoalView; Tickets
 // lists its task ids in order.
 type goalWant struct {
@@ -311,6 +327,20 @@ func TestStatusViewProjection(t *testing.T) {
 			},
 			wantTotals: api.StatusTotals{WallSeconds: 9, Goals: 1, Tickets: 1, Failed: 1},
 			wantQueue:  api.MergeQueueView{MaxDepth: 1, WaitMeanSeconds: 1, WaitMaxSeconds: 1},
+		},
+		{
+			name:       "cancelled, attempt still in flight",
+			log:        cancelledLog(false),
+			wantGoals:  []goalWant{{ID: "g-1", Outcome: api.OutcomeCancelled, Source: "linear", Tickets: []string{"g-1-impl"}}},
+			wantTotals: api.StatusTotals{WallSeconds: 3, Goals: 1, Tickets: 1},
+		},
+		{
+			name: "cancelled, nothing in flight", log: cancelledLog(true), wantSettled: true,
+			wantGoals: []goalWant{{ID: "g-1", Outcome: api.OutcomeCancelled, Source: "linear", Tickets: []string{"g-1-impl"}}},
+			wantTickets: map[string]api.TicketView{
+				"g-1-impl": {ID: "g-1-impl", Title: "Implement: withdrawn", Status: "failed", Attempts: 1, FailReason: "goal cancelled"},
+			},
+			wantTotals: api.StatusTotals{WallSeconds: 4, Goals: 1, Tickets: 1, Failed: 1},
 		},
 		{
 			name:       "queued goal is not settled",

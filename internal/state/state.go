@@ -679,12 +679,19 @@ func HasCycle(adj map[string][]string) bool {
 	return false
 }
 
+// goalCancelled reports whether the ticket's Goal has been cancelled.
+func (s *State) goalCancelled(t *Ticket) bool {
+	g := s.Goals[t.GoalID]
+	return g != nil && g.Cancelled
+}
+
 // NewlyReady returns pending tickets whose dependencies are now satisfied. The
 // reconciler emits TicketReady for these. Order is deterministic (creation order).
+// A cancelled Goal's tickets are never promoted.
 func (s *State) NewlyReady() []*Ticket {
 	var out []*Ticket
 	for _, t := range s.orderedTickets() {
-		if t.Status == StatusPending && s.DepsSatisfied(t) {
+		if t.Status == StatusPending && s.DepsSatisfied(t) && !s.goalCancelled(t) {
 			out = append(out, t)
 		}
 	}
@@ -693,10 +700,11 @@ func (s *State) NewlyReady() []*Ticket {
 
 // ReadyTickets returns tickets ready to dispatch, in creation order.
 // This includes tickets already claimed/running if they have fewer than BestOfN active workers.
+// A cancelled Goal's tickets are never dispatched: no new attempt, no retry.
 func (s *State) ReadyTickets() []*Ticket {
 	var out []*Ticket
 	for _, t := range s.orderedTickets() {
-		if t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
+		if (t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning) && !s.goalCancelled(t) {
 			out = append(out, t)
 		}
 	}

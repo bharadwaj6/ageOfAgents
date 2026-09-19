@@ -82,6 +82,8 @@ func main() {
 		err = cmdApprove(args, true)
 	case "reject":
 		err = cmdApprove(args, false)
+	case "cancel":
+		err = cmdCancel(args)
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -145,6 +147,8 @@ Usage:
                                           Approve a parked proposal (require_approval)
   aoa reject  [--path DIR] [--json] [--by B] [--reason R] <ticket-id>
                                           Reject a parked proposal (require_approval)
+  aoa cancel  [--path DIR] [--json] [--by B] [--reason R] <goal-id>
+                                          Withdraw a goal so none of its work lands
   aoa version                             Print the build version
   aoa completion bash|zsh|fish            Print a shell completion script
 
@@ -1333,6 +1337,94 @@ func decideTicket(led *ledger.Ledger, req decisionRequest) (api.DecisionResult, 
 	})
 	if err != nil {
 		return api.DecisionResult{}, err
+	}
+	if len(stored) > 0 {
+		res.Seq = stored[0].Seq
+	}
+	return res, nil
+}
+
+// cmdCancel withdraws a Goal (GoalCancelled) so none of its work lands: the
+// Scheduler dispatches nothing more for it and fails its tasks that are not in
+// flight, parked proposals included; an attempt already running finishes and
+// its proposal is failed. Run `aoa run` afterwards to let the Scheduler act.
+func cmdCancel(args []string) error {
+	fs := flag.NewFlagSet("cancel", flag.ExitOnError)
+	describe(fs, "aoa cancel \u2014 withdraw a Goal so none of its work lands.\n\nThe next `aoa run` fails its queued and parked tasks; an attempt already\nrunning finishes, and its proposal is failed instead of merged. Cancelling a\nGoal already cancelled succeeds and records nothing new.",
+		"aoa cancel --path ./workspace --reason \"issue closed\" g-1a2b3c4d")
+	path := fs.String("path", ".", "workspace root")
+	asJSON := fs.Bool("json", false, "print the result as one JSON line (pkg/api CancelResult)")
+	by := fs.String("by", "", "who is cancelling (recorded as given)")
+	reason := fs.String("reason", "", "why (recorded as given)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	goalID := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if goalID == "" {
+		return fmt.Errorf("goal id is required: aoa cancel <goal-id>")
+	}
+	if err := rejectStrayFlags(fs.Args()); err != nil {
+		return err
+	}
+	ws, err := openWorkspace(*path)
+	if err != nil {
+		return err
+	}
+	led, err := ledger.Open(ws.ledgerPath)
+	if err != nil {
+		return err
+	}
+	res, err := cancelGoal(led, cancelRequest{GoalID: goalID, By: *by, Reason: *reason})
+	if err != nil {
+		return err
+	}
+	switch {
+	case *asJSON:
+		return printJSON(res)
+	case res.AlreadyCancelled:
+		fmt.Printf("goal %s already cancelled\n", goalID)
+	default:
+		fmt.Printf("cancelled goal %s\n", goalID)
+	}
+	return nil
+}
+
+// cancelRequest withdraws one Goal. By and Reason are recorded as given.
+type cancelRequest struct{ GoalID, By, Reason string }
+
+// cancelGoal appends a GoalCancelled for a Goal that has not settled yet.
+// Cancelling a Goal already cancelled appends nothing and reports
+// AlreadyCancelled, so a front door can retry safely; an unknown Goal, or one
+// already merged or failed, is an error. The check and the append are one
+// ledger transaction.
+func cancelGoal(led *ledger.Ledger, req cancelRequest) (api.CancelResult, error) {
+	res := api.CancelResult{Schema: api.ContractVersion, GoalID: req.GoalID}
+	stored, err := led.Update(func(events []api.Event) ([]api.Event, error) {
+		s, err := state.Fold(events)
+		if err != nil {
+			return nil, err
+		}
+		g := s.Goals[req.GoalID]
+		switch outcome := s.GoalOutcome(req.GoalID); {
+		case g == nil:
+			return nil, fmt.Errorf("unknown goal %q", req.GoalID)
+		case g.Cancelled:
+			res.AlreadyCancelled, res.Seq = true, g.CancelledSeq
+			return nil, nil
+		case outcome == api.OutcomeMerged || outcome == api.OutcomeFailed:
+			return nil, fmt.Errorf("goal %q already settled as %s; nothing to cancel", req.GoalID, outcome)
+		}
+		ev, err := api.NewEvent(api.GoalCancelled, "human", api.GoalCancelledPayload{
+			GoalID: req.GoalID, By: req.By, Reason: req.Reason,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return []api.Event{ev}, nil
+	})
+	if err != nil {
+		return api.CancelResult{}, err
 	}
 	if len(stored) > 0 {
 		res.Seq = stored[0].Seq

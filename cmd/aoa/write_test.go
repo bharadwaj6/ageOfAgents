@@ -396,3 +396,75 @@ func TestSubmitGoalRegeneratesACollidingID(t *testing.T) {
 	require.Len(t, s.Goals, 2)
 	require.Equal(t, "second", s.Goals["g-fresh"].Text)
 }
+
+func TestCancelJSONIdempotent(t *testing.T) {
+	root, ledgerPath := bareWorkspace(t)
+	led, err := ledger.Open(ledgerPath)
+	require.NoError(t, err)
+	live, err := submitGoal(led, goalRequest{Text: "fix the flaky test", Source: "linear"})
+	require.NoError(t, err)
+	// g-merged settled with its work landed, g-failed with its only task failed.
+	for _, ev := range []struct {
+		typ     api.EventType
+		payload any
+	}{
+		{api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-merged", Text: "done"}},
+		{api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-merged-impl", GoalID: "g-merged", Title: "impl"}},
+		{api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "g-merged-impl", Worker: "w1", Branch: "aoa/x"}},
+		{api.Merged, api.MergedPayload{TicketID: "g-merged-impl", Worker: "w1", Commit: "c0ffee"}},
+		{api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-failed", Text: "doomed"}},
+		{api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-failed-impl", GoalID: "g-failed", Title: "impl"}},
+		{api.TicketFailed, api.TicketFailedPayload{TicketID: "g-failed-impl", Reason: "gate failed"}},
+	} {
+		e, err := api.NewEvent(ev.typ, "test", ev.payload)
+		require.NoError(t, err)
+		_, err = led.Append(e)
+		require.NoError(t, err)
+	}
+
+	// Steps run in order against one workspace.
+	steps := []struct {
+		name        string
+		goalID      string
+		wantErr     string
+		wantAlready bool
+		wantSeq     int
+	}{
+		{name: "first cancel", goalID: live.GoalID, wantSeq: 9},
+		{name: "cancel again", goalID: live.GoalID, wantAlready: true, wantSeq: 9},
+		{name: "unknown goal", goalID: "g-nope", wantErr: `unknown goal "g-nope"`},
+		{name: "merged goal", goalID: "g-merged", wantErr: `goal "g-merged" already settled as merged; nothing to cancel`},
+		{name: "failed goal", goalID: "g-failed", wantErr: `goal "g-failed" already settled as failed; nothing to cancel`},
+	}
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			var err error
+			out := captureStdout(t, func() {
+				err = cmdCancel([]string{"--path", root, "--json", "--by", "linear-bot", "--reason", "issue closed", st.goalID})
+			})
+			if st.wantErr != "" {
+				require.ErrorContains(t, err, st.wantErr)
+				require.Empty(t, out)
+			} else {
+				require.NoError(t, err)
+				var res api.CancelResult
+				decodeJSONLine(t, out, &res)
+				require.Equal(t, api.CancelResult{Schema: api.ContractVersion, GoalID: st.goalID, Seq: st.wantSeq, AlreadyCancelled: st.wantAlready}, res)
+			}
+			require.Equal(t, 1, countLogEvents(t, ledgerPath, api.GoalCancelled), "exactly one cancel on the log")
+		})
+	}
+
+	var p api.GoalCancelledPayload
+	lastPayload(t, ledgerPath, api.GoalCancelled, &p)
+	require.Equal(t, api.GoalCancelledPayload{GoalID: live.GoalID, By: "linear-bot", Reason: "issue closed"}, p)
+
+	// Without --json both outcomes say what happened.
+	other, err := submitGoal(led, goalRequest{Text: "another", Source: "human"})
+	require.NoError(t, err)
+	for _, want := range []string{"cancelled goal %s\n", "goal %s already cancelled\n"} {
+		out := captureStdout(t, func() { err = cmdCancel([]string{"--path", root, other.GoalID}) })
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf(want, other.GoalID), out)
+	}
+}
