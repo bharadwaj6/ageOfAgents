@@ -172,8 +172,10 @@ deliberately small:
 `WorkerStalled` · `WorkerRestarted`. The optional human-in-the-loop approval gate (ADR 008) adds
 `ApprovalRequested` · `ApprovalGranted` · `ApprovalDenied`. Cost/safety and steering add
 `GoalBudgetExceeded` (spend governor), `RegressionEscaped` (the Gate's measured blind spot),
-`GoalAmended` (mid-run steering), and `GoalCancelled` (withdraw a Goal so none of its work lands). Every
-metric, trace, and diagnosis is derived from this one stream.
+`GoalAmended` (mid-run steering), and `GoalCancelled` (withdraw a Goal so none of its work lands).
+Pull-request delivery (ADR 016) adds `Delivered` and `DeliveryFailed` (a complete Goal's branch pushed
+and its pull request opened, or why that failed). Every metric, trace, and diagnosis is derived from this
+one stream.
 
 State (Tasks, dependency readiness, Worker status, the Merge Queue) is derived by replaying this stream;
 there is no separate mutable store to keep consistent.

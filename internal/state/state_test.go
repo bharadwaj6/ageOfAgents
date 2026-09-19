@@ -620,6 +620,20 @@ func failed(b *build, id string) *build {
 		add(api.TicketFailed, api.TicketFailedPayload{TicketID: id, Worker: "w-" + id, Reason: "gate failed"})
 }
 
+// mergedOnto merges id onto a Goal branch, as pull-request delivery mode does.
+func mergedOnto(b *build, id, branch string) *build {
+	return proposed(b, id).
+		add(api.Merged, api.MergedPayload{TicketID: id, Worker: "w-" + id, Commit: "merged-" + id, Branch: branch})
+}
+
+func delivered(b *build, goal string) *build {
+	return b.add(api.Delivered, api.DeliveredPayload{GoalID: goal, Branch: "aoa/" + goal, Commit: "tip", URL: "https://example.test/pr/1"})
+}
+
+func deliveryFailed(b *build, goal string) *build {
+	return b.add(api.DeliveryFailed, api.DeliveryFailedPayload{GoalID: goal, Branch: "aoa/" + goal, Reason: "push rejected"})
+}
+
 // decomposed runs parent and splits it into children, creating each child
 // under goal first, as the Scheduler does.
 func decomposed(b *build, parent, goal string, children ...string) *build {
@@ -743,6 +757,66 @@ func TestGoalOutcome(t *testing.T) {
 			},
 			want: api.OutcomeMerged,
 		},
+		{
+			name:  "all work merged onto the goal branch, delivery pending",
+			steps: func(b *build) *build { return mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1") },
+			want:  api.OutcomeRunning,
+		},
+		{
+			name: "decomposed onto the goal branch, one child still running",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return running(mergedOnto(b, "t1/a", "aoa/g1"), "t1/b")
+			},
+			want: api.OutcomeRunning,
+		},
+		{
+			name: "partial success on the goal branch is failed, never delivered",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return failed(mergedOnto(b, "t1/a", "aoa/g1"), "t1/b")
+			},
+			want: api.OutcomeFailed,
+		},
+		{
+			name: "budget tripped after all work merged onto the goal branch",
+			steps: func(b *build) *build {
+				return mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1").
+					add(api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{GoalID: "g1", SpentTokens: 10, Limit: 5})
+			},
+			want: api.OutcomeRunning,
+		},
+		{
+			name:  "delivered",
+			steps: func(b *build) *build { return delivered(mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1"), "g1") },
+			want:  api.OutcomeDelivered,
+		},
+		{
+			name:  "delivery failed keeps it running",
+			steps: func(b *build) *build { return deliveryFailed(mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1"), "g1") },
+			want:  api.OutcomeRunning,
+		},
+		{
+			name: "delivered after a failed delivery",
+			steps: func(b *build) *build {
+				return delivered(deliveryFailed(mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1"), "g1"), "g1")
+			},
+			want: api.OutcomeDelivered,
+		},
+		{
+			name: "cancel overrides a pending delivery",
+			steps: func(b *build) *build {
+				return mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1").add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g1"})
+			},
+			want: api.OutcomeCancelled,
+		},
+		{
+			name: "another goal's delivery does not leak",
+			steps: func(b *build) *build {
+				return delivered(mergedOnto(created(b, "t2", "g2"), "t2", "aoa/g2"), "g2")
+			},
+			want: api.OutcomeQueued,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -804,5 +878,92 @@ func TestCancelledGoalHasNothingToDispatch(t *testing.T) {
 	}
 	if got := ids(s.ReadyTickets()); len(got) != 0 {
 		t.Errorf("ReadyTickets = %v, want none: a cancelled goal's ticket is never dispatched", got)
+	}
+}
+
+func TestDeliveryIsRecorded(t *testing.T) {
+	b := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "one"}).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "two"})
+	merged(created(b, "local", "g2"), "local") // local mode: no branch
+	mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1")
+	s := b.fold()
+	if got := s.Goals["g1"].Branch; got != "aoa/g1" {
+		t.Errorf("Branch = %q, want aoa/g1 from the Merged event", got)
+	}
+	if got := s.Goals["g2"].Branch; got != "" {
+		t.Errorf("a local-mode merge set Branch = %q, want empty", got)
+	}
+
+	s = deliveryFailed(b, "g1").fold()
+	if g := s.Goals["g1"]; g.Delivered || g.DeliveryError != "push rejected" {
+		t.Errorf("after DeliveryFailed: delivered=%v error=%q, want false, %q", g.Delivered, g.DeliveryError, "push rejected")
+	}
+
+	s = delivered(b, "g1").add(api.Delivered, api.DeliveredPayload{GoalID: "nope"}).fold()
+	g := s.Goals["g1"]
+	if !g.Delivered || g.PRURL != "https://example.test/pr/1" || g.DeliveryError != "" {
+		t.Errorf("after Delivered: delivered=%v url=%q error=%q, want true, the url, and the error cleared", g.Delivered, g.PRURL, g.DeliveryError)
+	}
+	if s.Goals["nope"] != nil {
+		t.Error("delivering an unknown goal must not create it")
+	}
+}
+
+func TestDeliverable(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps func(b *build) *build // run after g1 (and g2) are submitted
+		goal  string
+		want  bool
+	}{
+		{name: "no ticket yet", steps: func(b *build) *build { return b }},
+		{name: "unknown goal", steps: func(b *build) *build { return b }, goal: "nope"},
+		{name: "complete on the goal branch", steps: func(b *build) *build { return mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1") }, want: true},
+		{name: "complete in local mode", steps: func(b *build) *build { return merged(created(b, "t1", "g1"), "t1") }},
+		{
+			name: "decomposed, every child merged",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return mergedOnto(mergedOnto(b, "t1/a", "aoa/g1"), "t1/b", "aoa/g1")
+			},
+			want: true,
+		},
+		{
+			name: "decomposed, one child still pending",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return mergedOnto(b, "t1/a", "aoa/g1")
+			},
+		},
+		{
+			name: "decomposed, one child failed",
+			steps: func(b *build) *build {
+				b = decomposed(created(b, "t1", "g1"), "t1", "g1", "t1/a", "t1/b")
+				return failed(mergedOnto(b, "t1/a", "aoa/g1"), "t1/b")
+			},
+		},
+		{
+			name: "cancelled",
+			steps: func(b *build) *build {
+				return mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1").add(api.GoalCancelled, api.GoalCancelledPayload{GoalID: "g1"})
+			},
+		},
+		{name: "already delivered", steps: func(b *build) *build { return delivered(mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1"), "g1") }},
+		{name: "last delivery failed", steps: func(b *build) *build { return deliveryFailed(mergedOnto(created(b, "t1", "g1"), "t1", "aoa/g1"), "g1") }, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := newBuild(t).
+				add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "one"}).
+				add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "two"})
+			goal := tt.goal
+			if goal == "" {
+				goal = "g1"
+			}
+			if got := tt.steps(b).fold().Deliverable(goal); got != tt.want {
+				t.Errorf("Deliverable(%s) = %v, want %v", goal, got, tt.want)
+			}
+		})
 	}
 }

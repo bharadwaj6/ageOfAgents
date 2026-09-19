@@ -1396,7 +1396,7 @@ type cancelRequest struct{ GoalID, By, Reason string }
 // cancelGoal appends a GoalCancelled for a Goal that has not settled yet.
 // Cancelling a Goal already cancelled appends nothing and reports
 // AlreadyCancelled, so a front door can retry safely; an unknown Goal, or one
-// already merged or failed, is an error. The check and the append are one
+// already merged, delivered or failed, is an error. The check and the append are one
 // ledger transaction.
 func cancelGoal(led *ledger.Ledger, req cancelRequest) (api.CancelResult, error) {
 	res := api.CancelResult{Schema: api.ContractVersion, GoalID: req.GoalID}
@@ -1412,7 +1412,7 @@ func cancelGoal(led *ledger.Ledger, req cancelRequest) (api.CancelResult, error)
 		case g.Cancelled:
 			res.AlreadyCancelled, res.Seq = true, g.CancelledSeq
 			return nil, nil
-		case outcome == api.OutcomeMerged || outcome == api.OutcomeFailed:
+		case outcome == api.OutcomeMerged || outcome == api.OutcomeFailed || outcome == api.OutcomeDelivered:
 			return nil, fmt.Errorf("goal %q already settled as %s; nothing to cancel", req.GoalID, outcome)
 		}
 		ev, err := api.NewEvent(api.GoalCancelled, "human", api.GoalCancelledPayload{

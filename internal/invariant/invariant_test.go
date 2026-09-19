@@ -226,3 +226,59 @@ func TestSettledExemptsACancelledGoal(t *testing.T) {
 		t.Error("a goal with no tickets that was never cancelled is not settled")
 	}
 }
+
+func TestDeliveredOnceAndVerified(t *testing.T) {
+	// Each history submits g1 with tickets t1 and t2, then runs steps.
+	type step func(s *seq) *seq
+	merge := func(id, commit string) step {
+		return func(s *seq) *seq {
+			return s.add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: id, Worker: "w", Commit: "cand-" + id}).
+				add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: id, Worker: "w"}).
+				add(api.Merged, "orchestrator", api.MergedPayload{TicketID: id, Worker: "w", Commit: commit, Branch: "aoa/g1"})
+		}
+	}
+	deliver := func(commit string) step {
+		return func(s *seq) *seq {
+			return s.add(api.Delivered, "orchestrator", api.DeliveredPayload{GoalID: "g1", Branch: "aoa/g1", Commit: commit, URL: "https://example.test/pr/1"})
+		}
+	}
+	deliveryFailed := func(s *seq) *seq {
+		return s.add(api.DeliveryFailed, "orchestrator", api.DeliveryFailedPayload{GoalID: "g1", Branch: "aoa/g1", Reason: "push rejected"})
+	}
+
+	tests := []struct {
+		name      string
+		steps     []step
+		violation bool
+	}{
+		{name: "delivered the last verified commit", steps: []step{merge("t1", "m1"), merge("t2", "m2"), deliver("m2")}},
+		{name: "retried after a failed delivery", steps: []step{merge("t1", "m1"), merge("t2", "m2"), deliveryFailed, deliver("m2")}},
+		{name: "delivered twice", steps: []step{merge("t1", "m1"), merge("t2", "m2"), deliver("m2"), deliver("m2")}, violation: true},
+		{name: "delivered with a task still unmerged", steps: []step{merge("t1", "m1"), deliver("m1")}, violation: true},
+		{name: "delivered before any merge", steps: []step{deliver("m0")}, violation: true},
+		{name: "delivered a commit that is not the last merge", steps: []step{merge("t1", "m1"), merge("t2", "m2"), deliver("m1")}, violation: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newSeq(t).
+				add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "one"}).
+				add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "one", IdempotencyKey: "k1"}).
+				add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t2", GoalID: "g1", Title: "two", IdempotencyKey: "k2"})
+			for _, st := range tt.steps {
+				s = st(s)
+			}
+			var got []Violation
+			for _, v := range Check(s.events) {
+				if v.Invariant == "DeliveredOnceAndVerified" {
+					got = append(got, v)
+				}
+			}
+			if tt.violation && len(got) == 0 {
+				t.Error("expected a DeliveredOnceAndVerified violation from Check")
+			}
+			if !tt.violation && len(got) != 0 {
+				t.Errorf("expected no DeliveredOnceAndVerified violation, got %v", got)
+			}
+		})
+	}
+}
