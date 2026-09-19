@@ -67,6 +67,11 @@ const (
 	// dispatches (and retries) carry the amended context; running workers are not
 	// preempted. Feeds the stale_spec_drift diagnose signal.
 	GoalAmended EventType = "GoalAmended"
+	// GoalCancelled: a human (or the front door acting for one) withdrew a Goal.
+	// None of its work may land after this: the Scheduler dispatches nothing more
+	// for it and fails every task of it that is not in flight, parked proposals
+	// included; an attempt already running finishes and its proposal is failed.
+	GoalCancelled EventType = "GoalCancelled"
 	// StateSnapshot: a compaction event containing the full derived state.
 	// Used to bootstrap state without replaying the entire history.
 	StateSnapshot EventType = "StateSnapshot"
@@ -312,6 +317,14 @@ type GoalBudgetExceededPayload struct {
 type GoalAmendedPayload struct {
 	GoalID   string `json:"goal_id"`
 	Guidance string `json:"guidance"`
+}
+
+// GoalCancelledPayload accompanies [GoalCancelled]. By and Reason are recorded
+// as the canceller gave them (who withdrew the Goal, and why — "issue closed").
+type GoalCancelledPayload struct {
+	GoalID string `json:"goal_id"`
+	By     string `json:"by,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // RegressionEscapedPayload accompanies [RegressionEscaped]. Reason is what the

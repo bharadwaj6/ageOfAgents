@@ -73,6 +73,8 @@ type Goal struct {
 	TokensSpent    int            // LLM tokens charged to this Goal's tickets (spend governor)
 	TokensByModel  map[string]int // LLM tokens charged to this Goal, broken down by model
 	BudgetExceeded bool           // the per-Goal token/USD budget tripped; no more work is dispatched
+	Cancelled      bool           // withdrawn (GoalCancelled); none of its work may land from here on
+	CancelledSeq   int            // seq of the first GoalCancelled for it; 0 if never cancelled
 }
 
 // EffectiveText is the Goal's text plus any mid-run amendments, as handed to a
@@ -361,8 +363,9 @@ func (s *State) Apply(e api.Event) error {
 		}
 		if t := s.Tickets[p.TicketID]; t != nil {
 			t.ActiveWorkers = removeWorker(t.ActiveWorkers, p.Worker)
-			// A terminal failure overrides running states and the proposal from this worker
-			if (t.Status == StatusProposed && t.Worker == p.Worker) ||
+			// A terminal failure overrides running states and the proposal from this
+			// worker, parked or not (a cancelled Goal fails its parked proposals).
+			if ((t.Status == StatusProposed || t.Status == StatusAwaiting) && t.Worker == p.Worker) ||
 				t.Status == StatusPending || t.Status == StatusReady || t.Status == StatusClaimed || t.Status == StatusRunning {
 				// If there are other active workers, we shouldn't fail the ticket entirely yet
 				if len(t.ActiveWorkers) == 0 {
@@ -432,6 +435,17 @@ func (s *State) Apply(e api.Event) error {
 		}
 		if g := s.Goals[p.GoalID]; g != nil && p.Guidance != "" {
 			g.Amendments = append(g.Amendments, p.Guidance)
+		}
+
+	case api.GoalCancelled:
+		var p api.GoalCancelledPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		// The first cancel is the one that counts; a repeat changes nothing.
+		if g := s.Goals[p.GoalID]; g != nil && !g.Cancelled {
+			g.Cancelled = true
+			g.CancelledSeq = e.Seq
 		}
 
 	case api.RegressionEscaped:
@@ -751,10 +765,17 @@ func (s *State) Settled() bool {
 // callers can still list those commits. A Goal whose tickets are all terminal
 // but whose decomposition names a child not on the log yet is running, since
 // that work may still be created. An id that names no Goal reports "".
+//
+// A cancelled Goal is cancelled whatever its tickets say — the promise is that
+// none of its work lands from the cancel on, even while an attempt already in
+// flight is finishing.
 func (s *State) GoalOutcome(goalID string) string {
 	g := s.Goals[goalID]
 	if g == nil {
 		return ""
+	}
+	if g.Cancelled {
+		return api.OutcomeCancelled
 	}
 	var hasTickets, awaiting, inFlight, dead bool
 	complete := true

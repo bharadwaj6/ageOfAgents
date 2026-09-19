@@ -135,3 +135,94 @@ func TestViolationString(t *testing.T) {
 		t.Errorf("unexpected string: %s", v)
 	}
 }
+
+func TestCancelHonored(t *testing.T) {
+	// Each history submits g1 with ticket t1 (and g2 with t2), then runs steps.
+	type step func(s *seq) *seq
+	propose := func(id string) step {
+		return func(s *seq) *seq {
+			return s.add(api.ProposalSubmitted, "orchestrator", api.ProposalSubmittedPayload{TicketID: id, Worker: "w", Commit: "c"})
+		}
+	}
+	park := func(id string) step {
+		return func(s *seq) *seq {
+			return s.add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: id, Worker: "w"}).
+				add(api.ApprovalRequested, "orchestrator", api.ApprovalRequestedPayload{TicketID: id, Worker: "w"})
+		}
+	}
+	approve := func(id string) step {
+		return func(s *seq) *seq {
+			return s.add(api.ApprovalGranted, "human", api.ApprovalGrantedPayload{TicketID: id})
+		}
+	}
+	merge := func(id string) step {
+		return func(s *seq) *seq {
+			return s.add(api.VerificationPassed, "orchestrator", api.VerificationPassedPayload{TicketID: id, Worker: "w"}).
+				add(api.Merged, "orchestrator", api.MergedPayload{TicketID: id, Worker: "w", Commit: "m"})
+		}
+	}
+	fail := func(id string) step {
+		return func(s *seq) *seq {
+			return s.add(api.TicketFailed, "orchestrator", api.TicketFailedPayload{TicketID: id, Worker: "w", Reason: "goal cancelled"})
+		}
+	}
+	cancel := func(goal string) step {
+		return func(s *seq) *seq {
+			return s.add(api.GoalCancelled, "human", api.GoalCancelledPayload{GoalID: goal})
+		}
+	}
+
+	tests := []struct {
+		name      string
+		steps     []step
+		violation bool
+	}{
+		{name: "proposal failed after the cancel", steps: []step{propose("t1"), cancel("g1"), fail("t1")}},
+		{name: "merged before the cancel", steps: []step{propose("t1"), merge("t1"), cancel("g1")}},
+		{name: "merge already under way when the cancel landed", steps: []step{propose("t1"), cancel("g1"), merge("t1")}},
+		{name: "another goal cancelled", steps: []step{cancel("g2"), propose("t1"), merge("t1")}},
+		{name: "proposed after the cancel, then merged", steps: []step{cancel("g1"), propose("t1"), merge("t1")}, violation: true},
+		{name: "approved after the cancel, then merged", steps: []step{propose("t1"), park("t1"), cancel("g1"), approve("t1"), merge("t1")}, violation: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newSeq(t).
+				add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "one"}).
+				add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g2", Text: "two"}).
+				add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "one", IdempotencyKey: "k1"}).
+				add(api.TicketCreated, "orchestrator", api.TicketCreatedPayload{TicketID: "t2", GoalID: "g2", Title: "two", IdempotencyKey: "k2"})
+			for _, st := range tt.steps {
+				s = st(s)
+			}
+			var got []Violation
+			for _, v := range Check(s.events) {
+				if v.Invariant == "CancelHonored" {
+					got = append(got, v)
+				}
+			}
+			if tt.violation && len(got) == 0 {
+				t.Error("expected a CancelHonored violation from Check")
+			}
+			if !tt.violation && len(got) != 0 {
+				t.Errorf("expected no CancelHonored violation, got %v", got)
+			}
+		})
+	}
+}
+
+func TestSettledExemptsACancelledGoal(t *testing.T) {
+	// A Goal cancelled before the Scheduler picked it up never gets a ticket.
+	events := newSeq(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "one"}).
+		add(api.GoalCancelled, "human", api.GoalCancelledPayload{GoalID: "g1"}).
+		events
+	if vs := Settled(events); len(vs) != 0 {
+		t.Errorf("a cancelled goal without tickets should be settled, got: %v", vs)
+	}
+	uncancelled := newSeq(t).
+		add(api.GoalSubmitted, "human", api.GoalSubmittedPayload{GoalID: "g1", Text: "one"}).
+		events
+	if vs := Settled(uncancelled); len(vs) == 0 {
+		t.Error("a goal with no tickets that was never cancelled is not settled")
+	}
+}

@@ -166,8 +166,9 @@ deliberately small:
 `Heartbeat` · `ProposalSubmitted` · `VerificationPassed` · `VerificationFailed` · `Merged` · `TicketFailed` ·
 `WorkerStalled` · `WorkerRestarted`. The optional human-in-the-loop approval gate (ADR 008) adds
 `ApprovalRequested` · `ApprovalGranted` · `ApprovalDenied`. Cost/safety and steering add
-`GoalBudgetExceeded` (spend governor), `RegressionEscaped` (the Gate's measured blind spot), and
-`GoalAmended` (mid-run steering). Every metric, trace, and diagnosis is derived from this one stream.
+`GoalBudgetExceeded` (spend governor), `RegressionEscaped` (the Gate's measured blind spot),
+`GoalAmended` (mid-run steering), and `GoalCancelled` (withdraw a Goal so none of its work lands). Every
+metric, trace, and diagnosis is derived from this one stream.
 
 State (Tasks, dependency readiness, Worker status, the Merge Queue) is derived by replaying this stream;
 there is no separate mutable store to keep consistent.
