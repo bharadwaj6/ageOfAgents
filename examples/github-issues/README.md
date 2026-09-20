@@ -38,18 +38,36 @@ contract that would break it fails the build.
 | `AOA_GH_ALLOW` | the `gh` login | Logins trusted to write and label issues, separated by spaces or commas. |
 | `AOA_BIN` | `aoa` | The aoa binary. |
 
+### Budget
+
+A cycle runs on a budget or it refuses to start
+([ADR 017](../../docs/design/adr/017-spend-is-bounded-before-it-happens.md)). Work reaching a
+repository from its issues is work nobody is watching attempt by attempt, so the ceiling is set before
+it starts, not noticed afterwards.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AOA_RUN_MAX_USD` | **required for `cycle`** | Dollars this cycle's `aoa run` may spend, passed as `--max-usd`. |
+| `AOA_RUN_MAX_GOALS` | unset | Goals that run may start, passed as `--max-goals`. |
+| `AOA_MAX_GOALS_PER_CYCLE` | `1` | New Goals intake may submit in one cycle. |
+| `AOA_MIN_QUOTA_PCT` | unset | Skip the cycle unless every subscription window `quota-axi` reports has at least this much left. |
+
+Intake also stops when the workspace's own day budget (`[budget]` in `aoa.toml`) is spent: a Goal
+submitted then would only wait. Set the day budget and a per-attempt cap for the harness
+(`--max-budget-usd` for claude) in `aoa.toml`, and this script will not exceed them.
+
 ## Use
 
 ```sh
 export AOA_WS=~/aoa/widgets AOA_GH_REPO=acme/widgets AOA_GH_ALLOW="alice bob"
-./aoa-github.sh cycle
+AOA_RUN_MAX_USD=3 ./aoa-github.sh cycle
 ```
 
 | Command | What it does |
 |---|---|
 | `intake` | Submits each open issue with the label as a Goal, keyed `gh:owner/name#N/<attempt>`. Cancels the Goal of any issue that was closed or unlabelled. |
 | `report` | Comments each Goal's outcome on its issue, once: the pull request, why it failed, that it was cancelled, or the `aoa approve` command for a change awaiting approval. |
-| `cycle` | `intake`, then `aoa run`, then `report`. It reports even when `aoa run` exits `1` because a task failed. |
+| `cycle` | `intake`, then `aoa run --max-usd`, then `report`. It refuses without `AOA_RUN_MAX_USD`, and reports even when `aoa run` exits `1` because a task failed. |
 
 Each action logs one line to stderr. When a call about one issue fails, the script skips that issue,
 carries on with the rest, and exits `1` at the end so a scheduler can alert. A configuration error, or a
@@ -89,12 +107,16 @@ untrusted input, bounded by the Gate, the sandbox and the budgets. Read
 
 ## Running on a schedule
 
-`cycle` is meant to run from cron, a systemd timer or launchd, like `aoa run` in
+**Decide to schedule it; don't drift into it.** A cycle you start yourself is a supervised command. A
+cycle on a timer is a fleet spending your budget while you sleep, so give it a budget you would be
+content to lose every day, and a way to stop it.
+
+`cycle` runs from cron, a systemd timer or launchd, like `aoa run` in
 [Scheduling](../../docs/scheduling.md). Scheduled jobs start with a minimal `PATH`, so set one that
 finds `gh`, `jq` and `aoa`:
 
 ```cron
-*/10 * * * * PATH=/usr/local/bin:/usr/bin:/bin AOA_WS=/srv/aoa/widgets AOA_GH_REPO=acme/widgets AOA_GH_ALLOW="alice bob" flock -n /tmp/aoa-github.lock /srv/aoa/aoa-github.sh cycle >>/var/log/aoa-github.log 2>&1
+*/10 * * * * PATH=/usr/local/bin:/usr/bin:/bin AOA_WS=/srv/aoa/widgets AOA_GH_REPO=acme/widgets AOA_GH_ALLOW="alice bob" AOA_RUN_MAX_USD=3 flock -n /tmp/aoa-github.lock /srv/aoa/aoa-github.sh cycle >>/var/log/aoa-github.log 2>&1
 ```
 
 Don't let two cycles overlap. A second `aoa run` exits `75` and does no harm, but two `report`s racing
