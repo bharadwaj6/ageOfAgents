@@ -136,6 +136,11 @@ $ aoa status --json                        # each goal's outcome: queued, runnin
 $ aoa events --json --since 41 --follow    # the Event Log as a resumable stream
 ```
 
+With `[delivery] mode = "pr"` each goal is delivered as a pull request from a branch your Gate has
+passed, so a protected `main` is no obstacle. Budgets bound a run and a day
+(`--max-usd`, `[budget] usd_per_day`), and `require_run_budget` makes a workspace refuse to run without
+one. Issues to pull requests end to end: [point it at your own repo](https://bharadwaj6.github.io/ageOfAgents/self-hosting/).
+
 Resubmitting a key is a no-op, any number of processes can submit at once, and exactly one Scheduler
 reconciles a workspace. The whole contract is in
 [Drive it from another system](https://bharadwaj6.github.io/ageOfAgents/backend/), and the reasoning is in
