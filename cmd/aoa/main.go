@@ -599,6 +599,9 @@ func cmdRun(args []string) error {
 	interval := fs.Duration("interval", 0, "keep running, reconciling again every <dur> until interrupted (0 = run until settled, then exit)")
 	otelExport := fs.Bool("otel", false, "after the run, replay the Event Log to OTLP (needs OTEL_EXPORTER_OTLP_ENDPOINT)")
 	otelLive := fs.Bool("otel-live", false, "stream spans to OTLP live as events happen (instead of one post-hoc export)")
+	maxUSD := fs.Float64("max-usd", 0, "budget for this run in USD; past it no new attempt or Goal starts (0 = no limit)")
+	maxTokens := fs.Int("max-tokens", 0, "budget for this run in tokens (0 = no limit)")
+	maxGoals := fs.Int("max-goals", 0, "how many Goals this run may start (0 = no limit)")
 	_ = fs.Parse(args)
 
 	if *once && *interval > 0 {
@@ -613,6 +616,10 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	runBudget := state.Budget{USD: *maxUSD, Tokens: *maxTokens, Goals: *maxGoals}
+	if cfg, cerr := config.Load(ws.configPath); cerr == nil && cfg.Budget.RequireRunBudget && runBudget.USD == 0 {
+		return &exitError{code: 2, err: fmt.Errorf("this workspace sets [budget] require_run_budget, so `aoa run` needs --max-usd (nothing runs here unbudgeted)")}
+	}
 	ctx := context.Background()
 
 	// start wires the Scheduler. With --otel-live it also opens spans for any
@@ -622,7 +629,7 @@ func cmdRun(args []string) error {
 	var live *otel.Live
 	start := func() error {
 		var err error
-		if o, err = buildOrchestrator(ws, led); err != nil {
+		if o, err = buildOrchestrator(ws, led, runBudget); err != nil {
 			return err
 		}
 		if !*otelLive {
@@ -691,7 +698,7 @@ func cmdRun(args []string) error {
 			return err
 		}
 	}
-	_, failed, err := printStatus(led, cfg.Pricing)
+	_, failed, err := printStatus(led, cfg.Pricing, dayBudget(cfg))
 	if err != nil {
 		return err
 	}
@@ -741,7 +748,7 @@ func runEvery(ctx context.Context, o *orchestrator.Orchestrator, led *ledger.Led
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "run: %v\n", err)
 			}
-			if _, _, err := printStatus(led, cfg.Pricing); err != nil {
+			if _, _, err := printStatus(led, cfg.Pricing, dayBudget(cfg)); err != nil {
 				return err
 			}
 		}
@@ -839,14 +846,14 @@ func cmdStatus(args []string) error {
 		if err != nil {
 			return err
 		}
-		v, err := statusView(events, cfg.Pricing)
+		v, err := statusView(events, cfg.Pricing, dayBudget(cfg))
 		if err != nil {
 			return err
 		}
 		return printJSON(v)
 	}
 	if !*watch {
-		_, _, err = printStatus(led, cfg.Pricing)
+		_, _, err = printStatus(led, cfg.Pricing, dayBudget(cfg))
 		return err
 	}
 	// Watch mode: clear + re-render each interval until settled. No daemon — just
@@ -854,7 +861,7 @@ func cmdStatus(args []string) error {
 	for {
 		fmt.Print("\033[H\033[2J") // clear screen, cursor home
 		fmt.Printf("aoa status — %s  (Ctrl-C to stop)\n\n", time.Now().Format("15:04:05"))
-		settled, _, err := printStatus(led, cfg.Pricing)
+		settled, _, err := printStatus(led, cfg.Pricing, dayBudget(cfg))
 		if err != nil {
 			return err
 		}
@@ -1566,10 +1573,15 @@ func readConventions(root, file string) string {
 
 // buildOrchestrator wires the Scheduler for ws on led, the workspace's Event
 // Log. It preflights the backend, so a missing CLI fails here.
-func buildOrchestrator(ws workspace, led *ledger.Ledger) (*orchestrator.Orchestrator, error) {
+func buildOrchestrator(ws workspace, led *ledger.Ledger, runBudget state.Budget) (*orchestrator.Orchestrator, error) {
 	cfg, err := config.Load(ws.configPath)
 	if err != nil {
 		return nil, err
+	}
+	// The run's budget window is everything appended from here on.
+	runSince := 0
+	if events, rerr := led.Read(); rerr == nil && len(events) > 0 {
+		runSince = events[len(events)-1].Seq
 	}
 	repo := worktree.OpenRepo(resolve(ws.root, cfg.Repo))
 	delivery, err := preflightDelivery(cfg.Delivery, repo.Dir)
@@ -1635,6 +1647,10 @@ func buildOrchestrator(ws workspace, led *ledger.Ledger) (*orchestrator.Orchestr
 		MaxTicketsPerGoal: cfg.MaxTicketsPerGoal,
 		MaxFanOut:         cfg.MaxFanOut,
 		Delivery:          delivery,
+		// Budgets (ADR 017): this run's window starts at the log as it is now.
+		RunBudget: runBudget,
+		RunSince:  runSince,
+		DayBudget: state.Budget{USD: cfg.Budget.USDPerDay, Tokens: cfg.Budget.TokensPerDay, Goals: cfg.Budget.GoalsPerDay},
 	}
 	mq := mergequeue.New(repo, gate)
 	if len(cfg.RegressionVerify) > 0 {

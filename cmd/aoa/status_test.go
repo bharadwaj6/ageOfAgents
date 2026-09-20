@@ -180,7 +180,7 @@ func TestStatusTextGolden(t *testing.T) {
 				failed  int
 				err     error
 			)
-			out := captureStdout(t, func() { settled, failed, err = printStatus(led, tt.pricing) })
+			out := captureStdout(t, func() { settled, failed, err = printStatus(led, tt.pricing, state.Budget{}) })
 			if err != nil {
 				t.Fatalf("printStatus: %v", err)
 			}
@@ -387,7 +387,7 @@ func TestStatusViewProjection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			events := tt.log(t).events
-			v, err := statusView(events, tt.pricing)
+			v, err := statusView(events, tt.pricing, state.Budget{})
 			if err != nil {
 				t.Fatalf("statusView: %v", err)
 			}
@@ -474,7 +474,7 @@ func floatNear(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 func TestQueuedGoalTextStillSaysSettled(t *testing.T) {
 	var settled bool
 	var err error
-	out := captureStdout(t, func() { settled, _, err = printStatus(queuedLog(t).ledger(), nil) })
+	out := captureStdout(t, func() { settled, _, err = printStatus(queuedLog(t).ledger(), nil, state.Budget{}) })
 	if err != nil {
 		t.Fatalf("printStatus: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestStatusJSONStdoutIsOneJSONValue(t *testing.T) {
 			}
 			var got api.StatusView
 			decodeJSONLine(t, out, &got)
-			want, err := statusView(events, fixturePricing)
+			want, err := statusView(events, fixturePricing, state.Budget{})
 			if err != nil {
 				t.Fatalf("statusView: %v", err)
 			}
@@ -595,7 +595,7 @@ func TestPrintStatusFailedExcludesCancelledGoals(t *testing.T) {
 			var failed int
 			captureStdout(t, func() {
 				var err error
-				if _, failed, err = printStatus(led, nil); err != nil {
+				if _, failed, err = printStatus(led, nil, state.Budget{}); err != nil {
 					t.Fatalf("printStatus: %v", err)
 				}
 			})
@@ -620,7 +620,7 @@ func TestStatusTextShowsDelivery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, err := statusView(tt.log(t).events, nil)
+			v, err := statusView(tt.log(t).events, nil, state.Budget{})
 			if err != nil {
 				t.Fatalf("statusView: %v", err)
 			}
@@ -671,7 +671,7 @@ func TestGovernorAndStatusAgree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
 	}
-	v, err := statusView(events, pricing)
+	v, err := statusView(events, pricing, state.Budget{})
 	if err != nil {
 		t.Fatalf("statusView: %v", err)
 	}

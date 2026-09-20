@@ -50,6 +50,19 @@ type DeliveryConfig struct {
 	OpenPR []string `toml:"open_pr"`
 }
 
+// BudgetConfig is the [budget] table: workspace-wide limits per UTC day, from
+// event timestamps (ADR 017). Past a spend limit the Scheduler dispatches no
+// new attempt and starts no new Goal; past the Goal limit it starts no new
+// Goal. Each limit is off at 0, the default.
+type BudgetConfig struct {
+	USDPerDay    float64 `toml:"usd_per_day"`    // dollars, as the harnesses report them or [pricing] prices them
+	TokensPerDay int     `toml:"tokens_per_day"` // tokens, every attempt's
+	GoalsPerDay  int     `toml:"goals_per_day"`  // Goals started: a Goal starts when its first task is created
+	// RequireRunBudget makes `aoa run` refuse to start without --max-usd, so
+	// nothing runs in this workspace unbudgeted. Default false.
+	RequireRunBudget bool `toml:"require_run_budget"`
+}
+
 // DefaultOpenPR opens a pull request with the GitHub CLI, returning the one
 // already open for the branch instead when there is one, so re-running it
 // after a crash yields exactly one pull request.
@@ -163,6 +176,9 @@ type Config struct {
 	// Delivery says where verified work goes: the local branch, or a pull
 	// request per Goal (ADR 016).
 	Delivery DeliveryConfig `toml:"delivery"`
+	// Budget holds the per-day limits and whether `aoa run` needs a run budget
+	// (ADR 017). Off by default.
+	Budget BudgetConfig `toml:"budget"`
 }
 
 // Default returns a config with sensible defaults: an offline mock Backend and
@@ -179,6 +195,7 @@ func Default() Config {
 			{"go", "test", "./..."},
 		},
 		Delivery: DeliveryConfig{Mode: "local"},
+		Budget:   BudgetConfig{}, // every limit off; require_run_budget false
 	}
 }
 

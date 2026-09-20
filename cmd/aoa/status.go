@@ -8,7 +8,9 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
 	"github.com/bharadwaj6/ageOfAgents/internal/metrics"
 	"github.com/bharadwaj6/ageOfAgents/internal/state"
@@ -31,7 +33,7 @@ import (
 // id), and each Goal's tasks by creation, so a decomposed task comes before its
 // children. A task whose Goal is not on the log belongs to no GoalView; it is
 // still counted in the totals.
-func statusView(events []api.Event, pricing map[string]float64) (api.StatusView, error) {
+func statusView(events []api.Event, pricing map[string]float64, day state.Budget) (api.StatusView, error) {
 	s, err := state.Fold(events)
 	if err != nil {
 		return api.StatusView{}, fmt.Errorf("replay event log: %w", err)
@@ -118,6 +120,20 @@ func statusView(events []api.Event, pricing map[string]float64) (api.StatusView,
 			v.Settled = false
 		}
 		v.Goals = append(v.Goals, gv)
+	}
+	if !day.IsZero() {
+		today := state.Day(time.Now())
+		u := state.DayUsage(events, today)
+		v.Budget = &api.BudgetView{
+			Day:          today,
+			USDSpent:     u.CostUSD(pricing),
+			USDLimit:     day.USD,
+			TokensSpent:  u.TokensSpent,
+			TokensLimit:  day.Tokens,
+			GoalsStarted: u.Goals,
+			GoalsLimit:   day.Goals,
+			Exhausted:    day.SpendReached(u, pricing) || day.GoalsReached(u),
+		}
 	}
 	return v, nil
 }
@@ -224,6 +240,24 @@ func renderStatus(w io.Writer, v api.StatusView) error {
 		fmt.Fprintf(&b, "  cost=$%.4f", v.Totals.CostUSD)
 	}
 	b.WriteString("\n")
+	if bv := v.Budget; bv != nil {
+		fmt.Fprintf(&b, "budget %s: ", bv.Day)
+		parts := []string{}
+		if bv.USDLimit > 0 {
+			parts = append(parts, fmt.Sprintf("$%.2f of $%.2f", bv.USDSpent, bv.USDLimit))
+		}
+		if bv.TokensLimit > 0 {
+			parts = append(parts, fmt.Sprintf("%d of %d tokens", bv.TokensSpent, bv.TokensLimit))
+		}
+		if bv.GoalsLimit > 0 {
+			parts = append(parts, fmt.Sprintf("%d of %d goals", bv.GoalsStarted, bv.GoalsLimit))
+		}
+		fmt.Fprint(&b, strings.Join(parts, ", "))
+		if bv.Exhausted {
+			fmt.Fprint(&b, " — exhausted; nothing new starts today")
+		}
+		fmt.Fprintln(&b)
+	}
 	if v.MergeQueue.MaxDepth > 0 {
 		fmt.Fprintf(&b, "merge queue: max-depth=%d  wait-mean=%.1fs  wait-max=%.1fs\n",
 			v.MergeQueue.MaxDepth, v.MergeQueue.WaitMeanSeconds, v.MergeQueue.WaitMaxSeconds)
@@ -247,12 +281,12 @@ func writeAll(w io.Writer, p []byte) error {
 // work has settled (the signal --watch uses to stop polling) and how many tasks
 // failed (which makes `aoa run` exit non-zero). A goal whose delivery failed and
 // is still pending counts as one failure, so a stuck delivery is alertable.
-func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, failed int, err error) {
+func printStatus(led *ledger.Ledger, pricing map[string]float64, day state.Budget) (settled bool, failed int, err error) {
 	events, err := led.Read()
 	if err != nil {
 		return false, 0, err
 	}
-	v, err := statusView(events, pricing)
+	v, err := statusView(events, pricing, day)
 	if err != nil {
 		return false, 0, err
 	}
@@ -275,4 +309,9 @@ func printStatus(led *ledger.Ledger, pricing map[string]float64) (settled bool, 
 		}
 	}
 	return workSettled(v), failed, nil
+}
+
+// dayBudget is the workspace's per-day budget, as the Scheduler counts it.
+func dayBudget(cfg config.Config) state.Budget {
+	return state.Budget{USD: cfg.Budget.USDPerDay, Tokens: cfg.Budget.TokensPerDay, Goals: cfg.Budget.GoalsPerDay}
 }

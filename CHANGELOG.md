@@ -8,6 +8,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Budgets that bound a run and a day, not just a Goal** ([ADR 017](docs/design/adr/017-spend-is-bounded-before-it-happens.md)).
+  `aoa run --max-usd/--max-tokens/--max-goals` bounds one run; `[budget] usd_per_day`, `tokens_per_day`
+  and `goals_per_day` bound the workspace's UTC day, counted from event timestamps, so they hold across
+  runs. When a limit is reached the Scheduler starts no new Goal and dispatches no new attempt, and
+  records one new `BudgetExhausted` event; attempts already running finish, so a window can exceed its
+  limit by at most one attempt per worker — give the harness its own per-attempt cap (claude's
+  `--max-budget-usd`) and keep `concurrency` small when that matters. A run stopped by its budget exits
+  `0`, because unaffordable work is not failed work. `[budget] require_run_budget` makes `aoa run`
+  refuse to start without `--max-usd`, so a workspace can enforce "nothing runs here unbudgeted", and
+  `aoa status` reports the day's spend against its limits. **A log containing `BudgetExhausted` cannot
+  be read by an older `aoa` binary.**
+
 - **`[delivery] mode = "pr"`: one pull request per Goal** ([ADR 016](docs/design/adr/016-deliver-a-goal-as-a-pull-request.md)).
   For a repository whose `main` is protected, aoa can now hand back a change a team can merge. Before a
   Goal's first task runs, aoa fetches `<remote>/<base>` and cuts `aoa/<goal-id>` from it. Every task of

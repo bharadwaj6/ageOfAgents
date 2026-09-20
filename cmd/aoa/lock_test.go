@@ -241,7 +241,7 @@ func TestRunEverySkipsBusyPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open ledger: %v", err)
 	}
-	o, err := buildOrchestrator(ws, led)
+	o, err := buildOrchestrator(ws, led, state.Budget{})
 	if err != nil {
 		t.Fatalf("buildOrchestrator: %v", err)
 	}

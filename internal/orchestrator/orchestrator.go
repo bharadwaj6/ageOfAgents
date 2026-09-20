@@ -52,6 +52,9 @@ type Options struct {
 	RetryBackoff       time.Duration      // base wait before re-dispatching a failed ticket (exponential per attempt); 0 = off
 	CrashLoopThreshold int                // N identical-reason verify failures in a row → give up even under MaxAttempts; default 3
 	Delivery           Delivery           // pull-request delivery (ADR 016); the zero value is local mode
+	RunBudget          state.Budget       // this run's limits (aoa run --max-usd/--max-tokens/--max-goals); zero = none
+	RunSince           int                // the run's window: events with a greater seq (the last seq when it started)
+	DayBudget          state.Budget       // the [budget] limits per UTC day; zero = none
 	Now                func() time.Time
 	Sleep              func(time.Duration) // injectable for tests; default time.Sleep
 }
@@ -212,6 +215,11 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 			if pausedForApproval(s) {
 				return nil
 			}
+			// Work left unaffordable is not work that is stuck: a later run
+			// under a fresh budget picks it up (ADR 017).
+			if o.budgetPaused() {
+				return nil
+			}
 			// If the only thing blocking progress is a retry backoff, wait for the
 			// nearest ticket to become dispatchable rather than failing the run.
 			if wait, ok := o.nextBackoffWait(s, o.opt.Now()); ok {
@@ -232,8 +240,21 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A budget that has been reached starts no new Goal: a Goal with no task
+	// yet has spent nothing, so holding it back is the cheapest thing to do
+	// (ADR 017). Goals already started carry on.
+	spendStopped, goalsLeft, err := o.budgetStop(s)
+	if err != nil {
+		return err
+	}
 	for _, g := range sortedGoals(s) {
+		if goalsLeft == 0 {
+			break // this window has started as many Goals as its budget allows
+		}
 		if !g.Cancelled && !o.goalHasTickets(s, g.ID) {
+			if goalsLeft > 0 {
+				goalsLeft--
+			}
 			if err := o.emit(api.TicketCreated, api.TicketCreatedPayload{
 				TicketID:       g.ID + "-impl",
 				GoalID:         g.ID,
@@ -280,6 +301,9 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		return err
 	}
 	slots := o.opt.Concurrency - o.activeAttempts(s)
+	if spendStopped {
+		slots = 0 // the run or the day has spent its budget; attempts in flight finish
+	}
 	ready := o.dispatchable(s.ReadyTickets(), o.opt.Now())
 	n := min(slots, len(ready))
 	for _, t := range ready[:max(n, 0)] {

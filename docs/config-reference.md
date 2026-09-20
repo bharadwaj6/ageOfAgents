@@ -111,6 +111,34 @@ All default to off/unlimited, so they never change behavior until set.
 | `retry_backoff` | duration string | `"0s"` (instant) | Base wait before re-dispatching a failed Task; grows exponentially per attempt. | A flaky Gate/agent is hammering retries. |
 | `crash_loop_threshold` | int | `3` | Give up on a Task after N **identical-reason** failures in a row, even under `max_attempts`. Inert while `≤ max_attempts`. | Distinguishing a flaky failure from a fundamentally-stuck one. |
 
+### `[budget]`: the workspace's day, and the run's
+
+Per-Goal budgets bound one Goal. These bound the workspace and the run
+([ADR 017](design/adr/017-spend-is-bounded-before-it-happens.md)), which is what an unattended or
+front-door-driven workspace needs. Dollars are counted the same way: the cost the harness reports, else
+`[pricing]`.
+
+```toml
+[budget]
+usd_per_day        = 10.0   # 0 = no limit
+tokens_per_day     = 0
+goals_per_day      = 3      # a Goal counts when its first task is created
+require_run_budget = true   # `aoa run` refuses to start without --max-usd
+```
+
+A run's own budget is on the command line: `aoa run --max-usd 3 --max-tokens 0 --max-goals 1`.
+
+**When a limit is reached**, the Scheduler starts no new Goal and dispatches no new attempt, and appends
+one `BudgetExhausted`. Attempts already running finish, so a window can end over its limit by at most
+**one attempt per worker**:
+
+> worst case = limit + `concurrency` × the most one attempt can cost
+
+Keep that bound small by giving the harness its own per-attempt cap — for claude,
+`--max-budget-usd` in `[backends.claudecode].args` — and by running `concurrency = 1` when the budget
+is tight. A run that stops on its budget exits `0`: unaffordable work is not failed work, and the next
+run picks it up. `aoa status` shows the day's spend against its limits.
+
 Both budgets count **every** attempt, including ones that errored, produced no changes, or were rejected
 by the Gate, and decompositions that were rejected — the failure spiral is exactly where an unattended run
 burns money without shipping anything, so it is what the breaker is there to bound. An attempt that errors

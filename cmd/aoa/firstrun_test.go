@@ -11,6 +11,7 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/internal/agent"
 	"github.com/bharadwaj6/ageOfAgents/internal/config"
 	"github.com/bharadwaj6/ageOfAgents/internal/ledger"
+	"github.com/bharadwaj6/ageOfAgents/internal/state"
 	"github.com/stretchr/testify/require"
 )
 
@@ -212,7 +213,7 @@ func TestBuildOrchestratorPreflightsPRDelivery(t *testing.T) {
 			led, err := ledger.Open(ws.ledgerPath)
 			require.NoError(t, err)
 
-			o, err := buildOrchestrator(ws, led)
+			o, err := buildOrchestrator(ws, led, state.Budget{})
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				return

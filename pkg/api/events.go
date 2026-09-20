@@ -88,6 +88,11 @@ const (
 	// TicketAmended: a worker updated a ticket's parameters or instructions dynamically,
 	// usually because of discoveries during execution.
 	TicketAmended EventType = "TicketAmended"
+	// BudgetExhausted: a run or day budget held work back (ADR 017). Past a
+	// spend limit the Scheduler dispatches no new attempt and starts no new
+	// Goal; past a Goal limit it starts no new Goal. Attempts already running
+	// finish. Recorded once per scope per window: once per run, once per UTC day.
+	BudgetExhausted EventType = "BudgetExhausted"
 )
 
 // Event is the append-only log envelope. Seq is assigned by the ledger on
@@ -323,6 +328,27 @@ type GoalBudgetExceededPayload struct {
 	Limit       int     `json:"limit"`
 	SpentUSD    float64 `json:"spent_usd,omitempty"`
 	LimitUSD    float64 `json:"limit_usd,omitempty"`
+}
+
+// Budget scopes reported in [BudgetExhaustedPayload].
+const (
+	BudgetScopeRun = "run" // one `aoa run`: its --max-usd, --max-tokens, --max-goals
+	BudgetScopeDay = "day" // one UTC day in the workspace: [budget] usd_per_day, tokens_per_day, goals_per_day
+)
+
+// BudgetExhaustedPayload accompanies [BudgetExhausted]. Scope is
+// [BudgetScopeRun] or [BudgetScopeDay], and Day the UTC day (YYYY-MM-DD) a day
+// budget covers. The Spent fields and Goals are the window's spend and Goal
+// starts when it tripped; a Limit is 0 when that limit is not set.
+type BudgetExhaustedPayload struct {
+	Scope       string  `json:"scope"`
+	Day         string  `json:"day,omitempty"`
+	SpentUSD    float64 `json:"spent_usd"`
+	LimitUSD    float64 `json:"limit_usd,omitempty"`
+	SpentTokens int     `json:"spent_tokens"`
+	LimitTokens int     `json:"limit_tokens,omitempty"`
+	Goals       int     `json:"goals"`
+	LimitGoals  int     `json:"limit_goals,omitempty"`
 }
 
 // GoalAmendedPayload accompanies [GoalAmended]. Guidance is steering text

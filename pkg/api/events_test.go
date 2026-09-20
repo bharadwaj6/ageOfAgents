@@ -77,6 +77,12 @@ func TestNewEventRoundTrip(t *testing.T) {
 			decode:  func() any { return &DeliveredPayload{} },
 		},
 		{
+			name:    "BudgetExhausted",
+			typ:     BudgetExhausted,
+			payload: BudgetExhaustedPayload{Scope: BudgetScopeDay, Day: "2026-09-20", SpentUSD: 1.2, LimitUSD: 1, SpentTokens: 900, Goals: 3, LimitGoals: 5},
+			decode:  func() any { return &BudgetExhaustedPayload{} },
+		},
+		{
 			name:    "DeliveryFailed",
 			typ:     DeliveryFailed,
 			payload: DeliveryFailedPayload{GoalID: "g1", Branch: "aoa/g1", Reason: "push: rejected (fetch first)"},
