@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -633,6 +634,11 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 // itself to (AGENTS.md), applied to the commits it writes for you.
 const subjectMax = 72
 
+// conventionalPrefix matches a title that already opens with a Conventional
+// Commits type, optional (scope) and !, so it is used as-is rather than being
+// prefixed a second time.
+var conventionalPrefix = regexp.MustCompile(`^(feat|fix|docs|refactor|chore|test|build|ci|perf|style)(\([^)]*\))?!?: `)
+
 // commitMessage renders a ticket into a readable Conventional Commit. A Goal
 // becomes a ticket titled "Implement: <the whole goal text>", so interpolating
 // that straight into the subject produced commits whose first line was an entire
@@ -646,14 +652,20 @@ func commitMessage(title, ticketID string) string {
 	}
 	body := strings.TrimSpace(title)
 
-	subject = "feat: " + subject
+	prefix := ""
+	if !conventionalPrefix.MatchString(subject) {
+		prefix = "feat: "
+	}
+	subject = prefix + subject
 	if r := []rune(subject); len(r) > subjectMax {
-		// Cut back to the last word boundary that leaves room for the ellipsis.
-		cut := string(r[:subjectMax-1])
-		if i := strings.LastIndex(cut, " "); i > len("feat: ") {
-			cut = cut[:i]
+		// Cut back to the last word boundary within the limit; no truncation marker.
+		cut := string(r[:subjectMax])
+		if r[subjectMax] != ' ' {
+			if i := strings.LastIndex(cut, " "); i > len(prefix) {
+				cut = cut[:i]
+			}
 		}
-		subject = strings.TrimRight(cut, " ,;:-") + "…"
+		subject = strings.TrimRight(cut, " ,;:-")
 	}
 	return fmt.Sprintf("%s\n\n%s\n\nTicket: %s", subject, body, ticketID)
 }
