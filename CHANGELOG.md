@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-20
+
+`aoa` can now take work from a task board and hand back a reviewed pull request, inside a budget it
+enforces before it spends. Parts of this release were written by `aoa` itself: #143, #158 and #132 were
+labelled on the tracker, and the pull requests that fixed them (#160, #167, #168) were built by an agent
+in a throwaway worktree, gated by `make check`, and reviewed and merged by a human. The two metered ones
+cost $0.31 and $0.25.
+
 ### Added
 
 - **The reference front door runs on a budget, or not at all.** `examples/github-issues/aoa-github.sh
@@ -391,6 +399,7 @@ Docker sandboxing for the Gate, GitHub Actions integration, and a TLA+ model of 
 
 **Its release notes claim a SWE-bench result that this project cannot support.** See the 0.2.0 entry.
 
+[0.5.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/bharadwaj6/ageOfAgents/compare/v0.1.0...v0.2.0

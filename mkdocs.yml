@@ -75,6 +75,7 @@ nav:
   - Guide:
       - CLI reference: cli.md
       - Driving aoa from another system: backend.md
+      - Pointing aoa at your own repo: self-hosting.md
       - Configuration: config-reference.md
       - Scheduling: scheduling.md
       - Observability: integrations/README.md
