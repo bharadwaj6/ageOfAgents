@@ -50,10 +50,9 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status (2026-09-20):** PR delivery and the GitHub Issues front door are on `main`, and `aoa` has
-merged its first PR for itself (#155). Automation is paused until budgets land: ADR 017 first, then
-honest cost, run and daily budgets, and a budget-bound front door. After that come supervised dogfood
-runs and v0.5.0.
+**Last status (2026-09-20):** budgets are in. Spend is metered from the harness's own reported cost and
+charged for every attempt (#162); runs and days are bounded before dispatch (#163, closing #77); and the
+front door refuses to run without one. Next: supervised dogfood runs on a budget, then v0.5.0.
 
 | | Increment | Depends on |
 |---|---|---|
@@ -89,9 +88,9 @@ on the maintainer's Mac on a subscription backend, and only in runs the maintain
 | | Increment | Depends on |
 |---|---|---|
 | [x] | ADR 017: spend is bounded before it happens | — |
-| [ ] | Charge the harness's reported cost, including failed attempts; one accounting path | ADR 017 |
-| [ ] | Run and daily budgets enforced before dispatch, `BudgetExhausted`, `require_run_budget` ([#77](https://github.com/bharadwaj6/ageOfAgents/issues/77)) | honest cost |
-| [ ] | The front door runs only on a budget: run cap, goals per cycle, quota headroom | budgets |
+| [x] | Charge the harness's reported cost, including failed attempts; one accounting path ([#162](https://github.com/bharadwaj6/ageOfAgents/pull/162)) | ADR 017 |
+| [x] | Run and daily budgets enforced before dispatch, `BudgetExhausted`, `require_run_budget` ([#163](https://github.com/bharadwaj6/ageOfAgents/pull/163), closes [#77](https://github.com/bharadwaj6/ageOfAgents/issues/77)) | honest cost |
+| [x] | The front door runs only on a budget: run cap, goals per cycle, quota headroom | budgets |
 | [ ] | Supervised dogfood on a budget: [#143](https://github.com/bharadwaj6/ageOfAgents/issues/143), [#158](https://github.com/bharadwaj6/ageOfAgents/issues/158), [#132](https://github.com/bharadwaj6/ageOfAgents/issues/132) | front door |
 | [ ] | Release v0.5.0 | all of the above |
 

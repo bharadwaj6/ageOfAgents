@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **The reference front door runs on a budget, or not at all.** `examples/github-issues/aoa-github.sh
+  cycle` refuses to start without `AOA_RUN_MAX_USD` and passes it to `aoa run`; `AOA_MAX_GOALS_PER_CYCLE`
+  (default 1) caps how many Goals one cycle submits; intake stops when the workspace's day budget is
+  spent; and `AOA_MIN_QUOTA_PCT` skips a cycle when the subscription windows `quota-axi` reports are
+  low, so a fleet does not eat the quota the person at the keyboard is using. Issue comments now report
+  what a Goal cost.
+
 - **Budgets that bound a run and a day, not just a Goal** ([ADR 017](docs/design/adr/017-spend-is-bounded-before-it-happens.md)).
   `aoa run --max-usd/--max-tokens/--max-goals` bounds one run; `[budget] usd_per_day`, `tokens_per_day`
   and `goals_per_day` bound the workspace's UTC day, counted from event timestamps, so they hold across

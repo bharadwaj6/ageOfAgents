@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -193,7 +194,24 @@ type frontDoor struct {
 	stub   string   // the gh stub's state directory
 	script string   // examples/github-issues/aoa-github.sh
 	bash   string   // bash, to run it with
+	bin    string   // the stub directory first on PATH
 	env    []string // the script's environment
+}
+
+// setBudget rewrites the workspace's [budget] table.
+func (f *frontDoor) setBudget(t *testing.T, b config.BudgetConfig) {
+	t.Helper()
+	cfg, err := config.Load(f.ws.configPath)
+	require.NoError(t, err)
+	cfg.Budget = b
+	require.NoError(t, cfg.Save(f.ws.configPath))
+}
+
+// stubQuota puts a quota-axi on PATH reporting pct% left in its one window.
+func (f *frontDoor) stubQuota(t *testing.T, pct int) {
+	t.Helper()
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' '{\"providers\":[{\"windows\":[{\"remainingPercent\":%d}]}]}'\n", pct)
+	require.NoError(t, os.WriteFile(filepath.Join(f.bin, "quota-axi"), []byte(script), 0o755))
 }
 
 // newFrontDoor builds a workspace delivering pull requests to a local bare
@@ -243,6 +261,7 @@ func newFrontDoor(t *testing.T, pass bool, issues ...ghIssue) *frontDoor {
 	require.NoError(t, cfg.Save(f.ws.configPath))
 
 	bin := filepath.Join(root, "bin")
+	f.bin = bin
 	require.NoError(t, os.Mkdir(bin, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte(ghStub), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "aoa"), []byte(aoaShim), 0o755))
@@ -265,6 +284,7 @@ func newFrontDoor(t *testing.T, pass bool, issues ...ghIssue) *frontDoor {
 		"AOA_WS="+wsPath,
 		"AOA_GH_REPO="+fdRepo,
 		"AOA_GH_ALLOW="+fdAllow,
+		"AOA_RUN_MAX_USD=5", // a cycle runs on a budget (ADR 017); the no-budget case unsets it
 	)
 	return f
 }
@@ -506,4 +526,77 @@ func TestFrontDoorSkipsAnIssueItCannotRead(t *testing.T) {
 	comments := f.ourComments(8)
 	require.Len(t, comments, 1)
 	require.Contains(t, comments[0], marker(id, "delivered"))
+}
+
+// without returns the front door's environment with one variable removed.
+func (f *frontDoor) without(key string) []string {
+	out := make([]string, 0, len(f.env))
+	for _, kv := range f.env {
+		if !strings.HasPrefix(kv, key+"=") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// tryEnv runs a subcommand with a replacement environment.
+func (f *frontDoor) tryEnv(sub string, env []string) (string, error) {
+	f.t.Helper()
+	saved := f.env
+	f.env = env
+	defer func() { f.env = saved }()
+	return f.try(sub)
+}
+
+// Automation runs on a budget or not at all (ADR 017): a cycle without one
+// refuses before it submits anything or spends a token.
+func TestFrontDoorRefusesACycleWithoutABudget(t *testing.T) {
+	f := newFrontDoor(t, true, trustedIssue())
+	out, err := f.tryEnv("cycle", f.without("AOA_RUN_MAX_USD"))
+	require.Error(t, err, "a cycle without a budget must refuse")
+	require.Contains(t, out, "AOA_RUN_MAX_USD")
+	require.Equal(t, 0, countEvents(t, f.ws, api.GoalSubmitted), "nothing was submitted")
+	require.Empty(t, f.ourComments(7))
+}
+
+// One cycle commits to one cycle's spend: intake submits at most
+// AOA_MAX_GOALS_PER_CYCLE new Goals, and the rest wait for a later one.
+func TestFrontDoorSubmitsAtMostGoalsPerCycle(t *testing.T) {
+	second := trustedIssue()
+	second.Number, second.Title = 8, "Add a farewell"
+	second.URL = "https://github.com/" + fdRepo + "/issues/8"
+	f := newFrontDoor(t, true, trustedIssue(), second)
+
+	f.run("intake")
+	require.Equal(t, 1, countEvents(t, f.ws, api.GoalSubmitted), "one Goal per cycle by default")
+	f.run("intake")
+	require.Equal(t, 2, countEvents(t, f.ws, api.GoalSubmitted), "the next cycle takes the other")
+}
+
+// A day budget that is spent stops intake too: a Goal submitted now would only
+// sit in the workspace until tomorrow.
+func TestFrontDoorStopsIntakeWhenTheDayBudgetIsSpent(t *testing.T) {
+	second := trustedIssue()
+	second.Number, second.Title = 8, "Add a farewell"
+	second.URL = "https://github.com/" + fdRepo + "/issues/8"
+	f := newFrontDoor(t, true, trustedIssue(), second)
+	f.setBudget(t, config.BudgetConfig{GoalsPerDay: 1})
+
+	f.run("cycle")
+	require.Equal(t, 1, countEvents(t, f.ws, api.GoalSubmitted))
+	out := f.run("intake")
+	require.Contains(t, out, "day's budget is spent")
+	require.Equal(t, 1, countEvents(t, f.ws, api.GoalSubmitted), "the day's Goal allowance is gone")
+}
+
+// The subscription's own quota is the front door's business (ADR 015): with
+// AOA_MIN_QUOTA_PCT set and little left, a cycle does nothing at all.
+func TestFrontDoorSkipsACycleWhenQuotaIsLow(t *testing.T) {
+	f := newFrontDoor(t, true, trustedIssue())
+	f.stubQuota(t, 7)
+
+	out, err := f.tryEnv("cycle", append(f.env, "AOA_MIN_QUOTA_PCT=50"))
+	require.NoError(t, err, "skipping is not a failure")
+	require.Contains(t, out, "below AOA_MIN_QUOTA_PCT")
+	require.Equal(t, 0, countEvents(t, f.ws, api.GoalSubmitted))
 }

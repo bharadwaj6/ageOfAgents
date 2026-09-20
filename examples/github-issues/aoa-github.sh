@@ -28,6 +28,13 @@ environment:
   AOA_GH_ALLOW  logins trusted to author and label an issue, separated by spaces
                 or commas (default: the login gh is authenticated as)
   AOA_BIN       aoa binary (default: aoa)
+
+budget (ADR 017; `cycle` refuses to run without one):
+  AOA_RUN_MAX_USD        dollars this cycle's `aoa run` may spend (required for cycle)
+  AOA_RUN_MAX_GOALS      Goals that run may start (optional)
+  AOA_MAX_GOALS_PER_CYCLE  new Goals intake submits per cycle (default: 1)
+  AOA_MIN_QUOTA_PCT      skip the cycle unless the subscription windows quota-axi
+                         reports have at least this much left (optional, needs quota-axi)
 EOF
 }
 
@@ -72,6 +79,14 @@ def reason:
   | if length > 300 then .[:299] + "…" else . end;
 def indent: split("\n") | map("    " + .) | join("\n");
 
+# What the Goal cost, when the harness reported anything: the person deciding
+# whether to keep pointing aoa at this repository is the person paying for it.
+def spend:
+  if (.cost_usd // 0) > 0 or (.tokens // 0) > 0 then
+    "\n\nSpend: " + (if (.cost_usd // 0) > 0 then "$\(.cost_usd * 100 | round / 100)" else "unpriced" end)
+    + ", \(.tokens // 0) tokens."
+  else "" end;
+
 def comment($label):
   (if .outcome == "delivered" then
     "aoa opened a pull request for this issue: \(.pr_url // "(no URL reported)")\n\nEvery commit on it passed the Gate. Review and merge it as usual."
@@ -84,8 +99,42 @@ def comment($label):
   else
     "aoa has a verified change for this issue waiting for approval. Whoever operates the aoa workspace can land it with:\n\n\([.tickets[] | select(.status == "awaiting") | "aoa approve \(.id)"] | join("\n") | indent)"
   end)
+  + spend
   + "\n\n<sub>aoa goal `\(.id)`</sub>\n<!-- aoa:\(.id):\(.outcome) -->";
 '
+
+# max_goals_per_cycle: how many new Goals one intake may submit. One by default:
+# a front door that queues ten Goals at once has committed to ten Goals' spend.
+max_goals_per_cycle() { printf '%s' "${AOA_MAX_GOALS_PER_CYCLE:-1}"; }
+
+# budget_exhausted STATUS: whether the workspace's day budget is spent, as aoa
+# reports it. Intake stops there: a Goal submitted now would only wait.
+budget_exhausted() {
+  jq -r '.budget.exhausted // false' <<<"$1"
+}
+
+# quota_ok: whether the vendor's own quota has the headroom AOA_MIN_QUOTA_PCT
+# asks for. Subscription quota is the front door's business, not aoa's (ADR 015):
+# aoa meters the spend it can see, and this keeps the fleet out of the quota the
+# person at the keyboard is also using. Without quota-axi, or without the
+# variable, it is not checked.
+quota_ok() {
+  local want left
+  want=${AOA_MIN_QUOTA_PCT:-0}
+  [[ $want == 0 ]] && return 0
+  command -v quota-axi >/dev/null || { log "AOA_MIN_QUOTA_PCT is set but quota-axi is not installed"; return 1; }
+  left=$(quota-axi --provider claude --json --no-credential-refresh 2>/dev/null |
+    jq -r '[.providers[]?.windows[]?.remainingPercent // empty] | min // empty')
+  if [[ -z $left ]]; then
+    log "quota-axi reported no window (run 'quota-axi --allow-keychain-prompt' once); skipping the run"
+    return 1
+  fi
+  if (( $(printf '%.0f' "$left") < want )); then
+    log "quota left ${left}% is below AOA_MIN_QUOTA_PCT=${want}%; skipping the run"
+    return 1
+  fi
+  return 0
+}
 
 # trusted LOGIN: whether LOGIN is in the allowlist. An empty login never is.
 trusted() {
@@ -137,12 +186,23 @@ intake() {
   status=$("$AOA" status --path "$AOA_WS" --json)
   withdraw "$issues" "$status"
 
+  local left
+  left=$(max_goals_per_cycle)
+  if [[ $(budget_exhausted "$status") == true ]]; then
+    log "the day's budget is spent; submitting nothing this cycle"
+    left=0
+  fi
+
   while IFS= read -r issue <&3; do
     n=$(jq -r '.number' <<<"$issue")
     url=$(jq -r '.url' <<<"$issue")
     goal=$(jq -r --arg u "$url" "$JQ_DEFS"'[.goals[] | select(.ref == $u and live)] | first | .id // ""' <<<"$status")
     if [[ -n $goal ]]; then
       continue # already in hand
+    fi
+    if (( left <= 0 )); then
+      log "#$n: waiting for a later cycle (this one submits $(max_goals_per_cycle))"
+      continue
     fi
 
     # Trust both whoever wrote the issue and whoever most recently applied the label.
@@ -177,6 +237,7 @@ intake() {
       log "#$n: attempt $attempt is already goal $goal"
     else
       log "#$n: submitted goal $goal (attempt $attempt, labelled by $labeller)"
+      left=$((left - 1))
     fi
   done 3< <(jq -c '.[]' <<<"$issues")
 }
@@ -213,9 +274,16 @@ report() {
 }
 
 cycle() {
+  # A cycle is automation, and automation runs on a budget or not at all
+  # (ADR 017). The run's own limits are aoa's to enforce; this only refuses to
+  # start one without them.
+  [[ -n ${AOA_RUN_MAX_USD:-} ]] ||
+    die "set AOA_RUN_MAX_USD: a cycle runs on a budget (for example AOA_RUN_MAX_USD=3)"
+  quota_ok || return 0
   intake
-  local rc=0
-  "$AOA" run --path "$AOA_WS" >&2 || rc=$?
+  local rc=0 run_args=(run --path "$AOA_WS" --max-usd "$AOA_RUN_MAX_USD")
+  [[ -n ${AOA_RUN_MAX_GOALS:-} ]] && run_args+=(--max-goals "$AOA_RUN_MAX_GOALS")
+  "$AOA" "${run_args[@]}" >&2 || rc=$?
   case $rc in
     0) ;;
     75) log "aoa run: another Scheduler holds the workspace and will pick the goals up" ;;
