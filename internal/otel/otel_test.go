@@ -5,10 +5,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	coltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
 
@@ -76,6 +79,30 @@ func TestExportNoopWhenDisabled(t *testing.T) {
 	if err := Export(context.Background(), events, metrics.Compute(events), diagnose.Classify(events), nil); err != nil {
 		t.Fatalf("disabled Export should be a no-op, got %v", err)
 	}
+}
+
+// A redelivered keyed submit (same idempotency key, new goal id) must not show up
+// as a second goal span: state.Apply drops it, and so does the trace projection.
+func TestEmitTracesDedupesGoalsByIdempotencyKey(t *testing.T) {
+	events := newStream(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build", IdempotencyKey: "gh:1"}).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "build", IdempotencyKey: "gh:1"}).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g3", Text: "other", IdempotencyKey: "gh:2"}).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g4", Text: "unkeyed"}).
+		add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "do it"}).
+		evs
+
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	emitTraces(context.Background(), tp.Tracer("aoa"), events)
+
+	var goals []string
+	for _, sp := range rec.Ended() {
+		if strings.HasPrefix(sp.Name(), "goal ") {
+			goals = append(goals, sp.Name())
+		}
+	}
+	require.ElementsMatch(t, []string{"goal g1", "goal g3", "goal g4"}, goals)
 }
 
 func TestExportEmitsSpanTree(t *testing.T) {

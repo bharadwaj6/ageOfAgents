@@ -118,12 +118,21 @@ func emitTraces(ctx context.Context, tr trace.Tracer, events []api.Event) {
 	var goalOrder []string
 	tickets := map[string]*ticketAgg{}
 	var ticketOrder []string
+	seenKeys := map[string]bool{}
 
 	for _, e := range events {
 		switch e.Type {
 		case api.GoalSubmitted:
 			var p api.GoalSubmittedPayload
 			if e.DecodePayload(&p) == nil {
+				// A redelivered keyed submit is not a second goal; state.Apply drops it
+				// by idempotency key, and so must the trace (older logs still hold them).
+				if p.IdempotencyKey != "" {
+					if seenKeys[p.IdempotencyKey] {
+						continue
+					}
+					seenKeys[p.IdempotencyKey] = true
+				}
 				if _, ok := goalStart[p.GoalID]; !ok {
 					goalOrder = append(goalOrder, p.GoalID)
 				}
