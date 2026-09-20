@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -178,6 +179,39 @@ func TestCLIRunReportsTheHarnessesSpend(t *testing.T) {
 			}
 			if res.Tokens != 15 || res.Model != "claude-sonnet-5" || res.CostUSD != 0.42 {
 				t.Errorf("spend = (%d tokens, %q, $%v), want (15, claude-sonnet-5, $0.42)", res.Tokens, res.Model, res.CostUSD)
+			}
+		})
+	}
+}
+
+// A non-zero exit must carry the harness's own explanation, not just
+// "exit status 1": the message of a JSON error envelope when there is one,
+// else the tail of the output, bounded either way.
+func TestCLIRunFailureCarriesHarnessMessage(t *testing.T) {
+	exit := errors.New("exit status 1")
+	for _, tc := range []struct {
+		name, out string
+		want      string
+		maxLen    int
+	}{
+		{"json envelope", `{"type":"error","message":"Not signed in. Run grok login"}` + "\nError: Not signed in.\n",
+			"grok: exit status 1: Not signed in. Run grok login", 0},
+		{"stderr tail", "warming up\nError: quota exceeded\n", "grok: exit status 1: warming up\nError: quota exceeded", 0},
+		{"no output", "", "grok: exit status 1", 0},
+		{"bounded", strings.Repeat("x", 5000), "", len("grok: exit status 1: ") + maxFailureDetail + len("[...truncated...]\n") + 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewCLI("grok", "grok", nil)
+			c.run = func(context.Context, string, string, ...string) (string, error) { return tc.out, exit }
+			_, err := c.Run(context.Background(), Task{Title: "t"})
+			if err == nil || !errors.Is(err, exit) {
+				t.Fatalf("err = %v, want it to wrap the exit error", err)
+			}
+			if tc.want != "" && err.Error() != tc.want {
+				t.Errorf("err = %q, want %q", err.Error(), tc.want)
+			}
+			if tc.maxLen > 0 && len(err.Error()) > tc.maxLen {
+				t.Errorf("err is %d bytes, want <= %d", len(err.Error()), tc.maxLen)
 			}
 		})
 	}
