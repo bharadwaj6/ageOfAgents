@@ -1066,9 +1066,35 @@ func TestCommitMessage(t *testing.T) {
 			wantSubject: "feat: g-3-impl",
 		},
 		{
-			name:   "long title is cut at a word boundary",
-			title:  longGoal,
-			ticket: "g-2-impl",
+			name:        "long title is cut at a word boundary",
+			title:       longGoal,
+			ticket:      "g-2-impl",
+			wantSubject: "feat: Add table-driven unit tests for parseUsage in",
+		},
+		{
+			name:        "already-prefixed title is not prefixed again",
+			title:       "Implement: docs: point aoa serve users at the tunnel guide",
+			ticket:      "g-4-impl",
+			wantSubject: "docs: point aoa serve users at the tunnel guide",
+		},
+		{
+			name:        "scoped and breaking prefix is kept",
+			title:       "Implement: refactor(agent)!: drop the legacy preset",
+			ticket:      "g-5-impl",
+			wantSubject: "refactor(agent)!: drop the legacy preset",
+		},
+		{
+			name: "long already-prefixed title is cut without an ellipsis",
+			title: "Implement: docs: point aoa serve users without a public " +
+				"endpoint to the tunnel guide",
+			ticket:      "g-6-impl",
+			wantSubject: "docs: point aoa serve users without a public endpoint to the tunnel",
+		},
+		{
+			name:        "unknown type still gets the feat prefix",
+			title:       "Implement: wip: try a thing",
+			ticket:      "g-7-impl",
+			wantSubject: "feat: wip: try a thing",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
