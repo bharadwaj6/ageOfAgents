@@ -98,3 +98,31 @@ func TestLiveStreamsSpanTree(t *testing.T) {
 		}
 	}
 }
+
+// The live projection must drop a redelivered keyed submit exactly as the
+// post-hoc one does: same idempotency key, new Goal id, no second span. Issue
+// #132 named only the post-hoc projection; the same gap was here.
+func TestLiveDedupesGoalsByIdempotencyKey(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1") // nothing is exported; spans are counted in-process
+	live, err := NewLive(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, live)
+	t.Cleanup(func() {
+		if err := live.Shutdown(context.Background()); err != nil {
+			t.Logf("shutdown: %v", err)
+		}
+	})
+
+	s := newStream(t)
+	s.add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "build", IdempotencyKey: "gh:1"})
+	s.add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g2", Text: "build", IdempotencyKey: "gh:1"})
+	s.add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g3", Text: "other"})
+	for _, e := range s.evs {
+		live.Observe(e)
+	}
+
+	require.Len(t, live.goals, 2, "a redelivery opens no second goal span")
+	require.Contains(t, live.goals, "g1")
+	require.Contains(t, live.goals, "g3")
+	require.NotContains(t, live.goals, "g2")
+}
