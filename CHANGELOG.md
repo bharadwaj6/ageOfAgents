@@ -68,6 +68,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A failing harness now says why.** A CLI backend that exited non-zero was recorded as
+  `agent: grok: exit status 1`, so a task that failed because the harness was signed out looked exactly
+  like one that failed for any other reason — and it cost two retries before a human saw a reason they
+  could act on. The message of a JSON `{"type":"error"}` envelope, or the tail of the output, is now
+  carried into the failure, bounded to 400 bytes.
+
 - **An attempt that errored is charged what it spent.** A CLI harness that exits non-zero has its output
   read anyway, so the usage and cost it reported are charged; before, every errored attempt charged
   nothing, and a goal whose attempts all errored never tripped its budget. An envelope with an empty

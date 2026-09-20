@@ -162,6 +162,12 @@ func (c *CLI) Run(ctx context.Context, task Task) (Result, error) {
 		model = c.name
 	}
 	if err != nil {
+		// Say what the harness said: "exit status 1" alone gave a human nothing
+		// to act on, and cost two retries on a harness that was merely signed
+		// out.
+		if detail := failureDetail(out); detail != "" {
+			return Result{Tokens: tokens, Model: model, CostUSD: cost}, fmt.Errorf("%s: %w: %s", c.name, err, detail)
+		}
 		return Result{Tokens: tokens, Model: model, CostUSD: cost}, fmt.Errorf("%s: %w", c.name, err)
 	}
 	return Result{
@@ -487,6 +493,37 @@ func BuildPrompt(task Task) string {
 	b.WriteString("Use local_id to reference sibling subtasks in depends_on. Decompose OR implement, " +
 		"never both.")
 	return b.String()
+}
+
+const maxFailureDetail = 400
+
+// failureDetail explains a non-zero exit from what the harness printed. A JSON
+// {"type":"error","message":...} line wins (the last one, as a harness may
+// retry before giving up); otherwise the tail of the output is used, since
+// defaultRunner merges stderr into stdout and the cause is printed last.
+func failureDetail(out string) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return ""
+	}
+	msg := ""
+	for _, line := range strings.Split(out, "\n") {
+		var env struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &env) == nil && env.Type == "error" && env.Message != "" {
+			msg = env.Message
+		}
+	}
+	if msg == "" {
+		msg = tailLines(out, maxFailureDetail)
+	}
+	msg = strings.TrimSpace(msg)
+	if len(msg) > maxFailureDetail {
+		msg = strings.ToValidUTF8(msg[:maxFailureDetail], "") + "…"
+	}
+	return msg
 }
 
 // tailLines returns at most max trailing bytes of s, trimmed to a line boundary
