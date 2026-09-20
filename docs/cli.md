@@ -93,6 +93,9 @@ any time — a settled workspace does no work. See [Scheduling](scheduling.md).
 | `--path DIR` | `.` | workspace root |
 | `--once` | `false` | a single reconcile pass instead of looping |
 | `--interval D` | `0` | keep reconciling every `D` until interrupted (`0` = run until settled, then exit) |
+| `--max-usd F` | `0` | budget for this run in dollars; past it no new attempt or Goal starts |
+| `--max-tokens N` | `0` | budget for this run in tokens |
+| `--max-goals N` | `0` | how many Goals this run may start |
 | `--otel` | `false` | after the run, replay the Event Log to OTLP |
 | `--otel-live` | `false` | stream spans to OTLP live, as events happen |
 

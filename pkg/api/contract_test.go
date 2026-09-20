@@ -71,6 +71,10 @@ func TestContractWireShape(t *testing.T) {
 					Goals: 1, Tickets: 3, Merged: 1, Failed: 1, Awaiting: 0,
 				},
 				MergeQueue: MergeQueueView{MaxDepth: 2, WaitMeanSeconds: 2.5, WaitMaxSeconds: 4},
+				Budget: &BudgetView{
+					Day: "2026-01-02", USDSpent: 0.8, USDLimit: 1, TokensSpent: 3000, TokensLimit: 50000,
+					GoalsStarted: 1, GoalsLimit: 5, Exhausted: false,
+				},
 			},
 			golden: "status_view.json",
 		},

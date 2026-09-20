@@ -134,6 +134,9 @@ type State struct {
 	KeyToGoal   map[string]string `json:"key_to_goal"`   // idempotency key -> goal ID (dedupe)
 	LastSeq     int
 	Spend       Spend // what every attempt on the log spent
+	// BudgetsExhausted maps each budget window a BudgetExhausted closed (see
+	// BudgetWindow: "run", or "day:2026-09-20") to the seq of the latest one.
+	BudgetsExhausted map[string]int `json:"budgets_exhausted,omitempty"`
 }
 
 // New returns an empty State.
@@ -526,6 +529,16 @@ func (s *State) Apply(e api.Event) error {
 			}
 			t.LastActivity = e.Timestamp
 		}
+
+	case api.BudgetExhausted:
+		var p api.BudgetExhaustedPayload
+		if err := e.DecodePayload(&p); err != nil {
+			return err
+		}
+		if s.BudgetsExhausted == nil {
+			s.BudgetsExhausted = map[string]int{}
+		}
+		s.BudgetsExhausted[BudgetWindow(p.Scope, p.Day)] = e.Seq
 
 	default:
 		return fmt.Errorf("state: unknown event type %q (seq %d)", e.Type, e.Seq)

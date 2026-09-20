@@ -155,3 +155,31 @@ func TestDeliveryDefaults(t *testing.T) {
 		})
 	}
 }
+
+// The [budget] table is off by default and loads as written (ADR 017).
+func TestBudgetTable(t *testing.T) {
+	tests := []struct {
+		name string
+		toml string
+		want BudgetConfig
+	}{
+		{name: "absent", toml: "", want: BudgetConfig{}},
+		{name: "set", toml: "[budget]\nusd_per_day = 5.5\ntokens_per_day = 1000000\ngoals_per_day = 3\nrequire_run_budget = true\n",
+			want: BudgetConfig{USDPerDay: 5.5, TokensPerDay: 1_000_000, GoalsPerDay: 3, RequireRunBudget: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), FileName)
+			if err := os.WriteFile(path, []byte("repo = \"./x\"\n"+tt.toml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got.Budget != tt.want {
+				t.Errorf("Budget = %+v, want %+v", got.Budget, tt.want)
+			}
+		})
+	}
+}

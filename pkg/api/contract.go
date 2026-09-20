@@ -107,6 +107,7 @@ const (
 // settled, with an empty Goals list.
 //
 // Goals are listed in submission order (the seq of their GoalSubmitted event).
+// Budget is present only when a day budget is configured.
 type StatusView struct {
 	Schema     int            `json:"schema"`
 	LastSeq    int            `json:"last_seq"`
@@ -114,6 +115,26 @@ type StatusView struct {
 	Goals      []GoalView     `json:"goals"`
 	Totals     StatusTotals   `json:"totals"`
 	MergeQueue MergeQueueView `json:"merge_queue"`
+	Budget     *BudgetView    `json:"budget,omitempty"`
+}
+
+// BudgetView is the workspace's day budget ([budget] in aoa.toml) as the
+// Scheduler counts it (ADR 017): what the current UTC day has spent and how
+// many Goals it started, against each limit. A limit of 0 is not set. It is
+// absent when no day budget is configured.
+//
+// Exhausted is true once a limit is reached: past a spend limit nothing new
+// starts today — no attempt, no Goal — and past the Goal limit no new Goal
+// starts, while the Goals already started carry on.
+type BudgetView struct {
+	Day          string  `json:"day"`
+	USDSpent     float64 `json:"usd_spent"`
+	USDLimit     float64 `json:"usd_limit"`
+	TokensSpent  int     `json:"tokens_spent"`
+	TokensLimit  int     `json:"tokens_limit"`
+	GoalsStarted int     `json:"goals_started"`
+	GoalsLimit   int     `json:"goals_limit"`
+	Exhausted    bool    `json:"exhausted"`
 }
 
 // GoalView is one Goal in a [StatusView].
