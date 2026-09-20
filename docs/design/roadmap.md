@@ -50,11 +50,12 @@ Take the first unticked item below.
 
 When your PR merges, tick its line here and update **Last status**.
 
-**Last status (2026-09-20):** v0.5.0 is being cut. Budgets are in (#161–#164), and `aoa` has built and
-merged three of its own fixes under them, each in one attempt: #158 for $0.31 and #132 for $0.25, with
-#143's fix taken from the goal it wrote. A launchd schedule was tried on 2026-09-19 and removed: runs
-are started by a person, on a budget. What `aoa` missed in #132 (the file the issue did not name) was
-finished by hand in #169, and the Scheduler refactor its #143 goal also carried is #166.
+**Last status (2026-09-20):** [v0.5.0](https://github.com/bharadwaj6/ageOfAgents/releases/tag/v0.5.0) is released: PR delivery, the GitHub
+Issues front door, and budgets enforced before work starts. `aoa` built three of its own fixes under
+those budgets, each in one attempt, two of them for $0.31 and $0.25. Budget enforcement was checked
+against a real backend: with a $0.20 run cap, two Goals merged for $0.257 and the rest stayed queued,
+one `BudgetExhausted` recorded, exit 0. Automation stays a command a person runs: a launchd schedule
+was tried and removed. Next are the open questions below, and the follow-ups #166, #157, #156 and #154.
 
 | | Increment | Depends on |
 |---|---|---|
@@ -94,7 +95,7 @@ on the maintainer's Mac on a subscription backend, and only in runs the maintain
 | [x] | Run and daily budgets enforced before dispatch, `BudgetExhausted`, `require_run_budget` ([#163](https://github.com/bharadwaj6/ageOfAgents/pull/163), closes [#77](https://github.com/bharadwaj6/ageOfAgents/issues/77)) | honest cost |
 | [x] | The front door runs only on a budget: run cap, goals per cycle, quota headroom | budgets |
 | [x] | Supervised dogfood on a budget: [#143](https://github.com/bharadwaj6/ageOfAgents/issues/143), [#158](https://github.com/bharadwaj6/ageOfAgents/issues/158), [#132](https://github.com/bharadwaj6/ageOfAgents/issues/132) — `aoa` built [#167](https://github.com/bharadwaj6/ageOfAgents/pull/167) and [#168](https://github.com/bharadwaj6/ageOfAgents/pull/168) itself | front door |
-| [ ] | Release v0.5.0 | all of the above |
+| [x] | Release [v0.5.0](https://github.com/bharadwaj6/ageOfAgents/releases/tag/v0.5.0) | all of the above |
 
 **Later increments** each need a design decision, and most need an ADR, before any code:
 
