@@ -68,6 +68,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **The live OTel projection dedupes redelivered Goals too.** #132 named the post-hoc projection, which
+  aoa fixed in #168; `internal/otel/live.go` had the same gap, so a redelivered keyed submit opened a
+  second, empty goal span while streaming.
+
 - **A failing harness now says why.** A CLI backend that exited non-zero was recorded as
   `agent: grok: exit status 1`, so a task that failed because the harness was signed out looked exactly
   like one that failed for any other reason — and it cost two retries before a human saw a reason they

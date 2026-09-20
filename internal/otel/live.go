@@ -29,6 +29,10 @@ type Live struct {
 	tr      trace.Tracer
 	goals   map[string]liveGoal
 	tickets map[string]*liveTicket
+	// keys holds the idempotency keys already seen, so a redelivered submit —
+	// same key, new Goal id — opens no second span, exactly as the post-hoc
+	// projection and state.Apply treat it.
+	keys map[string]bool
 }
 
 type liveGoal struct {
@@ -134,6 +138,15 @@ func (l *Live) observe(e api.Event, live bool) {
 		}
 		if _, ok := l.goals[p.GoalID]; ok {
 			return
+		}
+		if p.IdempotencyKey != "" {
+			if l.keys[p.IdempotencyKey] {
+				return
+			}
+			if l.keys == nil {
+				l.keys = map[string]bool{}
+			}
+			l.keys[p.IdempotencyKey] = true
 		}
 		ctx, span := l.tr.Start(context.Background(), "goal "+p.GoalID,
 			startOpts(trace.WithAttributes(
