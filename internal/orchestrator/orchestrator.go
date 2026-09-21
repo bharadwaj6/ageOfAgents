@@ -243,8 +243,9 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	}
 	// A budget that has been reached starts no new Goal: a Goal with no task
 	// yet has spent nothing, so holding it back is the cheapest thing to do
-	// (ADR 017). Goals already started carry on.
-	spendStopped, goalsLeft, err := o.budgetStop(s)
+	// (ADR 017). Goals already started carry on. Whether it also stops new
+	// *attempts* is read again at step 3, where that decision is made.
+	_, goalsLeft, err := o.budgetStop(s)
 	if err != nil {
 		return err
 	}
@@ -302,6 +303,19 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		return err
 	}
 	slots := o.opt.Concurrency - o.activeAttempts(s)
+	// Spend is read *here*, after the state that found those free slots, and not
+	// carried down from step 1: the pass re-reads the log several times in
+	// between, and an attempt appends its charge before it releases its slot. Read
+	// the other way round, a pass could see the slot a finished attempt freed
+	// without the charge that freed it, and dispatch work the budget had already
+	// paid out for — which is how a $1.00 run budget spent $1.60 with one worker
+	// (#166). Reading spend last makes ADR 017's bound hold by construction: an
+	// attempt is either still counted in activeAttempts above, or its charge is
+	// already on the log this read sees.
+	spendStopped, _, err := o.budgetStop(s)
+	if err != nil {
+		return err
+	}
 	if spendStopped {
 		slots = 0 // the run or the day has spent its budget; attempts in flight finish
 	}
