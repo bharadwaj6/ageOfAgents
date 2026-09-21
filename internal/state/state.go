@@ -77,6 +77,10 @@ type Goal struct {
 	Delivered      bool      // its branch was pushed and its pull request opened (Delivered)
 	PRURL          string    // the pull request Delivered reported; empty when delivery was push only
 	DeliveryError  string    // why the latest delivery attempt failed; cleared once delivered
+	// DeliveryFailedSeq is the seq of the DeliveryFailed behind DeliveryError, so a
+	// run can tell its own stuck delivery from one an earlier run left behind; 0
+	// when delivery has never failed, and cleared with DeliveryError once delivered.
+	DeliveryFailedSeq int
 }
 
 // EffectiveText is the Goal's text plus any mid-run amendments, as handed to a
@@ -117,6 +121,7 @@ type Ticket struct {
 	Approved       bool     // a human approved the parked proposal (ADR 008)
 	Rejected       bool     // a human rejected the parked proposal (ADR 008)
 	DecidedSeq     int      // seq of the ApprovalGranted/ApprovalDenied that decided it; 0 if undecided
+	FailedSeq      int      // seq of the event that put it in StatusFailed; 0 if it never failed
 	LastActivity   time.Time
 	LastFailReason string // reason of the most recent verification failure (crash-loop detection)
 	LastFailOutput string // verifier output of the most recent failure, fed back into the retry prompt
@@ -363,6 +368,7 @@ func (s *State) Apply(e api.Event) error {
 				// If there are other active workers, we shouldn't fail the ticket entirely yet
 				if len(t.ActiveWorkers) == 0 {
 					t.Status = StatusFailed
+					t.FailedSeq = e.Seq
 				} else {
 					t.Status = StatusRunning
 				}
@@ -408,6 +414,7 @@ func (s *State) Apply(e api.Event) error {
 			t.Status = StatusFailed
 			t.Rejected = true
 			t.DecidedSeq = e.Seq
+			t.FailedSeq = e.Seq
 			t.LastActivity = e.Timestamp
 		}
 
@@ -449,6 +456,7 @@ func (s *State) Apply(e api.Event) error {
 			g.Delivered = true
 			g.PRURL = p.URL
 			g.DeliveryError = ""
+			g.DeliveryFailedSeq = 0
 		}
 
 	case api.DeliveryFailed:
@@ -458,6 +466,7 @@ func (s *State) Apply(e api.Event) error {
 		}
 		if g := s.Goals[p.GoalID]; g != nil {
 			g.DeliveryError = p.Reason
+			g.DeliveryFailedSeq = e.Seq
 		}
 
 	case api.RegressionEscaped:

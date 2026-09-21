@@ -180,7 +180,7 @@ func TestStatusTextGolden(t *testing.T) {
 				failed  int
 				err     error
 			)
-			out := captureStdout(t, func() { settled, failed, err = printStatus(led, tt.pricing, state.Budget{}) })
+			out := captureStdout(t, func() { settled, failed, err = printStatus(led, tt.pricing, state.Budget{}, 0) })
 			if err != nil {
 				t.Fatalf("printStatus: %v", err)
 			}
@@ -387,7 +387,7 @@ func TestStatusViewProjection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			events := tt.log(t).events
-			v, err := statusView(events, tt.pricing, state.Budget{})
+			v, _, err := statusView(events, tt.pricing, state.Budget{})
 			if err != nil {
 				t.Fatalf("statusView: %v", err)
 			}
@@ -474,7 +474,7 @@ func floatNear(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 func TestQueuedGoalTextStillSaysSettled(t *testing.T) {
 	var settled bool
 	var err error
-	out := captureStdout(t, func() { settled, _, err = printStatus(queuedLog(t).ledger(), nil, state.Budget{}) })
+	out := captureStdout(t, func() { settled, _, err = printStatus(queuedLog(t).ledger(), nil, state.Budget{}, 0) })
 	if err != nil {
 		t.Fatalf("printStatus: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestStatusJSONStdoutIsOneJSONValue(t *testing.T) {
 			}
 			var got api.StatusView
 			decodeJSONLine(t, out, &got)
-			want, err := statusView(events, fixturePricing, state.Budget{})
+			want, _, err := statusView(events, fixturePricing, state.Budget{})
 			if err != nil {
 				t.Fatalf("statusView: %v", err)
 			}
@@ -595,12 +595,52 @@ func TestPrintStatusFailedExcludesCancelledGoals(t *testing.T) {
 			var failed int
 			captureStdout(t, func() {
 				var err error
-				if _, failed, err = printStatus(led, nil, state.Budget{}); err != nil {
+				if _, failed, err = printStatus(led, nil, state.Budget{}, 0); err != nil {
 					t.Fatalf("printStatus: %v", err)
 				}
 			})
 			if failed != tt.want {
 				t.Errorf("failed = %d, want %d", failed, tt.want)
+			}
+		})
+	}
+}
+
+// A workspace outlives the run that failed in it. `aoa run` counted every
+// failure on the log, so one old failure exited every later run non-zero
+// forever, which made the exit status useless for the cron / launchd / Actions
+// alerting docs/scheduling.md recommends it for (#156). It now counts what
+// failed past the seq the run started at; `aoa status` passes 0 and still sees
+// the whole history. In each fixture the deciding event is the log's last, at
+// seq 6, so a window opening at 5 still contains it and one opening at 6 does not.
+func TestFailedSinceCountsOnlyThisRunsFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		log  func(*testing.T) *logBuilder
+	}{
+		{"task failed", settledLog},
+		{"proposal rejected", rejectedLog},
+		{"delivery failed", deliveryLog(false)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			events := tt.log(t).events
+			if last := events[len(events)-1].Seq; last != 6 {
+				t.Fatalf("fixture changed: its deciding event is seq %d, not 6", last)
+			}
+			s, err := state.Fold(events)
+			if err != nil {
+				t.Fatalf("fold: %v", err)
+			}
+			for _, w := range []struct{ since, want int }{
+				{0, 1},  // `aoa status`: the whole history
+				{5, 1},  // the failure landed during this run
+				{6, 0},  // it was already there when this run started
+				{99, 0}, // a window past the end of the log holds nothing
+			} {
+				if got := failedSince(s, w.since); got != w.want {
+					t.Errorf("failedSince(since=%d) = %d, want %d", w.since, got, w.want)
+				}
 			}
 		})
 	}
@@ -620,7 +660,7 @@ func TestStatusTextShowsDelivery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v, err := statusView(tt.log(t).events, nil, state.Budget{})
+			v, _, err := statusView(tt.log(t).events, nil, state.Budget{})
 			if err != nil {
 				t.Fatalf("statusView: %v", err)
 			}
@@ -671,7 +711,7 @@ func TestGovernorAndStatusAgree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
 	}
-	v, err := statusView(events, pricing, state.Budget{})
+	v, _, err := statusView(events, pricing, state.Budget{})
 	if err != nil {
 		t.Fatalf("statusView: %v", err)
 	}

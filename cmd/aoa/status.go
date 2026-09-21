@@ -33,10 +33,15 @@ import (
 // id), and each Goal's tasks by creation, so a decomposed task comes before its
 // children. A task whose Goal is not on the log belongs to no GoalView; it is
 // still counted in the totals.
-func statusView(events []api.Event, pricing map[string]float64, day state.Budget) (api.StatusView, error) {
+//
+// It returns the replayed state alongside the view: the view is the JSON
+// contract, and callers that need something the contract does not carry (the
+// seq a task failed at, for failedSince) read it from the state rather than
+// folding the log a second time.
+func statusView(events []api.Event, pricing map[string]float64, day state.Budget) (api.StatusView, *state.State, error) {
 	s, err := state.Fold(events)
 	if err != nil {
-		return api.StatusView{}, fmt.Errorf("replay event log: %w", err)
+		return api.StatusView{}, nil, fmt.Errorf("replay event log: %w", err)
 	}
 	m := metrics.Compute(events)
 
@@ -135,7 +140,7 @@ func statusView(events []api.Event, pricing map[string]float64, day state.Budget
 			Exhausted:    day.SpendReached(u, pricing) || day.GoalsReached(u),
 		}
 	}
-	return v, nil
+	return v, s, nil
 }
 
 // ticketView is the contract's view of one task. Commit is carried only while
@@ -279,36 +284,52 @@ func writeAll(w io.Writer, p []byte) error {
 
 // printStatus renders the run's live state to stdout and reports whether all
 // work has settled (the signal --watch uses to stop polling) and how many tasks
-// failed (which makes `aoa run` exit non-zero). A goal whose delivery failed and
-// is still pending counts as one failure, so a stuck delivery is alertable.
-func printStatus(led *ledger.Ledger, pricing map[string]float64, day state.Budget) (settled bool, failed int, err error) {
+// failed after seq since, which is what makes `aoa run` exit non-zero. It always
+// renders the whole workspace; since narrows only the count.
+func printStatus(led *ledger.Ledger, pricing map[string]float64, day state.Budget, since int) (settled bool, failed int, err error) {
 	events, err := led.Read()
 	if err != nil {
 		return false, 0, err
 	}
-	v, err := statusView(events, pricing, day)
+	v, s, err := statusView(events, pricing, day)
 	if err != nil {
 		return false, 0, err
 	}
 	if err := renderStatus(os.Stdout, v); err != nil {
 		return false, 0, err
 	}
-	// A cancelled goal's tasks end failed, but a cancel is a front door's
-	// choice, not something for `aoa run`'s exit status to alert on.
-	for _, g := range v.Goals {
-		if g.Outcome == api.OutcomeCancelled {
-			continue
+	return workSettled(v), failedSince(s, since), nil
+}
+
+// failedSince counts the tasks that are failed now and failed after seq since.
+// A goal whose delivery failed and is still pending counts as one failure too,
+// so a stuck delivery is alertable.
+//
+// The window is how `aoa run` tells its own failures from the workspace's
+// history: a workspace outlives the run that failed in it, and counting every
+// failure on the log made one old failure exit every later run non-zero forever
+// (issue #156). since == 0 counts them all, which is what `aoa status` reports.
+func failedSince(s *state.State, since int) int {
+	failed := 0
+	// A cancelled goal's tasks end failed, but a cancel is a front door's choice,
+	// not something for `aoa run`'s exit status to alert on.
+	live := func(goalID string) *state.Goal {
+		if g := s.Goals[goalID]; g != nil && !g.Cancelled {
+			return g
 		}
-		if g.DeliveryError != "" && g.Outcome != api.OutcomeDelivered {
+		return nil
+	}
+	for _, g := range s.Goals {
+		if live(g.ID) != nil && g.DeliveryError != "" && !g.Delivered && g.DeliveryFailedSeq > since {
 			failed++
 		}
-		for _, t := range g.Tickets {
-			if t.Status == string(state.StatusFailed) {
-				failed++
-			}
+	}
+	for _, t := range s.Tickets {
+		if live(t.GoalID) != nil && t.Status == state.StatusFailed && t.FailedSeq > since {
+			failed++
 		}
 	}
-	return workSettled(v), failed, nil
+	return failed
 }
 
 // dayBudget is the workspace's per-day budget, as the Scheduler counts it.

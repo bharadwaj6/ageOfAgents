@@ -341,3 +341,56 @@ func TestRunExitsNonZeroWhenTasksFailed(t *testing.T) {
 		t.Errorf("a clean run must still exit 0, got %v", err)
 	}
 }
+
+// A workspace outlives the run that failed in it. `aoa run` counted every failed
+// task on the log, so one old failure made every later run exit 1 forever — even
+// runs that delivered perfectly — which is exactly what the cron / launchd /
+// Actions recipes in docs/scheduling.md alert on. Seen live on the dogfood
+// runner: the run that delivered PR #155 exited 1 for a goal that had failed days
+// earlier. The exit status reports this run's failures; `aoa status` still shows
+// the whole history.
+func TestRunExitsZeroWhenOnlyOlderRunsFailed(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	if err := cmdInit([]string{"--path", tmp, "--repo", "./demo"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	gate := func(verify string) {
+		t.Helper()
+		cfg := "repo = \"./demo\"\nbackend = \"mock\"\nconcurrency = 1\nmax_attempts = 1\nverify = [[" + verify + "]]\n"
+		if err := os.WriteFile(filepath.Join(tmp, "aoa.toml"), []byte(cfg), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+	}
+
+	// Run 1: a Gate that can never pass leaves a terminally failed task behind.
+	gate(`"false"`)
+	if err := cmdGoal([]string{"--path", tmp, "something", "that", "cannot", "pass"}); err != nil {
+		t.Fatalf("goal: %v", err)
+	}
+	if err := cmdRun([]string{"--path", tmp}); err == nil {
+		t.Fatal("the failing run must exit non-zero")
+	}
+
+	// Run 2: same workspace, a Gate that passes, a goal that merges. The old
+	// failure is still on the log, and still belongs to run 1.
+	gate(`"true"`)
+	if err := cmdGoal([]string{"--path", tmp, "Add", "a", "greeting"}); err != nil {
+		t.Fatalf("goal: %v", err)
+	}
+	if err := cmdRun([]string{"--path", tmp}); err != nil {
+		t.Errorf("a run that failed nothing must exit 0 despite an older failure, got %v", err)
+	}
+
+	// ...and the failure is not swept under the rug: `aoa status` still reports it.
+	out := captureStdout(t, func() {
+		if err := cmdStatus([]string{"--path", tmp}); err != nil {
+			t.Fatalf("status: %v", err)
+		}
+	})
+	if !strings.Contains(out, "failed") {
+		t.Errorf("aoa status must still show the older failure:\n%s", out)
+	}
+}
