@@ -62,6 +62,14 @@ default backend is `mock` — a **fixture, not a tiny model** — so what you ju
 machinery (isolated worktree → your Gate → serialised merge → the Event Log) with nothing to pay for.
 Pick a real agent below to get real code.
 
+> [!WARNING]
+> **Before you swap `mock` for a real backend: `aoa` does not confine the agent.** It runs commands a
+> model chose, as your user, with your files, your credentials and your network. The worktree is a
+> working directory, not a boundary, and `sandbox = "docker"` containerises the **Gate**, not the agent.
+> Run real backends where you would run untrusted code. `aoa doctor` says this out loud, and
+> [`SECURITY.md`](SECURITY.md) and [ADR 018](https://bharadwaj6.github.io/ageOfAgents/design/adr/018-the-agent-is-not-confined/)
+> explain what exists and why.
+
 When something looks wrong, run `aoa doctor --path ./workspace` before you debug: it checks the things
 that otherwise fail deep inside a run — a missing backend CLI, a Gate command not on `$PATH`, an Event
 Log that won't replay — and prints the fix for each.
@@ -101,9 +109,8 @@ project (`go.mod` → `go build`/`go test`, `package.json` → `npm test`). It n
 environment — it runs the Gate you configure, on the machine you run it on. Edit `verify` in
 `workspace/aoa.toml` if the guess is wrong.
 
-> **Security.** An agent backend runs commands the model chooses, on your machine, with your
-> permissions. `sandbox = "docker"` isolates the **Gate**, not the agent. Read [`SECURITY.md`](SECURITY.md)
-> before pointing a real backend at anything you care about.
+> **Security.** The agent is not confined — see the warning above, and read
+> [`SECURITY.md`](SECURITY.md) before pointing a real backend at anything you care about.
 
 ## Bring your own agent
 
@@ -172,6 +179,7 @@ confident than they have earned.
 | Every command, flag and `aoa.toml` field | [CLI](https://bharadwaj6.github.io/ageOfAgents/cli/) · [Configuration](https://bharadwaj6.github.io/ageOfAgents/config-reference/) |
 | Driving it from a task board, bot or orchestrator | [Backend contract](https://bharadwaj6.github.io/ageOfAgents/backend/) |
 | Why it's built this way | [Architecture](https://bharadwaj6.github.io/ageOfAgents/design/architecture/) + [decision records](https://bharadwaj6.github.io/ageOfAgents/design/adr/) |
+| What the agent can reach on your machine | [Security](https://bharadwaj6.github.io/ageOfAgents/security/) · [`SECURITY.md`](SECURITY.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CHANGELOG.md`](CHANGELOG.md) |
 
 MIT licensed.

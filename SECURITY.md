@@ -6,23 +6,45 @@ Be clear-eyed about this before pointing it at anything you care about. `aoa` ex
 **code written by a language model** and then run **your build and tests** on the result. Both are
 arbitrary code execution, by design.
 
-### The agent is not sandboxed
+### `aoa` does not confine the agent
 
 An agent backend runs commands the model chooses, as your user, with your permissions and your
-credentials:
+credentials. What confinement exists is a property of the **harness**, not of `aoa`:
 
-- `claudecode` and `grok` shell out to their CLIs with permissive modes (`acceptEdits`,
-  `bypassPermissions`) so the headless agent can actually write files.
-- `openai` and `anthropic` expose a `bash` tool and run what the model asks for via
-  `exec.CommandContext(ctx, "bash", "-c", …)`. The working directory is the task's worktree, but **nothing
-  confines the command to it.** The model can `cd` elsewhere, read `~/.ssh`, or reach the network.
+| `backend` | How `aoa` invokes it | What confines it |
+|---|---|---|
+| `mock` | in-process fixture | runs no command a model chose; never networks |
+| `codex` | `codex exec --json --sandbox workspace-write` | **the harness's own OS sandbox** — writes limited to the workspace, network off by default. codex's, not `aoa`'s |
+| `claudecode` | `claude --permission-mode acceptEdits …` | file edits auto-approved; no OS-level confinement |
+| `grok` | `grok --permission-mode bypassPermissions …` | nothing |
+| `cursor` | `cursor-agent -p --force --trust …` | nothing; `--force` allows anything not explicitly denied |
+| `gemini` | `gemini --approval-mode yolo …` | nothing |
+| `openai`, `anthropic` | in-process loop exposing a `bash` tool | nothing |
+| your own `type = "cli"` | your binary, your `args` | whatever your CLI does |
+
+The permissive modes are deliberate: without them a headless run writes no files and every Task fails
+with "agent produced no changes".
+
+**The worktree is not a boundary.** `openai` and `anthropic` run `exec.CommandContext(ctx, "bash", "-c", …)`
+with `cmd.Dir` set to the task's worktree. That is where the command *starts*; nothing holds it there. The
+model can `cd /`, read `~/.ssh`, reach the network, or `git push`.
+
+**The agent inherits your environment.** No backend sets `cmd.Env`, so every key and token exported in the
+shell you launched `aoa` from is visible to the agent process.
 
 **`sandbox = "docker"` isolates the Gate, not the agent.** It containerises your `verify` commands. It does
-nothing about the agent that produced the diff.
+nothing about the agent that produced the diff. Even for the Gate it is a boundary against host accidents
+rather than a jail: the repo is bind-mounted read-write, the container has network, and the default image
+runs as root.
 
 Treat a machine running `aoa` with a real backend the way you would treat a machine running any untrusted
 code: prefer a container, a VM, or a dedicated box; scope credentials to what the task needs; and do not
-run it against a repo whose history you cannot restore.
+run it against a repo whose history you cannot restore. `aoa doctor` prints this posture as a `confinement`
+warning before your first real run.
+
+This is a decision, not an oversight —
+[ADR 018](https://bharadwaj6.github.io/ageOfAgents/design/adr/018-the-agent-is-not-confined/) records why,
+and the [Security page](https://bharadwaj6.github.io/ageOfAgents/security/) has the full detail.
 
 ### The Gate runs on the host by default
 

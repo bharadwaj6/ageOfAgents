@@ -61,6 +61,7 @@ nav:
   - Home: index.md
   - Install: install.md
   - Get started: getting-started.md
+  - Security: security.md
   - Harnesses:
       - Overview: harnesses/README.md
       - Claude Code: harnesses/claude-code.md
@@ -101,6 +102,7 @@ nav:
           - 015 aoa is a backend: design/adr/015-aoa-is-a-backend.md
           - 016 Deliver a Goal as a PR: design/adr/016-deliver-a-goal-as-a-pull-request.md
           - 017 Spend is bounded before it happens: design/adr/017-spend-is-bounded-before-it-happens.md
+          - 018 The agent is not confined: design/adr/018-the-agent-is-not-confined.md
       - Metrics: design/metrics.md
       - Live evaluation: design/live_eval.md
       - Formal model (TLA+): design/formal/README.md

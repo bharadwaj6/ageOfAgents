@@ -122,7 +122,12 @@ Then submit a new goal and run again:
 
 The Scheduler invokes the `grok` Backend, which drives a real coding agent as a subprocess in the Task's isolated worktree. Its changes are merged only if they pass your Gate. `grok` authenticates from your local grok.com login — no API key — and reports its own true token counts, which is why it is the backend the loop was verified end to end on. `claudecode` works the same way with the `claude` CLI.
 
-> **Before you point a real backend at a repo you care about:** the agent runs commands the model chooses, as your user. `sandbox = "docker"` isolates the *Gate*, not the agent. See [`https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
+!!! warning "Before you point a real backend at a repo you care about"
+
+    **`aoa` does not confine the agent.** It runs commands the model chooses, as your user, with your
+    files, your credentials and your network. The worktree is a working directory, not a boundary, and
+    `sandbox = "docker"` isolates the *Gate*, not the agent. Run real backends where you would run
+    untrusted code — [Security](security.md) has the detail, per backend.
 
 ## Step 7: Customize the Gate
 
