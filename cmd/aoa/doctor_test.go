@@ -169,6 +169,82 @@ func TestDoctorTrustsAnOverriddenPresetForUsage(t *testing.T) {
 	}
 }
 
+// TestDoctorSaysTheAgentIsNotConfined pins the honest answer to "what can the
+// agent reach?" — issue #101. A real backend executes commands the model chose
+// as the user running aoa, and `sandbox` never changes that, so doctor has to
+// say so before the first real run rather than leaving the user to find out.
+func TestDoctorSaysTheAgentIsNotConfined(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		wantOK  bool
+		wantAny []string
+	}{
+		{
+			name: "mock backend runs nothing a model chose",
+			toml: `
+repo    = "./repo"
+backend = "mock"
+verify  = [["go", "build", "./..."]]
+`,
+			wantOK:  true,
+			wantAny: []string{"mock"},
+		},
+		{
+			name: "a real backend is unconfined",
+			toml: `
+repo    = "./repo"
+backend = "claudecode"
+verify  = [["go", "build", "./..."]]
+`,
+			wantAny: []string{"claudecode", "credentials"},
+		},
+		{
+			name: "a real fallback is unconfined too",
+			toml: `
+repo              = "./repo"
+backend           = "mock"
+fallback_backends = ["codex"]
+verify            = [["go", "build", "./..."]]
+`,
+			wantAny: []string{"codex"},
+		},
+		{
+			name: "the docker sandbox is named as covering the Gate only",
+			toml: `
+repo    = "./repo"
+backend = "claudecode"
+sandbox = "docker"
+verify  = [["go", "build", "./..."]]
+`,
+			wantAny: []string{"Gate"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := find(t, runDoctor(writeWorkspace(t, tc.toml)), "confinement")
+
+			if tc.wantOK {
+				if !got.ok {
+					t.Errorf("want an ok check, got ok=%v warn=%v: %s", got.ok, got.warn, got.detail)
+				}
+			} else if got.ok || !got.warn {
+				// A warning, never a failure: being unconfined is the
+				// documented design, so it must not break `aoa doctor` in CI.
+				t.Errorf("want a warning, got ok=%v warn=%v: %s", got.ok, got.warn, got.detail)
+			}
+
+			text := got.detail + " " + got.fix
+			for _, want := range tc.wantAny {
+				if !strings.Contains(text, want) {
+					t.Errorf("confinement check never mentions %q: %s", want, text)
+				}
+			}
+		})
+	}
+}
+
 // gitInit makes a real repository: checkRepo shells out to git, so a bare .git
 // directory would not do. Identity is passed per-command so the test does not
 // depend on the developer's global git config.

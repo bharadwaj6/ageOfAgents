@@ -106,9 +106,46 @@ func runDoctor(path string) []check {
 		out = append(out, checkBinary("docker", "docker",
 			`sandbox = "docker" needs docker running — start it, or set sandbox = "" to run the Gate on the host`))
 	}
+	out = append(out, checkConfinement(cfg))
 	out = append(out, checkLedger(ws.ledgerPath))
 
 	return out
+}
+
+// checkConfinement states the blast radius of a real backend, because nothing
+// else in a run ever will. An agent backend executes commands the model chose,
+// as the user running aoa, with that user's files, credentials and network. The
+// worktree is only the working directory the command starts in; nothing holds it
+// there. `sandbox` is not the answer either — it containerises the Gate's verify
+// commands and never touches the agent.
+//
+// This is a warning, not a failure: it is the documented design, so it must not
+// break `aoa doctor` in CI. Saying it out loud before the first real run is the
+// whole point.
+func checkConfinement(cfg config.Config) check {
+	const name = "confinement"
+
+	var real []string
+	for _, b := range append([]string{cfg.Backend}, cfg.FallbackBackends...) {
+		if b == "" || b == "mock" {
+			continue
+		}
+		real = append(real, b)
+	}
+	if len(real) == 0 {
+		return check{
+			name: name, ok: true,
+			detail: "mock backend only; it runs no command a model chose",
+		}
+	}
+
+	detail := fmt.Sprintf("none — %s runs as your user, with your files, credentials and network",
+		strings.Join(real, ", "))
+	fix := "this is by design; read SECURITY.md and run real backends somewhere you would run untrusted code"
+	if cfg.Sandbox == "docker" {
+		fix = `sandbox = "docker" covers the Gate's verify commands, not the agent; ` + fix
+	}
+	return check{name: name, warn: true, detail: detail, fix: fix}
 }
 
 func checkBinary(name, bin, fix string) check {
