@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bharadwaj6/ageOfAgents/internal/config"
 )
 
 // find returns the check with the given name, or fails the test.
@@ -123,6 +125,47 @@ verify  = []
 	}
 	if !strings.Contains(got.detail, "unverified") {
 		t.Errorf("the warning should say what it costs, got %q", got.detail)
+	}
+}
+
+// doctor made the same wrong claim as the startup warning: a [backends.<name>]
+// block that overrides a preset to correct its flags, but still runs the
+// preset's binary, emits the same output envelope and so still reports token
+// usage. Calling it inert sends the user looking for a governor that is live.
+func TestDoctorTrustsAnOverriddenPresetForUsage(t *testing.T) {
+	dir := t.TempDir()
+	for _, bin := range []string{"claude", "my-claude-wrapper"} {
+		if err := os.WriteFile(filepath.Join(dir, bin), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+
+	tests := []struct {
+		name      string
+		backend   string
+		bin       string
+		wantInert bool
+	}{
+		{name: "override keeps the preset's binary", backend: "claudecode", bin: "claude"},
+		{name: "override runs a wrapper", backend: "claudecode", bin: "my-claude-wrapper", wantInert: true},
+		{name: "byo harness that happens to run claude", backend: "mycoder", bin: "claude", wantInert: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Config{
+				Backend:  tt.backend,
+				Backends: map[string]config.BackendConfig{tt.backend: {Type: "cli", Bin: tt.bin}},
+			}
+			c := checkOneBackend(tt.backend, cfg)
+			if !c.ok {
+				t.Fatalf("backend should be healthy, got %q", c.detail)
+			}
+			claimsInert := strings.Contains(c.detail, "reports no token usage")
+			if claimsInert != tt.wantInert {
+				t.Errorf("claims no usage = %v, want %v; detail: %q", claimsInert, tt.wantInert, c.detail)
+			}
+		})
 	}
 }
 

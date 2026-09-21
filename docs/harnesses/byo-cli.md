@@ -85,6 +85,12 @@ bin  = "codex"
 args = ["exec", "--json", "--sandbox", "workspace-write"]
 ```
 
+An override that keeps the preset's `bin` keeps its cost accounting: token counts are read off the
+harness's own output envelope, not off the preset table, so the spend governors stay live — as long as
+your `args` keep whatever flag makes it print that envelope (`--json` here, `--output-format json` for
+claude and grok). Point `bin` at something else, a wrapper script say, and `aoa` treats it as a BYO
+harness again, because it is.
+
 ## Check it
 
 ```bash

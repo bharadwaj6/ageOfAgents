@@ -223,3 +223,50 @@ func TestBuildOrchestratorPreflightsPRDelivery(t *testing.T) {
 		})
 	}
 }
+
+// The governor warning is a claim about whether aoa can count tokens, and a
+// wrong claim is worse than none: the dogfood workspace overrides the
+// claudecode preset to add flags, and was told its ceilings were inert while
+// the same run billed 163k tokens. Usage is read off the harness's output
+// envelope, so an override that still runs the preset's binary still reports.
+func TestWarnInertGovernorsTrustsAnOverriddenPreset(t *testing.T) {
+	claudecode := func(bin string) map[string]config.BackendConfig {
+		return map[string]config.BackendConfig{"claudecode": {Type: "cli", Bin: bin}}
+	}
+	tests := []struct {
+		name     string
+		backend  string
+		backends map[string]config.BackendConfig
+		noLimits bool
+		wantWarn bool
+	}{
+		{name: "bare preset that reports", backend: "claudecode"},
+		{name: "override with the preset's bin", backend: "claudecode", backends: claudecode("claude")},
+		{name: "override with an absolute path to it", backend: "claudecode", backends: claudecode("/opt/homebrew/bin/claude")},
+		{name: "override running another binary", backend: "claudecode", backends: claudecode("my-claude-wrapper"), wantWarn: true},
+		{name: "override of a preset that reports nothing", backend: "cursor",
+			backends: map[string]config.BackendConfig{"cursor": {Type: "cli", Bin: "cursor-agent"}}, wantWarn: true},
+		// A leftover bin from an earlier cli block is not a promise: an HTTP
+		// plugin never runs it, so its envelope is not what aoa will parse.
+		{name: "http plugin shadowing the name", backend: "claudecode",
+			backends: map[string]config.BackendConfig{"claudecode": {Type: "openai_compatible", Model: "x", Bin: "claude"}}, wantWarn: true},
+		{name: "byo harness", backend: "mycoder",
+			backends: map[string]config.BackendConfig{"mycoder": {Type: "cli", Bin: "mycoder"}}, wantWarn: true},
+		{name: "no ceilings, nothing to warn about", backend: "mycoder",
+			backends: map[string]config.BackendConfig{"mycoder": {Type: "cli", Bin: "mycoder"}}, noLimits: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Config{Backend: tt.backend, Backends: tt.backends}
+			if !tt.noLimits {
+				cfg.MaxTokensPerGoal = 1000
+			}
+			var buf strings.Builder
+			warnInertGovernors(cfg, &buf)
+			warned := strings.Contains(buf.String(), "does not report token usage")
+			if warned != tt.wantWarn {
+				t.Errorf("warned = %v, want %v; output: %q", warned, tt.wantWarn, buf.String())
+			}
+		})
+	}
+}

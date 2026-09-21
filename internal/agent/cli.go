@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -245,6 +246,20 @@ func CLINames() []string {
 // than no governor.
 func UsageIsReported(name string) bool {
 	return cliPresets[name].reportsUsage
+}
+
+// CLIOverrideReportsUsage says whether a [backends.<name>] cli block that
+// shadows a preset still reports token usage. Usage is read off the harness's
+// output envelope, not off the preset table (ADR 014), so an override that
+// corrects a preset's flags while still running the preset's binary emits the
+// same envelope and the governors do run. A block that shadows the name but
+// runs some other binary is a different harness, and is not trusted.
+func CLIOverrideReportsUsage(name, bin string) bool {
+	p, ok := cliPresets[name]
+	if !ok || !p.reportsUsage {
+		return false
+	}
+	return filepath.Base(bin) == p.bin
 }
 
 // cliEnvelope is the union of the single-JSON-object envelopes the supported

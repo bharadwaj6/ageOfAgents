@@ -1758,9 +1758,15 @@ func warnInertGovernors(cfg config.Config, w io.Writer) {
 	if name == "" || name == "mock" {
 		return
 	}
-	// A configured plugin shadows any preset, and neither plugin kind reports
-	// usage through the preset table.
-	if _, isPlugin := cfg.Backends[name]; !isPlugin {
+	// A configured plugin shadows any preset. A cli block that overrides a
+	// usage-reporting preset while still running its binary emits the same
+	// output envelope, so the parser reads the same counts and the governors
+	// are live; any other plugin reports nothing aoa can bill against.
+	if bCfg, isPlugin := cfg.Backends[name]; isPlugin {
+		if bCfg.Type == "cli" && agent.CLIOverrideReportsUsage(name, bCfg.Bin) {
+			return
+		}
+	} else {
 		if _, isPreset := agent.CLIPreset(name); isPreset && agent.UsageIsReported(name) {
 			return
 		}
