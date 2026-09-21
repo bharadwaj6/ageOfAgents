@@ -48,15 +48,21 @@ Scaffold a new workspace, or adopt a repo you already have.
 
 Check that a workspace can actually run, before a run proves it can't. Verifies git, the workspace,
 `aoa.toml`, the repo, the configured backend **and every fallback**, each Gate command's binary, docker
-when `sandbox = "docker"`, and that the Event Log replays. Every failure prints the one action that
-fixes it. **Exits non-zero**, so CI can gate on it.
+when `sandbox = "docker"`, what the agent is confined to, and that the Event Log replays. Every failure
+prints the one action that fixes it. **Exits non-zero**, so CI can gate on it.
 
 | Flag | Default | |
 |---|---|---|
 | `--path DIR` | `.` | workspace root |
 
-A dirty integration repo is a warning, not a failure — Workers branch from `HEAD` and will not see
-uncommitted changes.
+Two checks report rather than gate, and warn instead of failing:
+
+- **`repo`** — a dirty integration repo. Workers branch from `HEAD` and will not see uncommitted changes.
+- **`confinement`** — what the configured backend can reach. On anything but `mock` it names the backend
+  and says it runs as your user, with your files, credentials and network; with `sandbox = "docker"` it
+  adds that the sandbox covers the Gate's commands, not the agent. This is the documented design
+  ([Security](security.md), [ADR 018](design/adr/018-the-agent-is-not-confined.md)), so it never changes
+  the exit code.
 
 ## Running work
 
