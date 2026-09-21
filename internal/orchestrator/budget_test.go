@@ -107,7 +107,12 @@ func TestRunBudgetStopsNewWork(t *testing.T) {
 // timestamps, so it survives across runs and resets when the UTC day does.
 func TestDayBudgetCountsGoalsAndResetsNextDay(t *testing.T) {
 	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
-	day1 := time.Date(2026, 9, 20, 23, 0, 0, 0, time.UTC)
+	// The window is counted from event timestamps, which carry the real clock
+	// (api.NewEvent), so the injected clock has to sit on the same UTC day as the
+	// events the run writes — otherwise its own spend falls outside the window it
+	// is checking and nothing ever trips. Pinned to a fixed date, this passed only
+	// on the day it was written.
+	day1 := time.Now().UTC()
 	now := day1
 	o, h := setup(t, agent.NewMock(), pass, Options{
 		Concurrency: 1,
@@ -126,7 +131,7 @@ func TestDayBudgetCountsGoalsAndResetsNextDay(t *testing.T) {
 	require.Equal(t, 1, trips[0].LimitGoals)
 
 	// The next UTC day is a fresh window, and the same workspace carries on.
-	now = day1.Add(2 * time.Hour)
+	now = day1.Add(24 * time.Hour)
 	require.NoError(t, o.Run(context.Background()))
 	require.Equal(t, 2, startedGoals(t, h), "a new day starts the Goal that was held back")
 	require.Len(t, budgetEvents(t, h), 1, "the new day has not tripped anything")
