@@ -593,7 +593,7 @@ func amendGoal(led *ledger.Ledger, goalID, guidance string) (api.AmendResult, er
 
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	describe(fs, "aoa run \u2014 drive the Scheduler until all work is settled, then exit.\n\nIdempotent and crash-safe: re-running is always allowed and does nothing when\nthere is nothing to do. Exits non-zero if any task ended up failed, and 75\nif another aoa run is already reconciling this workspace.", "aoa run --path ./workspace")
+	describe(fs, "aoa run \u2014 drive the Scheduler until all work is settled, then exit.\n\nIdempotent and crash-safe: re-running is always allowed and does nothing when\nthere is nothing to do. Exits non-zero if a task failed during this run (older\nfailures are `aoa status`'s business), and 75 if another aoa run is already\nreconciling this workspace.", "aoa run --path ./workspace")
 	path := fs.String("path", ".", "workspace root")
 	once := fs.Bool("once", false, "run a single reconcile pass instead of looping")
 	interval := fs.Duration("interval", 0, "keep running, reconciling again every <dur> until interrupted (0 = run until settled, then exit)")
@@ -613,6 +613,13 @@ func cmdRun(args []string) error {
 		return err
 	}
 	led, err := ledger.Open(ws.ledgerPath)
+	if err != nil {
+		return err
+	}
+	// Where this run's history starts. A workspace outlives the run that failed
+	// in it, so the exit status below counts only what fails past this point
+	// (#156); everything older is `aoa status`'s business, not an alert's.
+	since, err := lastSeq(led)
 	if err != nil {
 		return err
 	}
@@ -698,7 +705,7 @@ func cmdRun(args []string) error {
 			return err
 		}
 	}
-	_, failed, err := printStatus(led, cfg.Pricing, dayBudget(cfg))
+	_, failed, err := printStatus(led, cfg.Pricing, dayBudget(cfg), since)
 	if err != nil {
 		return err
 	}
@@ -748,7 +755,7 @@ func runEvery(ctx context.Context, o *orchestrator.Orchestrator, led *ledger.Led
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "run: %v\n", err)
 			}
-			if _, _, err := printStatus(led, cfg.Pricing, dayBudget(cfg)); err != nil {
+			if _, _, err := printStatus(led, cfg.Pricing, dayBudget(cfg), 0); err != nil {
 				return err
 			}
 		}
@@ -846,14 +853,14 @@ func cmdStatus(args []string) error {
 		if err != nil {
 			return err
 		}
-		v, err := statusView(events, cfg.Pricing, dayBudget(cfg))
+		v, _, err := statusView(events, cfg.Pricing, dayBudget(cfg))
 		if err != nil {
 			return err
 		}
 		return printJSON(v)
 	}
 	if !*watch {
-		_, _, err = printStatus(led, cfg.Pricing, dayBudget(cfg))
+		_, _, err = printStatus(led, cfg.Pricing, dayBudget(cfg), 0)
 		return err
 	}
 	// Watch mode: clear + re-render each interval until settled. No daemon — just
@@ -861,7 +868,7 @@ func cmdStatus(args []string) error {
 	for {
 		fmt.Print("\033[H\033[2J") // clear screen, cursor home
 		fmt.Printf("aoa status — %s  (Ctrl-C to stop)\n\n", time.Now().Format("15:04:05"))
-		settled, _, err := printStatus(led, cfg.Pricing, dayBudget(cfg))
+		settled, _, err := printStatus(led, cfg.Pricing, dayBudget(cfg), 0)
 		if err != nil {
 			return err
 		}

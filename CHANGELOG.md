@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`aoa run`'s exit status describes that run, not the workspace's whole history.** It counted every
+  failed task on the Event Log, so in a long-lived workspace one old failure exited every later run `1`
+  forever — even runs that delivered perfectly — which made the status useless for the cron, launchd and
+  Actions alerting `docs/scheduling.md` recommends it for. A run now counts only what failed after it
+  started; `aoa status` still reports every failure the workspace has ever had.
+  ([#156](https://github.com/bharadwaj6/ageOfAgents/issues/156))
+
 ## [0.5.0] — 2026-09-20
 
 `aoa` can now take work from a task board and hand back a reviewed pull request, inside a budget it

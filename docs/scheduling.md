@@ -5,6 +5,12 @@ invocations — everything it knows is replayed from the Event Log — so **runn
 safe**, whether the last run finished, crashed, or was killed mid-dispatch. A run with nothing to do
 prints `no goals submitted` and exits `0`.
 
+The exit status is what every recipe below alerts on, and it describes **that run**: `1` means something
+failed while it was running. A workspace scheduled like this runs for months and accumulates failures,
+and none of them make a later healthy run exit non-zero — an alert fires for what just happened, not for
+a ghost. `aoa status` is where the workspace's whole history lives. See the
+[exit status table](cli.md#aoa-run).
+
 Running it twice *at once* is safe too. A run holds an OS lock on `.aoa/scheduler.lock` while it
 reconciles, so a second `aoa run` on the same workspace exits `75` (`EX_TEMPFAIL`) without touching
 anything. No work is lost: a goal submitted before the second run is already on the Event Log, and the

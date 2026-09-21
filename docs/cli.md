@@ -108,10 +108,15 @@ next run). With `--interval`, a pass that finds the workspace busy is skipped an
 
 | Exit status | Meaning |
 |---|---|
-| `0` | all work settled and no task failed |
-| `1` | a task failed (not counting cancelled goals), a pull request could not be delivered (pr mode), or the run hit an error |
+| `0` | all work settled and nothing failed during this run |
+| `1` | a task failed during this run (not counting cancelled goals), a pull request could not be delivered (pr mode), or the run hit an error |
 | `2` | a flag could not be parsed |
 | `75` | another `aoa run` holds the workspace (`EX_TEMPFAIL`); nothing was done |
+
+**The status covers this run, not the workspace.** A workspace outlives the runs in it, so `aoa run`
+counts only what failed after it started: a run that delivers cleanly exits `0` even where earlier runs
+left failures on the log. `aoa status` still reports every failure the workspace has ever had — that is
+the history, and this is the alert.
 
 ### `aoa amend`
 

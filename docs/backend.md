@@ -53,7 +53,8 @@ pushed. For a team repository set `[delivery] mode = "pr"`
   partial Goal is never pushed.
 - `status --json` reports the Goal's `branch`, then `outcome: "delivered"` with its `pr_url`. While
   delivery is pending the Goal stays `running`. If a push or the opener fails, `delivery_error` says why
-  and the next `aoa run` retries it. Until then `aoa run` exits `1`.
+  and the next `aoa run` retries it. The run whose delivery failed exits `1`; a later run exits `1` only
+  if its own retry fails too.
 - aoa stops once the pull request is open. Review and merging belong to the forge and its people.
 
 The events are `Delivered` and `DeliveryFailed`. `Merged` carries the Goal `branch` it landed on. The

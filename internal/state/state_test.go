@@ -1023,3 +1023,65 @@ func TestLosingProposalIsCharged(t *testing.T) {
 		t.Errorf("t1 commit = %q, want c1 (the first proposal still wins)", tk.Commit)
 	}
 }
+
+// A failure carries the seq it landed at, so a caller can tell a failure from
+// this run apart from one already on the log when the run started — which is
+// how `aoa run` keeps its exit status alertable (#156). Two events reach
+// StatusFailed and both record it; a Best-of-N TicketFailed that leaves another
+// worker running has failed nothing yet, so it records nothing.
+func TestFailedSeqRecordsWhenATaskFailed(t *testing.T) {
+	t.Run("TicketFailed", func(t *testing.T) {
+		s := newBuild(t).
+			add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "do it"}).
+			add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "k1"}).
+			add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
+			add(api.TicketFailed, api.TicketFailedPayload{TicketID: "t1", Worker: "w1", Reason: "gate said no"}).
+			fold()
+		if tk := s.Tickets["t1"]; tk.Status != StatusFailed || tk.FailedSeq != 4 {
+			t.Errorf("status/FailedSeq = %s/%d, want failed/4", tk.Status, tk.FailedSeq)
+		}
+	})
+
+	t.Run("ApprovalDenied", func(t *testing.T) {
+		s := newBuild(t).
+			add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "risky"}).
+			add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "k1"}).
+			add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
+			add(api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "t1", Worker: "w1", Commit: "c1"}).
+			add(api.ApprovalRequested, api.ApprovalRequestedPayload{TicketID: "t1", Worker: "w1", Commit: "c1"}).
+			add(api.ApprovalDenied, api.ApprovalDeniedPayload{TicketID: "t1", By: "bob", Reason: "not now"}).
+			fold()
+		if tk := s.Tickets["t1"]; tk.Status != StatusFailed || tk.FailedSeq != 6 {
+			t.Errorf("status/FailedSeq = %s/%d, want failed/6", tk.Status, tk.FailedSeq)
+		}
+	})
+
+	t.Run("Best-of-N, one worker still running", func(t *testing.T) {
+		s := newBuild(t).
+			add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "race it"}).
+			add(api.TicketCreated, api.TicketCreatedPayload{TicketID: "t1", GoalID: "g1", Title: "impl", IdempotencyKey: "k1"}).
+			add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w1"}).
+			add(api.TicketClaimed, api.TicketClaimedPayload{TicketID: "t1", Worker: "w2"}).
+			add(api.TicketFailed, api.TicketFailedPayload{TicketID: "t1", Worker: "w1", Reason: "gate said no"}).
+			fold()
+		if tk := s.Tickets["t1"]; tk.Status == StatusFailed || tk.FailedSeq != 0 {
+			t.Errorf("status/FailedSeq = %s/%d, want a non-failed status and 0", tk.Status, tk.FailedSeq)
+		}
+	})
+}
+
+// DeliveryFailedSeq travels with DeliveryError: set when delivery fails, and
+// cleared with it once a later run delivers the goal.
+func TestDeliveryFailedSeqTracksDeliveryError(t *testing.T) {
+	b := newBuild(t).
+		add(api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g1", Text: "ship it"}).
+		add(api.DeliveryFailed, api.DeliveryFailedPayload{GoalID: "g1", Branch: "aoa/g1", Reason: "push rejected"})
+	if g := b.fold().Goals["g1"]; g.DeliveryError == "" || g.DeliveryFailedSeq != 2 {
+		t.Errorf("DeliveryError/Seq = %q/%d, want a reason and 2", g.DeliveryError, g.DeliveryFailedSeq)
+	}
+
+	b.add(api.Delivered, api.DeliveredPayload{GoalID: "g1", Branch: "aoa/g1", Commit: "m1", URL: "https://example.test/pull/1"})
+	if g := b.fold().Goals["g1"]; g.DeliveryError != "" || g.DeliveryFailedSeq != 0 {
+		t.Errorf("after delivery DeliveryError/Seq = %q/%d, want cleared", g.DeliveryError, g.DeliveryFailedSeq)
+	}
+}
