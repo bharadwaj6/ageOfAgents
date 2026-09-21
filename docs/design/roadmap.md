@@ -55,7 +55,18 @@ Issues front door, and budgets enforced before work starts. `aoa` built three of
 those budgets, each in one attempt, two of them for $0.31 and $0.25. Budget enforcement was checked
 against a real backend: with a $0.20 run cap, two Goals merged for $0.257 and the rest stayed queued,
 one `BudgetExhausted` recorded, exit 0. Automation stays a command a person runs: a launchd schedule
-was tried and removed. Next are the open questions below, and the follow-ups #166, #157, #156 and #154.
+was tried and removed.
+
+**Last status (2026-09-22):** #156 is fixed ([#173](https://github.com/bharadwaj6/ageOfAgents/pull/173)):
+`aoa run`'s exit status now covers that run rather than the workspace's whole history, so a scheduled
+workspace stays alertable once something in it has failed. Landing it turned up two things worth
+knowing. A day-budget test had been red on `main` since 2026-09-21 — it pinned a fake clock to a fixed
+date while the window it checks is counted from real event timestamps, so it passed only on the day it
+was written ([#172](https://github.com/bharadwaj6/ageOfAgents/pull/172)). And `TestRunBudgetStopsNewWork`
+failed once on the Linux runner with a run budget overshooting its documented bound ($1.60 against
+$1.40), which is [#166](https://github.com/bharadwaj6/ageOfAgents/issues/166)'s race observed in the
+wild, with one worker and no decomposition; the evidence is on that issue. Next are the open questions
+below, and the follow-ups #166, #157 and #154.
 
 | | Increment | Depends on |
 |---|---|---|
