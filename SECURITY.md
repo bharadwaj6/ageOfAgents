@@ -14,7 +14,7 @@ credentials. What confinement exists is a property of the **harness**, not of `a
 | `backend` | How `aoa` invokes it | What confines it |
 |---|---|---|
 | `mock` | in-process fixture | runs no command a model chose; never networks |
-| `codex` | `codex exec --json --sandbox workspace-write` | **the harness's own OS sandbox** — writes limited to the workspace, network off by default. codex's, not `aoa`'s |
+| `codex` | `codex exec --json --sandbox workspace-write` | **the harness's own OS sandbox** — codex sandboxes model-generated shell commands; `workspace-write` permits writes to the workspace. codex's policy, not `aoa`'s, and `aoa` does not verify it |
 | `claudecode` | `claude --permission-mode acceptEdits …` | file edits auto-approved; no OS-level confinement |
 | `grok` | `grok --permission-mode bypassPermissions …` | nothing |
 | `cursor` | `cursor-agent -p --force --trust …` | nothing; `--force` allows anything not explicitly denied |

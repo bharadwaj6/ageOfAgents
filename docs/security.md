@@ -23,7 +23,7 @@ property of the **harness**, not of `aoa`:
 | `backend` | How `aoa` invokes it | What confines it |
 |---|---|---|
 | `mock` | in-process fixture | nothing to confine — it runs no command a model chose, and never networks |
-| `codex` | `codex exec --json --sandbox workspace-write` | **the harness's own OS sandbox.** codex restricts writes to the workspace and disables network by default |
+| `codex` | `codex exec --json --sandbox workspace-write` | **the harness's own OS sandbox.** codex executes model-generated shell commands under a sandbox policy; `workspace-write` is the level that permits writes to the workspace. The policy's exact reach is codex's to document, and `aoa` does not verify it |
 | `claudecode` | `claude --permission-mode acceptEdits …` | file edits are auto-approved; no OS-level confinement |
 | `grok` | `grok --permission-mode bypassPermissions …` | nothing — permission prompts are bypassed wholesale |
 | `cursor` | `cursor-agent -p --force --trust …` | nothing — `--force` allows any command not explicitly denied |
