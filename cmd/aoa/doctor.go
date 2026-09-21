@@ -190,7 +190,11 @@ func checkOneBackend(name string, cfg config.Config) check {
 			}
 			c := checkBinary(label, bCfg.Bin, fmt.Sprintf("install %q, or fix bin under [backends.%s]", bCfg.Bin, name))
 			if c.ok {
-				c.detail += " (BYO harness; reports no token usage unless it emits an aoa:usage fence)"
+				if agent.CLIOverrideReportsUsage(name, bCfg.Bin) {
+					c.detail += fmt.Sprintf(" (overrides the %s preset, same binary; reports token usage)", name)
+				} else {
+					c.detail += " (BYO harness; reports no token usage unless it emits an aoa:usage fence)"
+				}
 			}
 			return c
 		default:
