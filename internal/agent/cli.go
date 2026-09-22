@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -129,9 +130,10 @@ type CLI struct {
 	name string   // Backend name; the Model fallback, and so the [pricing] key when the harness names no model
 	Bin  string   // binary to invoke
 	Args []string // args inserted verbatim before the prompt
-	// run executes the command; injectable for tests. dir is the working
-	// directory. Defaults to a real exec.CommandContext runner.
-	run func(ctx context.Context, dir, name string, args ...string) (string, error)
+	// run executes the command and returns its stdout and stderr apart;
+	// injectable for tests. dir is the working directory. Defaults to a real
+	// exec.CommandContext runner.
+	run func(ctx context.Context, dir, name string, args ...string) (stdout, stderr string, err error)
 }
 
 // NewCLI builds a backend for any CLI harness. This is what `[backends.<name>]
@@ -157,8 +159,8 @@ func (c *CLI) Run(ctx context.Context, task Task) (Result, error) {
 
 	// The output is read even on a non-zero exit: a harness that errored part
 	// way through still reports what it spent, and that spend is charged.
-	out, err := runner(ctx, task.Worktree, c.Bin, args...)
-	text, tokens, model, cost := parseCLIOutput(out)
+	stdout, stderr, err := runner(ctx, task.Worktree, c.Bin, args...)
+	text, tokens, model, cost := parseCLIOutput(stdout, stderr)
 	if model == "" {
 		model = c.name
 	}
@@ -166,7 +168,7 @@ func (c *CLI) Run(ctx context.Context, task Task) (Result, error) {
 		// Say what the harness said: "exit status 1" alone gave a human nothing
 		// to act on, and cost two retries on a harness that was merely signed
 		// out.
-		if detail := failureDetail(out); detail != "" {
+		if detail := failureDetail(joinOutput(stdout, stderr)); detail != "" {
 			return Result{Tokens: tokens, Model: model, CostUSD: cost}, fmt.Errorf("%s: %w: %s", c.name, err, detail)
 		}
 		return Result{Tokens: tokens, Model: model, CostUSD: cost}, fmt.Errorf("%s: %w", c.name, err)
@@ -341,27 +343,47 @@ func (e cliEnvelope) reported() bool {
 //  2. a JSONL event stream (codex);
 //  3. prose, with the optional aoa:usage fence for self-reported counts.
 //
+// The structured tiers read stdout alone: the envelope is on stdout, and a
+// warning, banner or deprecation notice on stderr would make it invalid JSON
+// and silently charge the run nothing. stderr joins stdout only for the prose
+// tier, where it is the agent's words a human reads.
+//
 // It degrades rather than fails: an older CLI, or a future format change, lands
 // in tier 3 and reports zero tokens. Reporting zero is honest — inventing a
 // number is not — and callers render an unknown cost as unknown. Only claude's
 // envelope reports a cost (total_cost_usd); codex's stream reports tokens but
 // no cost, so its cost is priced from [pricing].
-func parseCLIOutput(out string) (text string, tokens int, model string, costUSD float64) {
+func parseCLIOutput(stdout, stderr string) (text string, tokens int, model string, costUSD float64) {
 	var env cliEnvelope
-	if err := json.Unmarshal([]byte(out), &env); err == nil && env.reported() {
+	if err := json.Unmarshal([]byte(stdout), &env); err == nil && env.reported() {
 		return env.text(), env.total(), env.model(), env.TotalCostUSD
 	}
-	if text, tokens, ok := parseJSONLStream(out); ok {
+	if text, tokens, ok := parseJSONLStream(stdout); ok {
 		return text, tokens, "", 0
 	}
+	out := joinOutput(stdout, stderr)
 	tokens, model = parseUsage(out)
 	return out, tokens, model, 0
 }
 
+// joinOutput puts stderr after stdout: a harness prints the cause of a failure
+// last, and the tail is what failureDetail keeps.
+func joinOutput(stdout, stderr string) string {
+	switch {
+	case stderr == "":
+		return stdout
+	case stdout == "":
+		return stderr
+	case strings.HasSuffix(stdout, "\n"):
+		return stdout + stderr
+	default:
+		return stdout + "\n" + stderr
+	}
+}
+
 // parseJSONLStream reads codex's `--json` event stream. It scans line by line
-// and ignores anything that is not a JSON object: defaultRunner merges stderr
-// into stdout, so a whole-buffer unmarshal would be defeated by one warning
-// line.
+// and ignores anything that is not a JSON object, so a stray non-JSON line on
+// stdout does not defeat it.
 func parseJSONLStream(out string) (text string, tokens int, ok bool) {
 	var prose strings.Builder
 	for _, line := range strings.Split(out, "\n") {
@@ -515,7 +537,7 @@ const maxFailureDetail = 400
 // failureDetail explains a non-zero exit from what the harness printed. A JSON
 // {"type":"error","message":...} line wins (the last one, as a harness may
 // retry before giving up); otherwise the tail of the output is used, since
-// defaultRunner merges stderr into stdout and the cause is printed last.
+// Run passes stdout followed by stderr and the cause is printed last.
 func failureDetail(out string) string {
 	out = strings.TrimSpace(out)
 	if out == "" {
@@ -555,9 +577,14 @@ func tailLines(s string, max int) string {
 	return "[...truncated...]\n" + tail
 }
 
-func defaultRunner(ctx context.Context, dir, name string, args ...string) (string, error) {
+// defaultRunner captures stdout and stderr apart, so the envelope on stdout is
+// parsed without whatever the harness warned about on stderr.
+func defaultRunner(ctx context.Context, dir, name string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
 }

@@ -131,9 +131,9 @@ func capture(name string, out string, got *[]string, dir, bin *string) *CLI {
 	if c == nil {
 		c = NewCLI(name, name, nil)
 	}
-	c.run = func(_ context.Context, d, b string, args ...string) (string, error) {
+	c.run = func(_ context.Context, d, b string, args ...string) (string, string, error) {
 		*dir, *bin, *got = d, b, args
-		return out, nil
+		return out, "", nil
 	}
 	return c
 }
@@ -248,8 +248,8 @@ func TestCLIPromptIsOneArgvElement(t *testing.T) {
 func TestCLILeavesNoScratchInWorktree(t *testing.T) {
 	wt := t.TempDir()
 	c := NewCLI("claudecode", "claude", nil)
-	c.run = func(context.Context, string, string, ...string) (string, error) {
-		return "agent output", nil
+	c.run = func(context.Context, string, string, ...string) (string, string, error) {
+		return "agent output", "", nil
 	}
 	if _, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "x", Worktree: wt}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -273,7 +273,7 @@ func TestCLIParsesSubtaskDecomposition(t *testing.T) {
 		`{"local_id":"api","title":"the API","depends_on":["types"],"idempotency_key":"g:api"}]` +
 		"\n```\n"
 	c := NewCLI("grok", "grok", nil)
-	c.run = func(context.Context, string, string, ...string) (string, error) { return out, nil }
+	c.run = func(context.Context, string, string, ...string) (string, string, error) { return out, "", nil }
 
 	res, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "big task", Worktree: "/wt"})
 	if err != nil {
@@ -289,8 +289,8 @@ func TestCLIParsesSubtaskDecomposition(t *testing.T) {
 
 func TestCLINoSubtasksWhenImplementing(t *testing.T) {
 	c := NewCLI("claudecode", "claude", nil)
-	c.run = func(context.Context, string, string, ...string) (string, error) {
-		return "Edited three files and ran the tests.", nil
+	c.run = func(context.Context, string, string, ...string) (string, string, error) {
+		return "Edited three files and ran the tests.", "", nil
 	}
 	res, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "small task", Worktree: "/wt"})
 	if err != nil {
