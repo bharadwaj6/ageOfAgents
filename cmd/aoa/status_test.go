@@ -732,3 +732,235 @@ func TestGovernorAndStatusAgree(t *testing.T) {
 		t.Errorf("goals sum to %d tokens, totals say %d", tokens, v.Totals.Tokens)
 	}
 }
+
+// runningLog is a goal whose only task is still being worked on.
+func runningLog(t *testing.T) *logBuilder {
+	return newLog(t).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "in progress", Source: "human"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl", GoalID: "g-1", Title: "Implement: in progress", IdempotencyKey: "g-1:impl"}).
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl", Worker: "w1"})
+}
+
+// pendingDeliveryLog is a goal whose work has all merged onto its Goal branch in
+// pull-request delivery mode, with no delivery attempted yet. Its outcome is
+// running, exactly as it is while a worker is mid-attempt; only its conditions
+// tell the two apart.
+func pendingDeliveryLog(t *testing.T) *logBuilder {
+	return newLog(t).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "ship it", Source: "github"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl", GoalID: "g-1", Title: "Implement: ship it", IdempotencyKey: "g-1:impl"}).
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl", Worker: "w1"}).
+		add(1, api.ProposalSubmitted, api.ProposalSubmittedPayload{TicketID: "g-1-impl", Worker: "w1", Commit: "cand-1"}).
+		add(1, api.Merged, api.MergedPayload{TicketID: "g-1-impl", Worker: "w1", Commit: "m1", Branch: "aoa/g-1"})
+}
+
+// prPartialLog is partialLog in pull-request delivery mode: one child merged onto
+// the Goal branch, the other failed, so the branch exists but will never ship.
+func prPartialLog(t *testing.T) *logBuilder {
+	return newLog(t).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "split me", Source: "human"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl", GoalID: "g-1", Title: "Implement: split me", IdempotencyKey: "g-1:impl"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl/a", GoalID: "g-1", Title: "half a", IdempotencyKey: "g-1:a", Depth: 1}).
+		add(0, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl/b", GoalID: "g-1", Title: "half b", IdempotencyKey: "g-1:b", Depth: 1}).
+		add(0, api.TicketDecomposed, api.TicketDecomposedPayload{TicketID: "g-1-impl", Worker: "w1", Children: []string{"g-1-impl/a", "g-1-impl/b"}}).
+		add(1, api.Merged, api.MergedPayload{TicketID: "g-1-impl/a", Worker: "w2", Commit: "aaa1111", Branch: "aoa/g-1"}).
+		add(1, api.TicketFailed, api.TicketFailedPayload{TicketID: "g-1-impl/b", Worker: "w3", Reason: "gate: build failed"})
+}
+
+// budgetLog is a goal whose budget tripped and whose task then failed.
+func budgetLog(t *testing.T) *logBuilder {
+	return newLog(t).
+		add(0, api.GoalSubmitted, api.GoalSubmittedPayload{GoalID: "g-1", Text: "expensive", Source: "human"}).
+		add(1, api.TicketCreated, api.TicketCreatedPayload{TicketID: "g-1-impl", GoalID: "g-1", Title: "Implement: expensive", IdempotencyKey: "g-1:impl"}).
+		add(1, api.TicketClaimed, api.TicketClaimedPayload{TicketID: "g-1-impl", Worker: "w1"}).
+		add(1, api.GoalBudgetExceeded, api.GoalBudgetExceededPayload{GoalID: "g-1", SpentTokens: 900, Limit: 500}).
+		add(1, api.TicketFailed, api.TicketFailedPayload{TicketID: "g-1-impl", Worker: "w1", Reason: "goal budget exceeded"})
+}
+
+// conditionsOf indexes a GoalView's conditions by type.
+func conditionsOf(gv api.GoalView) map[string]api.Condition {
+	m := map[string]api.Condition{}
+	for _, c := range gv.Conditions {
+		m[c.Type] = c
+	}
+	return m
+}
+
+// TestGoalConditions pins what every outcome looks like as conditions (ADR 020):
+// each Goal carries exactly the four types, each with the status and reason a
+// caller can act on. The load-bearing row is "merged onto its branch, delivery
+// pending": its outcome is running, as it is mid-attempt, and only Verified and
+// Delivered say which.
+func TestGoalConditions(t *testing.T) {
+	type want struct{ accepted, verified, delivered, complete string } // "Status/Reason"
+	queued := want{"False/Queued", "False/Queued", "Unknown/NoGoalBranch", "False/Queued"}
+	merged := want{"True/TasksCreated", "True/AllMerged", "Unknown/NoGoalBranch", "True/Merged"}
+	tests := []struct {
+		name    string
+		log     func(*testing.T) *logBuilder
+		goal    string
+		outcome string
+		want    want
+		// messages spot-checks Condition.Message by type.
+		messages map[string]string
+	}{
+		{name: "queued", log: queuedLog, goal: "g-1", outcome: api.OutcomeQueued, want: queued},
+		{name: "running", log: runningLog, goal: "g-1", outcome: api.OutcomeRunning,
+			want: want{"True/TasksCreated", "False/WorkInProgress", "Unknown/NoGoalBranch", "False/WorkInProgress"}},
+		{name: "merged", log: mixedLog, goal: "g-merged", outcome: api.OutcomeMerged, want: merged},
+		{name: "decomposed, every child merged", log: mixedLog, goal: "g-split", outcome: api.OutcomeMerged, want: merged},
+		{name: "failed at the Gate", log: mixedLog, goal: "g-failed", outcome: api.OutcomeFailed,
+			want:     want{"True/TasksCreated", "False/TaskFailed", "Unknown/NoGoalBranch", "True/Failed"},
+			messages: map[string]string{api.ConditionVerified: "g-failed-impl: gate: go test ./... failed (2 attempts)"}},
+		{name: "awaiting approval", log: mixedLog, goal: "g-await", outcome: api.OutcomeAwaitingApproval,
+			want: want{"True/TasksCreated", "False/AwaitingApproval", "Unknown/NoGoalBranch", "False/AwaitingApproval"}},
+		{name: "queued behind others", log: mixedLog, goal: "g-queued", outcome: api.OutcomeQueued, want: queued},
+		{name: "failed without a reason", log: settledLog, goal: "g-1", outcome: api.OutcomeFailed,
+			want:     want{"True/TasksCreated", "False/TaskFailed", "Unknown/NoGoalBranch", "True/Failed"},
+			messages: map[string]string{api.ConditionVerified: "g-1-impl failed"}},
+		{name: "partial success", log: partialLog, goal: "g-1", outcome: api.OutcomeFailed,
+			want: want{"True/TasksCreated", "False/TaskFailed", "Unknown/NoGoalBranch", "True/Failed"}},
+		{name: "rejected by a human", log: rejectedLog, goal: "g-1", outcome: api.OutcomeFailed,
+			want: want{"True/TasksCreated", "False/ApprovalDenied", "Unknown/NoGoalBranch", "True/Failed"}},
+		{name: "budget tripped", log: budgetLog, goal: "g-1", outcome: api.OutcomeFailed,
+			want: want{"True/TasksCreated", "False/BudgetExceeded", "Unknown/NoGoalBranch", "True/Failed"}},
+		{name: "cancelled, attempt still in flight", log: cancelledLog(false), goal: "g-1", outcome: api.OutcomeCancelled,
+			want: want{"True/TasksCreated", "False/Cancelled", "False/Cancelled", "False/Cancelling"}},
+		{name: "cancelled, nothing in flight", log: cancelledLog(true), goal: "g-1", outcome: api.OutcomeCancelled,
+			want: want{"True/TasksCreated", "False/Cancelled", "False/Cancelled", "True/Cancelled"}},
+		{name: "merged onto its branch, delivery pending", log: pendingDeliveryLog, goal: "g-1", outcome: api.OutcomeRunning,
+			want: want{"True/TasksCreated", "True/AllMerged", "False/DeliveryPending", "False/DeliveryPending"}},
+		{name: "merged onto its branch, but part failed", log: prPartialLog, goal: "g-1", outcome: api.OutcomeFailed,
+			want: want{"True/TasksCreated", "False/TaskFailed", "False/NotVerified", "True/Failed"}},
+		{name: "delivery failed", log: deliveryLog(false), goal: "g-1", outcome: api.OutcomeRunning,
+			want:     want{"True/TasksCreated", "True/AllMerged", "False/DeliveryFailed", "False/DeliveryFailed"},
+			messages: map[string]string{api.ConditionDelivered: "push aoa/g-1: exit status 1\n ! [rejected] aoa/g-1 (fetch first)"}},
+		{name: "delivered", log: deliveryLog(true), goal: "g-1", outcome: api.OutcomeDelivered,
+			want:     want{"True/TasksCreated", "True/AllMerged", "True/PullRequestOpened", "True/Delivered"},
+			messages: map[string]string{api.ConditionDelivered: "https://github.com/o/r/pull/9"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			events := tt.log(t).events
+			v, _, err := statusView(events, nil, state.Budget{})
+			if err != nil {
+				t.Fatalf("statusView: %v", err)
+			}
+			var gv *api.GoalView
+			for i := range v.Goals {
+				if v.Goals[i].ID == tt.goal {
+					gv = &v.Goals[i]
+				}
+			}
+			if gv == nil {
+				t.Fatalf("no GoalView for %s", tt.goal)
+			}
+			if gv.Outcome != tt.outcome {
+				t.Errorf("outcome = %q, want %q", gv.Outcome, tt.outcome)
+			}
+			if len(gv.Conditions) != 4 {
+				t.Fatalf("got %d conditions, want the 4 types: %+v", len(gv.Conditions), gv.Conditions)
+			}
+			c := conditionsOf(*gv)
+			got := want{}
+			for typ, dst := range map[string]*string{
+				api.ConditionAccepted: &got.accepted, api.ConditionVerified: &got.verified,
+				api.ConditionDelivered: &got.delivered, api.ConditionComplete: &got.complete,
+			} {
+				*dst = c[typ].Status + "/" + c[typ].Reason
+			}
+			if got != tt.want {
+				t.Errorf("conditions (Accepted, Verified, Delivered, Complete)\n got  %+v\n want %+v", got, tt.want)
+			}
+			for typ, msg := range tt.messages {
+				if c[typ].Message != msg {
+					t.Errorf("%s message = %q, want %q", typ, c[typ].Message, msg)
+				}
+			}
+		})
+	}
+}
+
+// TestGoalConditionsAgreeWithTheFold holds the per-event tracking statusView does
+// (to learn when each condition last changed) to the conditions a plain replay
+// gives: an event that moved a Goal without being attributed to it would leave
+// the tracked view stale. It also holds StatusView.Settled to "every Goal is
+// Complete", so the two notions of done cannot drift apart.
+func TestGoalConditionsAgreeWithTheFold(t *testing.T) {
+	logs := map[string]func(*testing.T) *logBuilder{
+		"mixed": mixedLog, "settled": settledLog, "partial": partialLog, "rejected": rejectedLog,
+		"queued": queuedLog, "running": runningLog, "budget": budgetLog, "pending delivery": pendingDeliveryLog,
+		"pr partial": prPartialLog, "cancelled in flight": cancelledLog(false), "cancelled": cancelledLog(true),
+		"delivery failed": deliveryLog(false), "delivered": deliveryLog(true),
+	}
+	for name, log := range logs {
+		t.Run(name, func(t *testing.T) {
+			events := log(t).events
+			v, s, err := statusView(events, nil, state.Budget{})
+			if err != nil {
+				t.Fatalf("statusView: %v", err)
+			}
+			allComplete := true
+			for _, gv := range v.Goals {
+				fresh := s.GoalConditions(gv.ID)
+				tracked := make([]api.Condition, len(gv.Conditions))
+				for i, c := range gv.Conditions {
+					c.LastTransitionTime = time.Time{}
+					tracked[i] = c
+				}
+				if !reflect.DeepEqual(tracked, fresh) {
+					t.Errorf("goal %s: tracked conditions\n %+v\nwant the fold's\n %+v", gv.ID, tracked, fresh)
+				}
+				for _, c := range gv.Conditions {
+					if c.LastTransitionTime.IsZero() {
+						t.Errorf("goal %s: %s has no last_transition_time", gv.ID, c.Type)
+					}
+				}
+				if conditionsOf(gv)[api.ConditionComplete].Status != api.ConditionTrue {
+					allComplete = false
+				}
+			}
+			if v.Settled != allComplete {
+				t.Errorf("Settled = %v, but every Goal Complete = %v", v.Settled, allComplete)
+			}
+		})
+	}
+}
+
+// TestGoalConditionTransitionTimes pins last_transition_time to the event at
+// which a condition's status last changed — not the latest event, and not a
+// change of reason alone, which is the Kubernetes convention ADR 020 borrows.
+func TestGoalConditionTransitionTimes(t *testing.T) {
+	// deliveryLog(true): 1 submitted (+0s), 2 task created (+1s), 3 claimed (+2s),
+	// 4 proposed (+3s), 5 merged onto aoa/g-1 (+4s), 6 delivery failed (+5s),
+	// 7 delivered (+6s).
+	v, _, err := statusView(deliveryLog(true)(t).events, nil, state.Budget{})
+	if err != nil {
+		t.Fatalf("statusView: %v", err)
+	}
+	at := func(secs int) time.Time { return fixtureEpoch.Add(time.Duration(secs) * time.Second) }
+	want := map[string]time.Time{
+		api.ConditionAccepted: at(1), // the first task was created
+		api.ConditionVerified: at(4), // the only task merged
+		// Unknown until the merge named a Goal branch, then False; the failed
+		// delivery changed only the reason, so the time stays; then True.
+		api.ConditionDelivered: at(6),
+		api.ConditionComplete:  at(6),
+	}
+	c := conditionsOf(v.Goals[0])
+	for typ, ts := range want {
+		if !c[typ].LastTransitionTime.Equal(ts) {
+			t.Errorf("%s last_transition_time = %s, want %s", typ, c[typ].LastTransitionTime, ts)
+		}
+	}
+
+	// A reason change alone keeps the time: after the failed delivery, Delivered
+	// went Unknown→False at the merge (+4s) and stayed False.
+	v, _, err = statusView(deliveryLog(false)(t).events, nil, state.Budget{})
+	if err != nil {
+		t.Fatalf("statusView: %v", err)
+	}
+	if got := conditionsOf(v.Goals[0])[api.ConditionDelivered].LastTransitionTime; !got.Equal(at(4)) {
+		t.Errorf("Delivered last_transition_time = %s, want %s (the reason changed, the status did not)", got, at(4))
+	}
+}

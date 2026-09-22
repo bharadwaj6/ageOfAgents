@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Goals report their lifecycle as conditions, and `aoa wait` blocks until one is done.** A front door
+  could only poll `status --json` and write its own list of which outcomes are final — and `running`
+  meant both "a worker is mid-attempt" and "everything merged, only the push is left". Every goal now
+  carries four conditions in the shape Kubernetes-style runtimes already parse: `Accepted`, `Verified`,
+  `Delivered` and `Complete`, each with a reason and the time its status last changed, computed by
+  replaying the log. `aoa wait <goal-id>...` returns when each is `Complete`, exiting `0` if they landed,
+  `1` if any failed or was cancelled, and `4` on `--timeout`. Additive to the JSON contract; `outcome`
+  is unchanged. ([ADR 020](docs/design/adr/020-task-lifecycle-is-a-projection.md))
+
 ### Fixed
 
 - **`aoa run`'s exit status describes that run, not the workspace's whole history.** It counted every

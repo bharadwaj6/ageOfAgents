@@ -65,6 +65,17 @@ func TestContractWireShape(t *testing.T) {
 							FailReason: "rejected by a human", Worktree: "/ws/.aoa/handoff/g-1a2b3c4d-impl-b", Rejected: true,
 						},
 					},
+					Conditions: []Condition{
+						{Type: ConditionAccepted, Status: ConditionTrue, Reason: "TasksCreated",
+							LastTransitionTime: time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC)},
+						{Type: ConditionVerified, Status: ConditionFalse, Reason: "ApprovalDenied",
+							Message:            "g-1a2b3c4d-impl/b was rejected at the approval gate",
+							LastTransitionTime: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
+						{Type: ConditionDelivered, Status: ConditionFalse, Reason: "NotVerified",
+							LastTransitionTime: time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)},
+						{Type: ConditionComplete, Status: ConditionTrue, Reason: "Failed",
+							LastTransitionTime: time.Date(2026, 1, 2, 3, 5, 6, 0, time.UTC)},
+					},
 				}},
 				Totals: StatusTotals{
 					Tokens: 3000, CostUSD: 0.0125, WallSeconds: 61.5,

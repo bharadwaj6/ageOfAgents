@@ -38,10 +38,21 @@ import (
 // contract, and callers that need something the contract does not carry (the
 // seq a task failed at, for failedSince) read it from the state rather than
 // folding the log a second time.
+//
+// The replay is done event by event rather than with state.Fold, because each
+// Goal condition's last_transition_time is the moment its status last changed —
+// history a final snapshot does not keep. After each event the conditions of
+// the Goal it moved are recomputed and restamped.
 func statusView(events []api.Event, pricing map[string]float64, day state.Budget) (api.StatusView, *state.State, error) {
-	s, err := state.Fold(events)
-	if err != nil {
-		return api.StatusView{}, nil, fmt.Errorf("replay event log: %w", err)
+	s := state.New()
+	conditions := map[string][]api.Condition{}
+	for _, e := range events {
+		if err := s.Apply(e); err != nil {
+			return api.StatusView{}, nil, fmt.Errorf("replay event log: %w", err)
+		}
+		for _, id := range goalsMoved(s, e) {
+			conditions[id] = restamp(conditions[id], s.GoalConditions(id), e.Timestamp)
+		}
 	}
 	m := metrics.Compute(events)
 
@@ -103,6 +114,7 @@ func statusView(events []api.Event, pricing map[string]float64, day state.Budget
 			DeliveryError:  g.DeliveryError,
 			Graph:          api.GraphView{MaxDepth: graph[g.ID].MaxDepth, MaxFanOut: graph[g.ID].MaxFanOut},
 			Tickets:        tickets[g.ID],
+			Conditions:     conditions[g.ID],
 		}
 		if gv.Tickets == nil {
 			gv.Tickets = []api.TicketView{} // a queued Goal lists no tasks, not null
@@ -112,16 +124,7 @@ func statusView(events []api.Event, pricing map[string]float64, day state.Budget
 				gv.Commits = append(gv.Commits, tv.Commit)
 			}
 		}
-		switch gv.Outcome {
-		case api.OutcomeMerged, api.OutcomeFailed, api.OutcomeDelivered:
-		case api.OutcomeCancelled:
-			// Settled once the Scheduler has nothing of it left to finish or fail.
-			for _, tv := range gv.Tickets {
-				if !state.TicketStatus(tv.Status).IsTerminal() {
-					v.Settled = false
-				}
-			}
-		default:
+		if !goalDone(gv) {
 			v.Settled = false
 		}
 		v.Goals = append(v.Goals, gv)
@@ -164,6 +167,62 @@ func ticketView(t *state.Ticket) api.TicketView {
 		tv.Rejected = t.Rejected
 	}
 	return tv
+}
+
+// goalsMoved lists the Goals event e can have moved, so statusView recomputes
+// only those: the Goal its payload names, else the Goal owning the task it
+// names. A snapshot replaces the whole state, so it moves every Goal.
+func goalsMoved(s *state.State, e api.Event) []string {
+	if e.Type == api.StateSnapshot {
+		ids := make([]string, 0, len(s.Goals))
+		for id := range s.Goals {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	if len(e.Payload) == 0 {
+		return nil
+	}
+	var p struct {
+		GoalID   string `json:"goal_id"`
+		TicketID string `json:"ticket_id"`
+	}
+	if e.DecodePayload(&p) != nil {
+		return nil
+	}
+	if p.GoalID != "" {
+		return []string{p.GoalID}
+	}
+	if t := s.Tickets[p.TicketID]; t != nil {
+		return []string{t.GoalID}
+	}
+	return nil
+}
+
+// restamp gives each condition in next the time its status last changed: the
+// time prev recorded when the status is unchanged, else at — the event being
+// replayed. A change of reason alone keeps the time, as in Kubernetes.
+func restamp(prev, next []api.Condition, at time.Time) []api.Condition {
+	for i := range next {
+		next[i].LastTransitionTime = at
+		for _, p := range prev {
+			if p.Type == next[i].Type && p.Status == next[i].Status {
+				next[i].LastTransitionTime = p.LastTransitionTime
+			}
+		}
+	}
+	return next
+}
+
+// goalDone reports whether gv's Complete condition is True: nothing more
+// happens to the Goal without new input (ADR 020).
+func goalDone(gv api.GoalView) bool {
+	for _, c := range gv.Conditions {
+		if c.Type == api.ConditionComplete {
+			return c.Status == api.ConditionTrue
+		}
+	}
+	return false
 }
 
 // workSettled reports whether no task in v is still in flight. It is the text

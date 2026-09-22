@@ -96,11 +96,16 @@ func TestReportingBackNeedsOnlyTheContract(t *testing.T) {
 
 	// What a reporter must be able to say about each Goal that has news: where
 	// to say it, and what the news is. g-queued has no reportable event yet.
-	want := map[string]struct{ ref, outcome string }{
-		"g-merged": {"", api.OutcomeMerged},
-		"g-split":  {"https://linear.app/x/ENG-7", api.OutcomeMerged},
-		"g-failed": {"https://github.com/o/r/issues/3", api.OutcomeFailed},
-		"g-await":  {"", api.OutcomeAwaitingApproval},
+	// done is whether that news is final: a reporter reads it off the Complete
+	// condition (ADR 020) rather than enumerating which outcomes are terminal.
+	want := map[string]struct {
+		ref, outcome string
+		done         bool
+	}{
+		"g-merged": {"", api.OutcomeMerged, true},
+		"g-split":  {"https://linear.app/x/ENG-7", api.OutcomeMerged, true},
+		"g-failed": {"https://github.com/o/r/issues/3", api.OutcomeFailed, true},
+		"g-await":  {"", api.OutcomeAwaitingApproval, false},
 	}
 
 	// 1. Everything that happened since the cursor, which the caller holds.
@@ -118,6 +123,7 @@ func TestReportingBackNeedsOnlyTheContract(t *testing.T) {
 		require.True(t, ok, "%s (seq %d) resolved to unexpected Goal %s", e.Type, e.Seq, g.ID)
 		require.Equal(t, w.ref, g.Ref, "Goal %s: a reporter sends its news to ref", g.ID)
 		require.Equal(t, w.outcome, g.Outcome, "Goal %s: outcome to report", g.ID)
+		require.Equal(t, w.done, goalDone(g), "Goal %s: whether its news is final (Complete)", g.ID)
 		reported[g.ID] = true
 	}
 	require.Len(t, reported, len(want), "every Goal with news must be reachable from the event stream, got %v", reported)
