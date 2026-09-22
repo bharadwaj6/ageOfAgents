@@ -1196,12 +1196,16 @@ func cmdEval(args []string) error {
 	ctx := context.Background()
 	// The between-task --max-cost check below cannot stop a single runaway task,
 	// so hand the per-goal governors to each task's orchestrator too.
+	conventions, err := readConventions(".", cfg.ConventionsFile)
+	if err != nil {
+		return err
+	}
 	limits := liveeval.Limits{
 		Concurrency:      cfg.Concurrency,
 		MaxTokensPerGoal: cfg.MaxTokensPerGoal,
 		MaxUsdPerGoal:    cfg.MaxUsdPerGoal,
 		Pricing:          cfg.Pricing,
-		Conventions:      readConventions(".", cfg.ConventionsFile),
+		Conventions:      conventions,
 	}
 	if priceMap != nil {
 		limits.Pricing = priceMap
@@ -1570,23 +1574,28 @@ func printBenchTable(results []bench.Result) {
 // --- wiring ---------------------------------------------------------------
 
 // readConventions loads the coding rules injected into every agent prompt.
-// A missing or unreadable file is not an error: conventions are optional, and
-// failing a whole run over them would be worse than running without them.
-func readConventions(root, file string) string {
+// An unset conventions_file is optional and returns an empty string. When set,
+// the file must exist and be readable so agents do not run without standing instructions.
+func readConventions(root, file string) (string, error) {
 	if file == "" {
-		return ""
+		return "", nil
 	}
-	b, err := os.ReadFile(resolve(root, file))
+	p := resolve(root, file)
+	b, err := os.ReadFile(p)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("conventions_file %s: %w", p, err)
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // buildOrchestrator wires the Scheduler for ws on led, the workspace's Event
 // Log. It preflights the backend, so a missing CLI fails here.
 func buildOrchestrator(ws workspace, led *ledger.Ledger, runBudget state.Budget) (*orchestrator.Orchestrator, error) {
 	cfg, err := config.Load(ws.configPath)
+	if err != nil {
+		return nil, err
+	}
+	conventions, err := readConventions(ws.root, cfg.ConventionsFile)
 	if err != nil {
 		return nil, err
 	}
@@ -1604,7 +1613,6 @@ func buildOrchestrator(ws workspace, led *ledger.Ledger, runBudget state.Budget)
 	if err != nil {
 		return nil, err
 	}
-	conventions := readConventions(ws.root, cfg.ConventionsFile)
 	gate := verify.Verifier{Commands: verify.ToCommands(cfg.Verify), Sandbox: cfg.Sandbox, Image: cfg.SandboxImage}
 	var backoff time.Duration
 	if cfg.RetryBackoff != "" {

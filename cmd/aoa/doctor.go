@@ -100,6 +100,7 @@ func runDoctor(path string) []check {
 	out = append(out, check{name: "aoa.toml", ok: true, detail: ws.configPath})
 
 	out = append(out, checkRepo(resolve(ws.root, cfg.Repo)))
+	out = append(out, checkConventions(ws.root, cfg.ConventionsFile))
 	out = append(out, checkBackend(cfg)...)
 	out = append(out, checkGate(cfg)...)
 	if cfg.Sandbox == "docker" {
@@ -185,6 +186,24 @@ func checkRepo(repoPath string) check {
 		}
 	}
 	return check{name: "repo", ok: true, detail: repoPath}
+}
+
+// checkConventions verifies that conventions_file, when set, is readable.
+// Agents receive standing instructions through conventions_file; an unreadable
+// file would make them run unguarded.
+func checkConventions(root, file string) check {
+	if file == "" {
+		return check{name: "conventions", ok: true, detail: "none (optional)"}
+	}
+	p := resolve(root, file)
+	if _, err := readConventions(root, file); err != nil {
+		return check{
+			name:   "conventions",
+			detail: err.Error(),
+			fix:    fmt.Sprintf("create %s or fix conventions_file in aoa.toml", p),
+		}
+	}
+	return check{name: "conventions", ok: true, detail: p}
 }
 
 // checkBackend answers the question that otherwise costs a whole retry budget:
