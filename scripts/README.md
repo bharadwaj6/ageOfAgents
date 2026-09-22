@@ -13,6 +13,7 @@ self-contained. They exist to measure it.
 | `swebench_to_tasks.py` | Converts SWE-bench instances into `aoa eval` task files. `--gate=none\|f2p\|repo` selects what the merge Gate checks, independently of the oracle | Python 3 |
 | `extract_swebench_patches.py` | Pulls the model patch out of a run's Event Log into a predictions file | Python 3 |
 | `gate_precision.py` | Turns Gate-rejected proposals into a predictions file, so the oracle can say how many rejections were justified. Filters out sandbox faults | Python 3 |
+| `precision_summary.py` | Summarizes Gate precision from results.jsonl with an honest Wilson score interval and exclusion accounting | Python 3 |
 | `otel_smoke.sh` | Sends a run's replay to an OTLP endpoint end to end | an OTLP collector, `.env` |
 
 ## The distinction that matters
