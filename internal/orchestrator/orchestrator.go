@@ -86,6 +86,15 @@ type Orchestrator struct {
 
 	mu        sync.Mutex
 	worktrees map[string]*worktree.Worktree
+	// verifiedBase is the commit local-mode ticket worktrees are cut from: the
+	// integration branch as the Gate last left it. HEAD is not safe to cut from,
+	// because the merge queue holds an unverified candidate merge on it for as
+	// long as the Gate runs — minutes, for a real test suite — and a worktree
+	// cut in that window inherits a change the Gate may be about to roll back.
+	// The Scheduler records HEAD here when no merge is in flight, and dispatch
+	// goroutines read it instead. PR mode needs none of this: there worktrees
+	// are cut from the Goal branch, which only a Gate pass advances (ADR 016).
+	verifiedBase string
 	// dispatchErr holds the first error a dispatch goroutine could not report
 	// any other way — an Event Log append that failed. dispatch has no error
 	// return (it runs under a WaitGroup) and the log is the only channel it
@@ -321,6 +330,14 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 	}
 	ready := o.dispatchable(s.ReadyTickets(), o.opt.Now())
 	n := min(slots, len(ready))
+	if n > 0 {
+		// Record what the Gate has verified before this wave cuts its worktrees.
+		// Here, with no merge in flight, HEAD is that commit; from step 4 below
+		// until the Gate returns it is not.
+		if err := o.markVerifiedBase(ctx); err != nil {
+			return err
+		}
+	}
 	for _, t := range ready[:max(n, 0)] {
 		// PR mode: the task's worktree is cut from its Goal branch, which must
 		// exist first. Failing here stops the pass before TicketClaimed, so no
@@ -524,6 +541,43 @@ func (o *Orchestrator) takeDispatchErr() error {
 	return err
 }
 
+// markVerifiedBase records the integration branch's current commit as the base
+// local-mode worktrees are cut from. It reads HEAD, so it may only be called
+// from the Scheduler goroutine at a point where no merge is in flight — any
+// other moment risks recording an unverified candidate merge. In PR mode it
+// does nothing: dispatchBase cuts from the Goal branch there.
+func (o *Orchestrator) markVerifiedBase(ctx context.Context) error {
+	if o.prMode() {
+		return nil
+	}
+	sha, err := o.repo.Head(ctx)
+	if err != nil {
+		return fmt.Errorf("read verified base: %w", err)
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.verifiedBase = sha
+	return nil
+}
+
+// dispatchBase is what a new ticket worktree is cut from: the Goal branch in PR
+// mode, which only a Gate pass advances (ADR 016), and the last commit the Gate
+// verified in local mode. It is read from a dispatch goroutine, which runs
+// concurrently with the merge queue, so it never resolves HEAD itself.
+func (o *Orchestrator) dispatchBase(goalID string) string {
+	if o.prMode() {
+		return "refs/heads/" + goalBranch(goalID) // siblings' merged work included
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.verifiedBase == "" {
+		// No pass has dispatched yet, so no merge has run either: HEAD is the
+		// tip aoa adopted.
+		return "HEAD"
+	}
+	return o.verifiedBase
+}
+
 // dispatch runs one ticket attempt: claim -> worktree -> agent -> commit ->
 // propose. Failures become a retry (WorkerRestarted) or, at the attempt cap, a
 // terminal TicketFailed.
@@ -536,11 +590,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, j dispatchJob) {
 
 	branch := "aoa/" + worktree.SanitizeBranch(j.ticketID) + "-" + ShortID()
 	dest := filepath.Join(o.opt.WorktreeBase, worktree.SanitizeBranch(branch))
-	base := "HEAD"
-	if o.prMode() {
-		base = "refs/heads/" + goalBranch(j.goalID) // siblings' merged work included
-	}
-	wt, err := o.repo.AddWorktreeFrom(ctx, dest, branch, base)
+	wt, err := o.repo.AddWorktreeFrom(ctx, dest, branch, o.dispatchBase(j.goalID))
 	if err != nil {
 		o.failAttempt(ctx, j, worker, fmt.Sprintf("worktree: %v", err), usage{})
 		return
