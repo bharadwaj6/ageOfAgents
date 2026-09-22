@@ -197,6 +197,14 @@ uv run --with "swebench==4.1.0" python -m swebench.harness.run_evaluation \
     --dataset_name princeton-nlp/SWE-bench_Lite --split test --cache_level env
 ```
 
+**Per-instance resumable runner.** At ~3 GB per image the whole-set pull is impractical on a 16 GB machine.
+`scripts/gate_precision_run.sh INSTANCES.json BACKEND` measures precision one instance at a time: pull →
+eval → oracle → `docker rmi`, keeping peak disk to one image. It records outcomes in `RUN_DIR/results.jsonl`
+(one JSON line per instance) and skips ids already present, so a stopped run resumes from where it left off.
+The seeded sampler (`scripts/gate_precision_sample.py --n N --seed S`) selects a reproducible subset of
+instances that have a non-empty `PASS_TO_PASS`; `STOP_AFTER_REJECTIONS` (default 30) bounds the run.
+Preview the plan without touching docker with `DRY_RUN=1`.
+
 **Exclude sandbox faults first.** A gate that could not run is not a verdict on the patch. The first
 precision sweep (2026-08-23, 4 instances) produced 2 rejections and **both were spurious**: replaying each
 rejected patch through the same gate at `base_commit` passed (13 and 179 tests), so neither said anything
