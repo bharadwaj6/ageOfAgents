@@ -20,6 +20,16 @@ from pathlib import Path
 from typing import Any
 
 VALID_OUTCOMES: set[str] = {"merged", "rejected", "infra", "error"}
+VALID_ORACLES: set[str | None] = {"resolved", "unresolved", "error", None}
+# Why a rejection left the precision denominator, in the order they are checked.
+EXCLUSIONS: tuple[str, ...] = (
+    "infra",
+    "error",
+    "gate_invalid",
+    "gate_validity_missing",
+    "oracle_error",
+    "oracle_missing",
+)
 WILSON_Z_95: float = 1.959963984540054
 MIN_SCORED_FOR_RATE: int = 10
 SCREENING_WARNING: str = "screening only — too few rejections to support a rate"
@@ -55,55 +65,20 @@ class PrecisionSummary:
     warning: str | None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert summary metrics to a serializable dictionary."""
-        infra_ids = self.exclusions.get("infra", [])
-        error_ids = self.exclusions.get("error", [])
-        gv_false_ids = self.exclusions.get("gate_valid == false", [])
-        oracle_err_ids = self.exclusions.get('oracle == "error"', [])
-
-        exclusions_map = {
-            "infra": infra_ids,
-            "error": error_ids,
-            "gate_valid == false": gv_false_ids,
-            "gate_valid_false": gv_false_ids,
-            'oracle == "error"': oracle_err_ids,
-            "oracle_error": oracle_err_ids,
-        }
-        exclusion_counts = {
-            "infra": len(infra_ids),
-            "error": len(error_ids),
-            "gate_valid == false": len(gv_false_ids),
-            "gate_valid_false": len(gv_false_ids),
-            'oracle == "error"': len(oracle_err_ids),
-            "oracle_error": len(oracle_err_ids),
-        }
-
+        """Convert summary metrics to a serializable dictionary, one key per metric."""
         return {
             "instances": self.total_instances,
-            "total_instances": self.total_instances,
-            "merged": self.outcomes.get("merged", 0),
-            "rejected": self.outcomes.get("rejected", 0),
-            "infra": self.outcomes.get("infra", 0),
-            "error": self.outcomes.get("error", 0),
             "outcomes": dict(self.outcomes),
             "rejection_rate": self.rejection_rate,
             "scored_rejections": self.scored_rejections,
             "resolved": self.resolved_rejections,
             "unresolved": self.unresolved_rejections,
             "precision": self.precision,
-            "wilson_interval": (
-                list(self.wilson_interval) if self.wilson_interval else None
-            ),
-            "wilson_lower": (
-                self.wilson_interval[0] if self.wilson_interval else None
-            ),
-            "wilson_upper": (
-                self.wilson_interval[1] if self.wilson_interval else None
-            ),
-            "exclusions": exclusions_map,
-            "exclusion_counts": exclusion_counts,
+            "wilson_interval": list(self.wilson_interval)
+            if self.wilson_interval
+            else None,
+            "exclusions": {k: list(v) for k, v in self.exclusions.items()},
             "rejections_by_repo": dict(self.rejections_by_repo),
-            "rejections_per_repo": dict(self.rejections_by_repo),
             "warning": self.warning,
         }
 
@@ -157,13 +132,26 @@ def parse_results(
                 f"for instance {row.get('instance_id')!r}"
             )
 
+        gate_valid = row.get("gate_valid")
+        if gate_valid not in (True, False, None):
+            raise ValueError(
+                f"{source_name}:{line_no}: gate_valid must be true, false or null, "
+                f"got {gate_valid!r}"
+            )
+        oracle = row.get("oracle")
+        if oracle not in VALID_ORACLES:
+            raise ValueError(
+                f"{source_name}:{line_no}: unknown oracle {oracle!r} "
+                f"for instance {row.get('instance_id')!r}"
+            )
+
         results.append(
             InstanceResult(
                 instance_id=str(row["instance_id"]),
                 repo=str(row["repo"]),
                 outcome=str(outcome),
-                gate_valid=row.get("gate_valid"),
-                oracle=row.get("oracle"),
+                gate_valid=gate_valid,
+                oracle=oracle,
                 tokens=int(row.get("tokens", 0)),
                 seconds=float(row.get("seconds", 0.0)),
             )
@@ -187,10 +175,7 @@ def summarize_results(results: list[InstanceResult]) -> PrecisionSummary:
         "error": 0,
     }
 
-    infra_ids: list[str] = []
-    error_ids: list[str] = []
-    gv_false_ids: list[str] = []
-    oracle_error_ids: list[str] = []
+    exclusions: dict[str, list[str]] = {name: [] for name in EXCLUSIONS}
 
     resolved_count = 0
     unresolved_count = 0
@@ -200,25 +185,22 @@ def summarize_results(results: list[InstanceResult]) -> PrecisionSummary:
     for r in results:
         outcomes[r.outcome] = outcomes.get(r.outcome, 0) + 1
 
-        if r.outcome == "infra":
-            infra_ids.append(r.instance_id)
-        elif r.outcome == "error":
-            error_ids.append(r.instance_id)
-        elif r.outcome == "merged":
-            pass
+        if r.outcome in ("infra", "error"):
+            exclusions[r.outcome].append(r.instance_id)
         elif r.outcome == "rejected":
             rejections_by_repo[r.repo] += 1
-            if r.gate_valid is False or r.gate_valid is None:
-                gv_false_ids.append(r.instance_id)
+            if r.gate_valid is None:
+                exclusions["gate_validity_missing"].append(r.instance_id)
+            elif r.gate_valid is False:
+                exclusions["gate_invalid"].append(r.instance_id)
+            elif r.oracle is None:
+                exclusions["oracle_missing"].append(r.instance_id)
             elif r.oracle == "error":
-                oracle_error_ids.append(r.instance_id)
+                exclusions["oracle_error"].append(r.instance_id)
             elif r.oracle == "resolved":
                 resolved_count += 1
-            elif r.oracle == "unresolved":
-                unresolved_count += 1
             else:
-                # Any other unexpected or missing oracle on a valid rejection
-                oracle_error_ids.append(r.instance_id)
+                unresolved_count += 1
 
     merged = outcomes["merged"]
     rejected = outcomes["rejected"]
@@ -233,16 +215,7 @@ def summarize_results(results: list[InstanceResult]) -> PrecisionSummary:
         precision = None
         interval = None
 
-    warning = (
-        SCREENING_WARNING if scored_rejections < MIN_SCORED_FOR_RATE else None
-    )
-
-    exclusions = {
-        "infra": infra_ids,
-        "error": error_ids,
-        "gate_valid == false": gv_false_ids,
-        'oracle == "error"': oracle_error_ids,
-    }
+    warning = SCREENING_WARNING if scored_rejections < MIN_SCORED_FOR_RATE else None
 
     return PrecisionSummary(
         total_instances=total_instances,
@@ -295,18 +268,12 @@ def format_human(summary: PrecisionSummary) -> str:
 
     lines.append("")
     lines.append("Exclusions:")
-    categories = [
-        ("infra", "infra"),
-        ("error", "error"),
-        ("gate_valid == false", "gate_valid == false"),
-        ('oracle == "error"', 'oracle == "error"'),
-    ]
-    for label, key in categories:
-        items = summary.exclusions.get(key, [])
+    for name in EXCLUSIONS:
+        items = summary.exclusions.get(name, [])
         if items:
-            lines.append(f"  {label}: {len(items)} ({', '.join(items)})")
+            lines.append(f"  {name}: {len(items)} ({', '.join(items)})")
         else:
-            lines.append(f"  {label}: 0")
+            lines.append(f"  {name}: 0")
 
     lines.append("")
     lines.append("Rejections by repo:")
@@ -350,7 +317,7 @@ def main() -> None:
         sys.exit(1)
 
     if args.json_output:
-        print(json.dumps(summary.to_dict(), indent=2))
+        print(json.dumps(summary.to_dict()))
     else:
         print(format_human(summary))
 

@@ -4,8 +4,11 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+SCRIPT = Path(__file__).resolve().parent / "precision_summary.py"
 
 _scripts_dir = Path(__file__).resolve().parent
 _repo_root = _scripts_dir.parent
@@ -148,8 +151,10 @@ def test_exclusion_rules_on_tmp_path(tmp_path: Path) -> None:
     # Exclusions: counted and named by instance id
     assert summary.exclusions["infra"] == ["inst-infra"]
     assert summary.exclusions["error"] == ["inst-error"]
-    assert summary.exclusions["gate_valid == false"] == ["inst-gv-false"]
-    assert summary.exclusions['oracle == "error"'] == ["inst-oracle-err"]
+    assert summary.exclusions["gate_invalid"] == ["inst-gv-false"]
+    assert summary.exclusions["oracle_error"] == ["inst-oracle-err"]
+    assert summary.exclusions["gate_validity_missing"] == []
+    assert summary.exclusions["oracle_missing"] == []
 
     # Per-repo rejections: 2 django, 2 astropy
     assert summary.rejections_by_repo["django/django"] == 2
@@ -217,6 +222,7 @@ def test_zero_scored_rejections(tmp_path: Path) -> None:
 
 def test_screening_warning_threshold(tmp_path: Path) -> None:
     """Warning is emitted for <10 scored rejections and omitted for >=10."""
+
     def make_results(count: int) -> list[dict[str, object]]:
         return [
             {
@@ -233,14 +239,18 @@ def test_screening_warning_threshold(tmp_path: Path) -> None:
 
     # 9 scored -> warning
     file9 = tmp_path / "nine.jsonl"
-    file9.write_text("\n".join(json.dumps(r) for r in make_results(9)) + "\n", encoding="utf-8")
+    file9.write_text(
+        "\n".join(json.dumps(r) for r in make_results(9)) + "\n", encoding="utf-8"
+    )
     summary9 = summarize_results(load_results(file9))
     assert summary9.scored_rejections == 9
     assert summary9.warning == SCREENING_WARNING
 
     # 10 scored -> no warning
     file10 = tmp_path / "ten.jsonl"
-    file10.write_text("\n".join(json.dumps(r) for r in make_results(10)) + "\n", encoding="utf-8")
+    file10.write_text(
+        "\n".join(json.dumps(r) for r in make_results(10)) + "\n", encoding="utf-8"
+    )
     summary10 = summarize_results(load_results(file10))
     assert summary10.scored_rejections == 10
     assert summary10.warning is None
@@ -269,11 +279,13 @@ def test_cli_human_and_json_output(tmp_path: Path) -> None:
         },
     ]
     file_path = tmp_path / "cli_test.jsonl"
-    file_path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+    file_path.write_text(
+        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
+    )
 
     # Human output
     proc = subprocess.run(
-        [sys.executable, "scripts/precision_summary.py", str(file_path)],
+        [sys.executable, str(SCRIPT), str(file_path)],
         capture_output=True,
         text=True,
         check=True,
@@ -287,15 +299,76 @@ def test_cli_human_and_json_output(tmp_path: Path) -> None:
 
     # JSON output
     proc_json = subprocess.run(
-        [sys.executable, "scripts/precision_summary.py", str(file_path), "--json"],
+        [sys.executable, str(SCRIPT), str(file_path), "--json"],
         capture_output=True,
         text=True,
         check=True,
     )
+    assert proc_json.stdout.count("\n") == 1, "--json prints one line"
     data = json.loads(proc_json.stdout)
+    assert set(data) == {
+        "instances",
+        "outcomes",
+        "rejection_rate",
+        "scored_rejections",
+        "resolved",
+        "unresolved",
+        "precision",
+        "wilson_interval",
+        "exclusions",
+        "rejections_by_repo",
+        "warning",
+    }, "one key per metric: no aliases in the --json contract"
     assert data["instances"] == 2
     assert data["outcomes"]["merged"] == 1
     assert data["outcomes"]["rejected"] == 1
     assert data["precision"] == 1.0
     assert data["wilson_interval"] == [0.2065, 1.0]
     assert data["warning"] == SCREENING_WARNING
+
+
+def _write(tmp_path: Path, rows: list[dict[str, Any]]) -> Path:
+    path = tmp_path / "results.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return path
+
+
+def _rejected(
+    instance_id: str, gate_valid: bool | None, oracle: str | None
+) -> dict[str, Any]:
+    return {
+        "instance_id": instance_id,
+        "repo": "r",
+        "outcome": "rejected",
+        "gate_valid": gate_valid,
+        "oracle": oracle,
+        "tokens": 1,
+        "seconds": 1.0,
+    }
+
+
+def test_missing_is_not_invalid_and_not_error(tmp_path: Path) -> None:
+    """A validity check or verdict never recorded is its own exclusion, not a false or an error."""
+    summary = summarize_results(
+        load_results(
+            _write(
+                tmp_path,
+                [
+                    _rejected("no-gate-check", None, "unresolved"),
+                    _rejected("no-verdict", True, None),
+                    _rejected("scored", True, "unresolved"),
+                ],
+            )
+        )
+    )
+    assert summary.exclusions["gate_validity_missing"] == ["no-gate-check"]
+    assert summary.exclusions["oracle_missing"] == ["no-verdict"]
+    assert summary.exclusions["gate_invalid"] == []
+    assert summary.exclusions["oracle_error"] == []
+    assert summary.scored_rejections == 1
+
+
+def test_unknown_oracle_raises_error(tmp_path: Path) -> None:
+    """An oracle value outside the contract is an error, not an exclusion."""
+    with pytest.raises(ValueError, match="unknown oracle"):
+        load_results(_write(tmp_path, [_rejected("x", True, "passed")]))
