@@ -7,8 +7,6 @@ auto-approval (`--dangerously-skip-permissions`), and on 2026-09-23 it left its 
 straight to `main` when run unconfined. Therefore, `agy` is documented and run as a
 [BYO CLI harness](byo-cli.md) under operator-side confinement.
 
-Everything documented here was verified on `agy` 1.2.8 on macOS; mark it unverified elsewhere.
-
 ## What aoa runs (Flags)
 
 Headless invocation:
@@ -106,11 +104,14 @@ A wrapper script refuses to run outside the agent's own clone, then execs `agy` 
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The clone's physical path, with no trailing slash (resolve it once with `pwd -P`).
 CLONE_ROOT="/path/to/your/clone"
-case "$PWD" in
-  "$CLONE_ROOT"*) ;;
+# Compare physical paths, with the trailing slash: a bare prefix match would also
+# admit a sibling such as /path/to/your/clone-other, and $PWD can be a symlink.
+case "$(pwd -P)/" in
+  "$CLONE_ROOT"/*) ;;
   *)
-    echo "Refusing to run agy outside $CLONE_ROOT (current: $PWD)" >&2
+    echo "Refusing to run agy outside $CLONE_ROOT (current: $(pwd -P))" >&2
     exit 1
     ;;
 esac
@@ -169,7 +170,11 @@ Under that confinement:
 - `agy` delivered two Gate-verified pull requests:
     - [#199](https://github.com/bharadwaj6/ageOfAgents/pull/199) for [#196](https://github.com/bharadwaj6/ageOfAgents/issues/196)
     - [#200](https://github.com/bharadwaj6/ageOfAgents/pull/200) for [#198](https://github.com/bharadwaj6/ageOfAgents/issues/198)
-- [#197](https://github.com/bharadwaj6/ageOfAgents/issues/197) failed four attempts to the waiting trap
-  and was done by the `claudecode` backend instead
+- [#197](https://github.com/bharadwaj6/ageOfAgents/issues/197) failed four attempts, all ending without
+  an edit — the same pattern, though only one failed attempt's transcript was read to confirm the
+  waiting trap as the cause — and was done by the `claudecode` backend instead
   ([#201](https://github.com/bharadwaj6/ageOfAgents/pull/201)).
+- This page ([#188](https://github.com/bharadwaj6/ageOfAgents/issues/188)) was written by `agy` under the
+  same confinement. Its first two attempts fell into the waiting trap; the first attempt after the
+  standing instructions were changed succeeded. One success is a data point, not a rate.
 - Pushes, writes outside the clone, and `gh` were all confirmed blocked in testing.
