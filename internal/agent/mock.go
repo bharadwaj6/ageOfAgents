@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 )
 
 // File is a file the mock backend writes into the worktree.
@@ -37,12 +36,6 @@ type Mock struct {
 	// CostPerTask, when > 0, is reported as the Result's harness-reported cost in
 	// USD for every Run, failed ones included, so budgets can be exercised offline.
 	CostPerTask float64
-	// Rendezvous synchronises concurrent workers whose title matches a key in
-	// the map. Each matching Run call decrements the WaitGroup then blocks
-	// until all peers have entered, so none returns before all are inside Run.
-	// Callers must initialise the WaitGroup to the number of matching titles.
-	// Test-only; production callers never set this.
-	Rendezvous map[string]*sync.WaitGroup
 }
 
 // NewMock returns an empty Mock with default marker-file behavior.
@@ -92,15 +85,6 @@ func (m *Mock) Run(ctx context.Context, task Task) (Result, error) {
 		if err := os.WriteFile(dst, []byte(f.Content), 0o644); err != nil {
 			return Result{}, fmt.Errorf("mock: write %s: %w", f.Path, err)
 		}
-	}
-
-	// Rendezvous: let concurrent sibling workers synchronise so that all of
-	// them have completed their work before any returns to the orchestrator's
-	// dispatch goroutine. This guarantees their ProposalSubmitted events land
-	// in the same reconcile pass, making merge-queue-depth tests deterministic.
-	if wg := m.Rendezvous[task.Title]; wg != nil {
-		wg.Done()
-		wg.Wait()
 	}
 
 	return Result{
