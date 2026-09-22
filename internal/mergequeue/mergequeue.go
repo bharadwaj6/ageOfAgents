@@ -43,6 +43,13 @@ type Outcome struct {
 	MergeCommit string // set when Merged, or the candidate commit for a passing DryRun
 	Reason      string // set when !Merged
 	Output      string // verifier output (when verification ran)
+	// Tree is the git tree hash of the exact content the Gate ran against — the
+	// post-merge state. It is content-addressed, so the same patch over the same
+	// base yields the same Tree on a retry even though the commit differs. A
+	// rejection and an acceptance that share a Tree are the Gate contradicting
+	// itself; recording it is what makes that visible to a replay (issue #104).
+	// Empty when no verification ran (a merge conflict).
+	Tree string
 	// RegressionEscaped is set when the merge passed the Gate but a broader
 	// Shadow verifier failed on the post-merge state — a verification blind spot
 	// the Gate let through. It is observational: the merge is kept (the Gate is
@@ -64,6 +71,21 @@ type Queue struct {
 // New constructs a Queue.
 func New(repo *worktree.Repo, v verify.Verifier) *Queue {
 	return &Queue{Repo: repo, Verifier: v}
+}
+
+// verifiedTree reads the tree hash of the just-merged state: the content the
+// Gate is about to run against. A repository we can no longer read leaves main
+// mid-merge with nothing verified, so the failure restores pre before returning
+// — the same direction every other error in the queue fails.
+func (q *Queue) verifiedTree(ctx context.Context, pre string) (string, error) {
+	tree, err := q.Repo.Tree(ctx)
+	if err == nil {
+		return tree, nil
+	}
+	if rbErr := q.Repo.ResetHard(ctx, pre); rbErr != nil {
+		return "", fmt.Errorf("rollback after failed tree read (%v): %w", err, rbErr)
+	}
+	return "", fmt.Errorf("read merged tree: %w", err)
 }
 
 // Process handles a single proposal: merge → verify → keep or roll back.
@@ -90,6 +112,9 @@ func (q *Queue) Process(ctx context.Context, p Proposal) (Outcome, error) {
 		return out, nil
 	}
 
+	if out.Tree, err = q.verifiedTree(ctx, pre); err != nil {
+		return out, err
+	}
 	res := q.Verifier.Run(ctx, q.Repo.Dir)
 	out.Output = res.Output
 	if !res.Passed {
@@ -140,6 +165,9 @@ func (q *Queue) DryRun(ctx context.Context, p Proposal) (Outcome, error) {
 		return out, nil
 	}
 
+	if out.Tree, err = q.verifiedTree(ctx, pre); err != nil {
+		return out, err
+	}
 	res := q.Verifier.Run(ctx, q.Repo.Dir)
 	out.Output = res.Output
 	// A dry run never keeps the merge, pass or fail.
@@ -215,12 +243,18 @@ func (q *Queue) ProcessBatch(ctx context.Context, props []Proposal) ([]Outcome, 
 		}
 		outcomes[i] = Outcome{TicketID: props[i].TicketID, Worker: props[i].Worker, MergeCommit: sha}
 	}
+	// The batch Gate runs once over the union, so every member was verified
+	// against the same tree — that union is what each outcome records.
+	tree, err := q.Repo.Tree(ctx)
+	if err != nil {
+		merged = false // cannot name what we would verify; fall back to serial
+	}
 	if merged {
 		res := q.Verifier.Run(ctx, q.Repo.Dir)
 		if res.Passed {
 			for _, i := range batch {
 				o := outcomes[i]
-				o.Verified, o.Merged, o.Output = true, true, res.Output
+				o.Verified, o.Merged, o.Output, o.Tree = true, true, res.Output, tree
 				outcomes[i] = o
 			}
 		} else {

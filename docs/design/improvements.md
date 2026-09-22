@@ -46,7 +46,7 @@ Deterministic assembly from replayed state, not semantic similarity: the same ti
 brief every time. Sibling and graph status were deliberately left out — merged dependencies are the
 high-signal read, siblings are noise.
 
-## 3. Flaky / nondeterministic-test detection — *the top real-world CI pain*
+## 3. Flaky / nondeterministic-test detection — **detect: shipped; act: not done**
 
 **Priority: P1 · Leverage: medium-high · Effort: medium**
 
@@ -61,12 +61,17 @@ failure.
 it is uniquely positioned to *detect* and *act on* flakiness.
 
 **Mechanism.**
-- *Detect (cheap, post-hoc):* a **replay projection** in `internal/diagnose` that flags a ticket/commit
-  whose Gate both passed and failed. Buildable today from recorded `VerificationFailed` reasons, and far
-  sharper once #1 lands the full `Output`.
+- *Detect (cheap, post-hoc):* **shipped** as the `flaky_gate` mode in `internal/diagnose` — a replay
+  projection over the git `tree` each Gate verdict now records, flagging content that drew both a pass and
+  a failure. "Both passed and failed" keyed on the *ticket* turned out to be worthless: it is exactly what
+  a healthy retry looks like once the agent reads the failure and fixes the code. Keyed on the *content*
+  it is close to proof. See [`metrics.md`](metrics.md#the-flaky-gate-and-what-detecting-it-can-and-cannot-prove)
+  for what it can and — importantly — cannot show.
 - *Act (optional, opt-in):* a `confirm_runs` config that re-runs the Gate N times in
   `internal/mergequeue` before a merge stands, so a single lucky pass cannot merge. Default 1 (current
-  behavior) to keep cost unchanged unless asked.
+  behavior) to keep cost unchanged unless asked. **Not done**, and deliberately: it changes what the Gate
+  *does* and costs wall-clock on every failure, so it needs an ADR rather than a quiet patch. The detect
+  half is what tells us whether it is worth having.
 
 **ADR fit.** Quality through the objective Gate (ADR 002) plus observability as a replay projection
 (ADR 012). No new control loop.

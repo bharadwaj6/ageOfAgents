@@ -104,6 +104,16 @@ func (r *Repo) GitDir(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// Tree returns the git tree hash of HEAD — the content-addressed identity of
+// what is committed, independent of the commit that carries it. Two commits with
+// identical content share a tree hash whatever their branch, author, message or
+// timestamp, which is what lets two Gate runs be compared for "the same content"
+// by replay (the flaky_gate signature in internal/diagnose).
+func (r *Repo) Tree(ctx context.Context) (string, error) {
+	out, err := git(ctx, r.Dir, "rev-parse", "HEAD^{tree}")
+	return strings.TrimSpace(out), err
+}
+
 // CurrentBranch returns the name of the repo's currently checked-out branch.
 func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	out, err := git(ctx, r.Dir, "rev-parse", "--abbrev-ref", "HEAD")

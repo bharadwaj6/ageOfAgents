@@ -228,10 +228,12 @@ type ProposalSubmittedPayload struct {
 	CostUSD  float64 `json:"cost_usd,omitempty"` // cost the harness reported for the work (0 when it reports none)
 }
 
-// VerificationPassedPayload accompanies [VerificationPassed].
+// VerificationPassedPayload accompanies [VerificationPassed]. Tree is the
+// content the Gate ran against (see [VerificationFailedPayload]).
 type VerificationPassedPayload struct {
 	TicketID string `json:"ticket_id"`
 	Worker   string `json:"worker"`
+	Tree     string `json:"tree,omitempty"`
 }
 
 // VerificationFailedPayload accompanies [VerificationFailed].
@@ -240,6 +242,14 @@ type VerificationFailedPayload struct {
 	Worker   string `json:"worker"`
 	Reason   string `json:"reason"`
 	Output   string `json:"output,omitempty"`
+	// Tree is the git tree hash of the exact content the Gate ran against: the
+	// post-merge state, not the proposal's commit. Tree hashes are
+	// content-addressed, so two Gate runs over identical content carry the same
+	// Tree however their commits differ (branch, author, timestamp). That is what
+	// lets a replay tell "the Gate contradicted itself" from "the retry fixed
+	// it" — see the flaky_gate mode in internal/diagnose. Empty when unknown,
+	// including in every log written before this field existed.
+	Tree string `json:"tree,omitempty"`
 }
 
 // MergedPayload accompanies [Merged]. Branch is the Goal branch the proposal
@@ -265,7 +275,11 @@ type TicketFailedPayload struct {
 	// ended the ticket. Without it a terminal failure records only which command
 	// failed, so an infrastructure fault and a genuinely broken patch are
 	// indistinguishable after the fact.
-	Output   string  `json:"output,omitempty"`
+	Output string `json:"output,omitempty"`
+	// Tree is the content the Gate ran against when a Gate verdict was what ended
+	// the ticket, as in [VerificationFailedPayload]. Empty for every other reason
+	// a ticket fails (a cancelled Goal, a merge conflict), where no Gate ran.
+	Tree     string  `json:"tree,omitempty"`
 	Worktree string  `json:"worktree,omitempty"`
 	Tokens   int     `json:"tokens,omitempty"`   // LLM tokens the failed attempt consumed (0 when unknown)
 	Model    string  `json:"model,omitempty"`    // model that consumed them, for per-model cost

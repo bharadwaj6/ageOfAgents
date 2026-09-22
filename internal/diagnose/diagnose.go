@@ -71,6 +71,13 @@ const (
 	// StaleSpecDrift: a worker was in-flight (running) when its Goal was amended,
 	// so it proceeded against a now-superseded spec (mid-run goal amendment, #11).
 	StaleSpecDrift Mode = "stale_spec_drift"
+	// FlakyGate: the Gate returned both a pass and a failure for the *same*
+	// verified content (identical tree hash) — so it is not a function of the
+	// code alone, and a merge it allowed may rest on a verdict it had already
+	// contradicted. The crash-loop governor keys on repeated *identical*
+	// failures, which is the opposite signal: a verdict that flips never trips
+	// it. See flakyGate for what this can and cannot prove.
+	FlakyGate Mode = "flaky_gate"
 )
 
 // modeOrder fixes the histogram's row order so output is deterministic.
@@ -86,6 +93,7 @@ var modeOrder = []Mode{
 	RetryLivelock,
 	VerificationBlindSpot,
 	StaleSpecDrift,
+	FlakyGate,
 }
 
 // modeDetail is the human-readable description shown beside each mode.
@@ -101,10 +109,74 @@ var modeDetail = map[Mode]string{
 	RetryLivelock:         "ticket hit the crash-loop ceiling (same failure repeated until giving up)",
 	VerificationBlindSpot: "merge passed the Gate but a broader shadow test set rejected it",
 	StaleSpecDrift:        "worker was running when its Goal was amended (proceeding against a stale spec)",
+	FlakyGate:             "the Gate both passed and failed the same verified content (nondeterministic Gate)",
 }
 
 // crashLoopPrefix marks a TicketFailed reason the crash-loop governor emitted.
 const crashLoopPrefix = "crash loop:"
+
+// gateRejectionPrefix is how mergequeue.verifyFailureReason words a real Gate
+// verdict on the code. Every other rejection reason — "gate could not run
+// (sandbox failure): …", a merge conflict, a cancelled Goal — says nothing about
+// the proposal, and counting those as verdicts would rebuild exactly the false
+// positives the first Gate-precision sweep tripped over (issue #103, where a
+// stopped Docker daemon read as a rejection).
+const gateRejectionPrefix = "verification failed: "
+
+// isGateRejection reports whether a failure reason is the Gate's own verdict on
+// the code, seeing through the crash-loop governor's wrapper.
+func isGateRejection(reason string) bool {
+	return strings.HasPrefix(strings.TrimPrefix(reason, crashLoopPrefix+" "), gateRejectionPrefix)
+}
+
+// gateVerdicts records, per verified tree, which verdicts the Gate returned for
+// it and which tickets were involved.
+type gateVerdicts struct {
+	passed, failed bool
+	tickets        map[string]bool
+}
+
+// flakyGate returns the tickets whose Gate verdicts contradicted themselves: the
+// same tree hash — the same content, byte for byte — both passed and failed.
+//
+// What that proves: the Gate is not a function of the content it runs on. Within
+// one run that is a nondeterministic Gate, which is the mechanism issue #104
+// describes — a flaky test lets a lucky retry merge a patch an earlier run
+// rejected, so "nothing merges that fails the Gate" (ADR 002) quietly stops
+// meaning what it says.
+//
+// What it does not prove, and must not be read as:
+//
+//   - It cannot say which verdict was right, or that the merged code is broken.
+//     A flagged ticket is a candidate for a human to look at, not a defect.
+//   - A count of 0 is *not* evidence of a deterministic Gate. Only the provable
+//     subset is visible: a retry runs the agent again from scratch, and any
+//     change at all to the patch gives a different tree, which this cannot
+//     compare. That case is common, and invisible here. Measuring the *rate* of
+//     flakiness needs the Gate re-run deliberately on identical content (the
+//     `confirm_runs` half of #104), which is a behaviour change, not a
+//     projection.
+//   - Two runs of the same content can legitimately disagree when something
+//     outside the content changed between them: the gate commands were edited in
+//     aoa.toml, the toolchain or sandbox image moved, a test timed out under
+//     load, or a test reached the network. Infrastructure failures the Gate
+//     itself recognised are already excluded (isGateRejection); the rest are
+//     real false positives and are why this reports a finding, not a violation.
+//   - A batch Gate run (mergequeue.ProcessBatch) that fails is re-isolated
+//     per proposal and records no verdict of its own, so a contradiction between
+//     a batch run and an isolated one is not visible.
+func flakyGate(verdicts map[string]*gateVerdicts) []string {
+	flagged := map[string]bool{}
+	for _, v := range verdicts {
+		if !v.passed || !v.failed {
+			continue
+		}
+		for id := range v.tickets {
+			flagged[id] = true
+		}
+	}
+	return slices.Collect(maps.Keys(flagged))
+}
 
 // Finding is one row of the failure-mode histogram.
 type Finding struct {
@@ -150,12 +222,32 @@ func Classify(events []api.Event) Report {
 		stalled        = map[string]bool{}   // tickets the stall detector flagged
 		missingVerif   = map[string]bool{}   // merges with no prior verification
 		retryEvents    int
-		blindSpot      []string              // tickets that escaped a broader verifier (#8)
-		failReason     = map[string]string{} // ticket id -> latest TicketFailed reason
-		goalOf         = map[string]string{} // ticket id -> goal id
-		running        = map[string]bool{}   // tickets currently in-flight (WorkStarted, not yet terminal)
-		driftSet       = map[string]bool{}   // tickets running when their Goal was amended (#11)
+		blindSpot      []string                     // tickets that escaped a broader verifier (#8)
+		failReason     = map[string]string{}        // ticket id -> latest TicketFailed reason
+		goalOf         = map[string]string{}        // ticket id -> goal id
+		running        = map[string]bool{}          // tickets currently in-flight (WorkStarted, not yet terminal)
+		driftSet       = map[string]bool{}          // tickets running when their Goal was amended (#11)
+		verdicts       = map[string]*gateVerdicts{} // verified tree -> the Gate's verdicts on it
 	)
+	// record files one Gate verdict under the tree it ran against. An empty tree
+	// (a log written before the field existed, or a rejection with no Gate run)
+	// is not comparable with anything and is dropped.
+	record := func(tree, ticket string, passed bool) {
+		if tree == "" {
+			return
+		}
+		v := verdicts[tree]
+		if v == nil {
+			v = &gateVerdicts{tickets: map[string]bool{}}
+			verdicts[tree] = v
+		}
+		if passed {
+			v.passed = true
+		} else {
+			v.failed = true
+		}
+		v.tickets[ticket] = true
+	}
 	for _, e := range events {
 		switch e.Type {
 		case api.TicketCreated:
@@ -183,6 +275,7 @@ func Classify(events []api.Event) Report {
 			var p api.VerificationPassedPayload
 			if e.DecodePayload(&p) == nil {
 				verified[p.TicketID] = true
+				record(p.Tree, p.TicketID, true)
 			}
 		case api.VerificationFailed:
 			var p api.VerificationFailedPayload
@@ -190,6 +283,9 @@ func Classify(events []api.Event) Report {
 				verifFailed[p.TicketID]++
 				retryEvents++
 				delete(running, p.TicketID)
+				if isGateRejection(p.Reason) {
+					record(p.Tree, p.TicketID, false)
+				}
 			}
 		case api.ProposalSubmitted:
 			delete(running, e.TicketID()) // work submitted; no longer in-flight
@@ -215,6 +311,9 @@ func Classify(events []api.Event) Report {
 			if e.DecodePayload(&p) == nil {
 				failReason[p.TicketID] = p.Reason
 				delete(running, p.TicketID)
+				if isGateRejection(p.Reason) {
+					record(p.Tree, p.TicketID, false)
+				}
 			}
 		case api.WorkerRestarted, api.TicketDecomposed:
 			delete(running, e.TicketID()) // attempt ended; no longer in-flight
@@ -287,6 +386,9 @@ func Classify(events []api.Event) Report {
 		}
 	}
 
+	// Flaky Gate: the same content drew both verdicts (see flakyGate).
+	flaky := flakyGate(verdicts)
+
 	counts := map[Mode]int{
 		StepRepetition:        len(stepRep),
 		PrematureTermination:  len(premature),
@@ -299,6 +401,7 @@ func Classify(events []api.Event) Report {
 		RetryLivelock:         len(livelock),
 		VerificationBlindSpot: len(blindSpot),
 		StaleSpecDrift:        len(driftSet),
+		FlakyGate:             len(flaky),
 	}
 	tickets := map[Mode][]string{
 		StepRepetition:        slices.Collect(maps.Keys(stepRep)),
@@ -312,6 +415,7 @@ func Classify(events []api.Event) Report {
 		RetryLivelock:         livelock,
 		VerificationBlindSpot: blindSpot,
 		StaleSpecDrift:        slices.Collect(maps.Keys(driftSet)),
+		FlakyGate:             flaky,
 	}
 
 	out := Report{Findings: make([]Finding, 0, len(modeOrder))}
