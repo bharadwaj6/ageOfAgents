@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -28,7 +29,7 @@ func TestParseClaudeOutputReadsRealUsage(t *testing.T) {
 	  "modelUsage": {"claude-opus-5": {"inputTokens": 2, "outputTokens": 4}}
 	}`
 
-	text, tokens, model, cost := parseCLIOutput(envelope)
+	text, tokens, model, cost := parseCLIOutput(envelope, "")
 	if text != "done: added the tests" {
 		t.Errorf("text = %q, want the agent's prose from `result`", text)
 	}
@@ -50,7 +51,7 @@ func TestParseClaudeOutputPicksBusiestModel(t *testing.T) {
 	const envelope = `{"result":"x","usage":{"input_tokens":1},
 	  "modelUsage":{"small":{"inputTokens":1,"outputTokens":1},
 	                "big":{"inputTokens":900,"outputTokens":100}}}`
-	if _, _, model, _ := parseCLIOutput(envelope); model != "big" {
+	if _, _, model, _ := parseCLIOutput(envelope, ""); model != "big" {
 		t.Errorf("model = %q, want the model that did the most work", model)
 	}
 }
@@ -59,14 +60,14 @@ func TestParseClaudeOutputPicksBusiestModel(t *testing.T) {
 // changed CLI still produces a usable Result.
 func TestParseClaudeOutputFallsBackToProse(t *testing.T) {
 	const prose = "I edited the file.\n```aoa:usage\n{\"tokens\": 42, \"model\": \"m\"}\n```\n"
-	text, tokens, model, _ := parseCLIOutput(prose)
+	text, tokens, model, _ := parseCLIOutput(prose, "")
 	if text != prose {
 		t.Errorf("non-JSON output should pass through verbatim, got %q", text)
 	}
 	if tokens != 42 || model != "m" {
 		t.Errorf("fence fallback = (%d, %q), want (42, \"m\")", tokens, model)
 	}
-	if _, tk, _, _ := parseCLIOutput("just prose"); tk != 0 {
+	if _, tk, _, _ := parseCLIOutput("just prose", ""); tk != 0 {
 		t.Errorf("unknown usage = %d, want 0 (never invented)", tk)
 	}
 }
@@ -76,15 +77,15 @@ func TestParseClaudeOutputFindsSubtasksInsideEnvelope(t *testing.T) {
 	env := `{"result":"splitting this up\n` + "```aoa:subtasks\\n" +
 		`[{\"local_id\":\"a\",\"title\":\"first\",\"depends_on\":[]}]` + "\\n```" +
 		`\n","usage":{"input_tokens":1},"modelUsage":{"m":{"inputTokens":1}}}`
-	text, _, _, _ := parseCLIOutput(env)
+	text, _, _, _ := parseCLIOutput(env, "")
 	subs := parseSubtasks(text)
 	if len(subs) != 1 || subs[0].Title != "first" {
 		t.Fatalf("subtasks = %+v, want one titled \"first\"", subs)
 	}
 }
 
-// Shape captured from `codex exec --json` (v0.139.0), interleaved with a stderr
-// line: defaultRunner uses CombinedOutput, so the scan has to survive one.
+// Shape captured from `codex exec --json` (v0.139.0), interleaved with a stray
+// non-JSON line, which the scan has to survive.
 func TestParseCLIOutputReadsCodexJSONL(t *testing.T) {
 	const stream = `{"type":"thread.started","thread_id":"t_01"}
 [2026-08-24T10:00:00] warning: something on stderr
@@ -92,7 +93,7 @@ func TestParseCLIOutputReadsCodexJSONL(t *testing.T) {
 {"type":"item.completed","item":{"type":"agent_message","text":"added the tests"}}
 {"type":"turn.completed","usage":{"input_tokens":20000,"cached_input_tokens":18000,"output_tokens":500,"reasoning_output_tokens":400}}`
 
-	text, tokens, model, _ := parseCLIOutput(stream)
+	text, tokens, model, _ := parseCLIOutput(stream, "")
 	if text != "added the tests" {
 		t.Errorf("text = %q, want only the agent_message prose", text)
 	}
@@ -113,7 +114,7 @@ func TestParseCLIOutputReadsCursorEnvelope(t *testing.T) {
 	const envelope = `{"type":"result","subtype":"success","is_error":false,
 	  "duration_ms":42000,"result":"refactored the parser","session_id":"s_1"}`
 
-	text, tokens, _, _ := parseCLIOutput(envelope)
+	text, tokens, _, _ := parseCLIOutput(envelope, "")
 	if text != "refactored the parser" {
 		t.Errorf("text = %q, want the `result` field", text)
 	}
@@ -128,7 +129,7 @@ func TestParseCLIOutputReadsCursorEnvelope(t *testing.T) {
 func TestParseCLIOutputReadsGeminiEnvelope(t *testing.T) {
 	const envelope = `{"session_id":"s_1","response":"updated the docs","stats":{}}`
 
-	text, tokens, _, _ := parseCLIOutput(envelope)
+	text, tokens, _, _ := parseCLIOutput(envelope, "")
 	if text != "updated the docs" {
 		t.Errorf("text = %q, want the `response` field", text)
 	}
@@ -142,9 +143,72 @@ func TestParseCLIOutputReadsGeminiEnvelope(t *testing.T) {
 func TestParseCLIOutputFallsBackToTheUsageFence(t *testing.T) {
 	out := "did the thing\n\n```" + usageFence + "\n{\"tokens\": 4321, \"model\": \"mycoder-1\"}\n```\n"
 
-	_, tokens, model, _ := parseCLIOutput(out)
+	_, tokens, model, _ := parseCLIOutput(out, "")
 	if tokens != 4321 || model != "mycoder-1" {
 		t.Errorf("fence not honoured: tokens=%d model=%q", tokens, model)
+	}
+}
+
+// A harness that prints its envelope on stdout and anything at all on stderr
+// must still be charged what the envelope reports. Shape captured from agy
+// (Antigravity CLI 1.2.8), which warned on stderr and was charged 0 tokens.
+func TestCLIRunChargesEnvelopeDespiteStderr(t *testing.T) {
+	const envelope = `{"conversation_id":"x","status":"SUCCESS","response":"","duration_seconds":3,"num_turns":1,` +
+		`"usage":{"input_tokens":18457,"output_tokens":280,"thinking_tokens":208,"cache_read_tokens":0,"total_tokens":18737},` +
+		`"denied_actions":[{"action":"command","display_name":"RunCommand"}]}`
+	const warning = "jetski: no output produced — a tool required the \"command\" permission\n"
+	exit := errors.New("exit status 1")
+	for _, tc := range []struct {
+		name   string
+		runErr error
+	}{
+		{"success", nil},
+		{"non-zero exit", exit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewCLI("agy", "agy", nil)
+			c.run = func(context.Context, string, string, ...string) (string, string, error) {
+				return envelope + "\n", warning, tc.runErr
+			}
+			res, err := c.Run(context.Background(), Task{Title: "t"})
+			if !errors.Is(err, tc.runErr) {
+				t.Fatalf("err = %v, want %v", err, tc.runErr)
+			}
+			if res.Tokens != 18737 {
+				t.Errorf("tokens = %d, want 18737 from the stdout envelope", res.Tokens)
+			}
+			if tc.runErr != nil && !strings.Contains(err.Error(), "jetski: no output produced") {
+				t.Errorf("err = %q, want it to carry the stderr warning", err)
+			}
+		})
+	}
+}
+
+// defaultRunner must hand back stdout and stderr apart: merging them is what
+// made one stderr line invalidate the envelope.
+func TestDefaultRunnerSeparatesStderr(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh on PATH")
+	}
+	stdout, stderr, err := defaultRunner(context.Background(), t.TempDir(), "sh", "-c",
+		`echo '{"result":"ok","usage":{"total_tokens":7}}'; echo warning >&2`)
+	if err != nil {
+		t.Fatalf("defaultRunner: %v", err)
+	}
+	if _, tokens, _, _ := parseCLIOutput(stdout, stderr); tokens != 7 {
+		t.Errorf("tokens = %d, want 7 (stdout %q, stderr %q)", tokens, stdout, stderr)
+	}
+	if strings.TrimSpace(stderr) != "warning" {
+		t.Errorf("stderr = %q, want the warning alone", stderr)
+	}
+}
+
+// The prose tier still sees stderr, after stdout, so nothing a harness said is
+// lost from the trace.
+func TestParseCLIOutputProseIncludesStderr(t *testing.T) {
+	text, _, _, _ := parseCLIOutput("did it", "warn")
+	if text != "did it\nwarn" {
+		t.Errorf("text = %q, want stdout then stderr", text)
 	}
 }
 
@@ -172,7 +236,7 @@ func TestCLIRunReportsTheHarnessesSpend(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := NewCLI("claudecode", "claude", nil)
-			c.run = func(context.Context, string, string, ...string) (string, error) { return tt.out, tt.runErr }
+			c.run = func(context.Context, string, string, ...string) (string, string, error) { return tt.out, "", tt.runErr }
 			res, err := c.Run(context.Background(), Task{TicketID: "t1", Title: "x", Worktree: "/wt"})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
@@ -202,7 +266,7 @@ func TestCLIRunFailureCarriesHarnessMessage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := NewCLI("grok", "grok", nil)
-			c.run = func(context.Context, string, string, ...string) (string, error) { return tc.out, exit }
+			c.run = func(context.Context, string, string, ...string) (string, string, error) { return tc.out, "", exit }
 			_, err := c.Run(context.Background(), Task{Title: "t"})
 			if err == nil || !errors.Is(err, exit) {
 				t.Fatalf("err = %v, want it to wrap the exit error", err)
