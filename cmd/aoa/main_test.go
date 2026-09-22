@@ -394,3 +394,55 @@ func TestRunExitsZeroWhenOnlyOlderRunsFailed(t *testing.T) {
 		t.Errorf("aoa status must still show the older failure:\n%s", out)
 	}
 }
+
+func TestMissingConventionsFileFailsRunAndDoctor(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	if err := cmdInit([]string{"--path", tmp, "--repo", "./demo"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	missing := filepath.Join(tmp, "CONVENTIONS-MISSING.md")
+	cfg := "repo = \"./demo\"\nbackend = \"mock\"\nconventions_file = \"CONVENTIONS-MISSING.md\"\nverify = [[\"true\"]]\n"
+	if err := os.WriteFile(filepath.Join(tmp, "aoa.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// 1. aoa run fails before dispatching anything, with an error that names the resolved path.
+	err := cmdRun([]string{"--path", tmp})
+	if err == nil {
+		t.Fatal("aoa run must fail when conventions_file cannot be read")
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Errorf("aoa run error must name resolved path %q, got: %v", missing, err)
+	}
+
+	// 2. aoa doctor reports it as a failed check.
+	checks := runDoctor(tmp)
+	c := find(t, checks, "conventions")
+	if c.ok {
+		t.Fatal("aoa doctor must fail when conventions_file cannot be read")
+	}
+	if !strings.Contains(c.detail, missing) {
+		t.Errorf("doctor detail must name resolved path %q, got: %q", missing, c.detail)
+	}
+	if c.fix == "" {
+		t.Error("doctor failure must carry a fix line")
+	}
+
+	// 3. An unset conventions_file stays fine.
+	cfgUnset := "repo = \"./demo\"\nbackend = \"mock\"\nverify = [[\"true\"]]\n"
+	if err := os.WriteFile(filepath.Join(tmp, "aoa.toml"), []byte(cfgUnset), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	checksUnset := runDoctor(tmp)
+	cUnset := find(t, checksUnset, "conventions")
+	if !cUnset.ok {
+		t.Errorf("unset conventions_file must pass doctor, got: %q", cUnset.detail)
+	}
+	if err := cmdRun([]string{"--path", tmp}); err != nil {
+		t.Errorf("unset conventions_file must not fail run, got: %v", err)
+	}
+}

@@ -47,9 +47,9 @@ Scaffold a new workspace, or adopt a repo you already have.
 ### `aoa doctor`
 
 Check that a workspace can actually run, before a run proves it can't. Verifies git, the workspace,
-`aoa.toml`, the repo, the configured backend **and every fallback**, each Gate command's binary, docker
-when `sandbox = "docker"`, what the agent is confined to, and that the Event Log replays. Every failure
-prints the one action that fixes it. **Exits non-zero**, so CI can gate on it.
+`aoa.toml`, the repo, `conventions_file` when set, the configured backend **and every fallback**, each
+Gate command's binary, docker when `sandbox = "docker"`, what the agent is confined to, and that the
+Event Log replays. Every failure prints the one action that fixes it. **Exits non-zero**, so CI can gate on it.
 
 | Flag | Default | |
 |---|---|---|
