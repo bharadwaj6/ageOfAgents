@@ -187,7 +187,7 @@ def main():
         help=(
             "Image template for the --gate=repo sandbox; '{instance}' is replaced "
             "with the harness-escaped instance id. Defaults to the published "
-            "image (%s), which must be pulled first." % DEFAULT_IMAGE_TEMPLATE
+            f"image ({DEFAULT_IMAGE_TEMPLATE}), which must be pulled first."
         ),
     )
     ap.add_argument(
@@ -210,7 +210,7 @@ def main():
     if a.gate is None:
         a.gate = "none" if a.inference_mode else "f2p"
     elif a.inference_mode and a.gate != "none":
-        ap.error("--inference-mode conflicts with --gate=%s" % a.gate)
+        ap.error(f"--inference-mode conflicts with --gate={a.gate}")
 
     rows = load(a.instances)
     if a.limit:
