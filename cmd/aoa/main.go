@@ -1774,9 +1774,14 @@ func warnInertGovernors(cfg config.Config, w io.Writer) {
 	// A configured plugin shadows any preset. A cli block that overrides a
 	// usage-reporting preset while still running its binary emits the same
 	// output envelope, so the parser reads the same counts and the governors
-	// are live; any other plugin reports nothing aoa can bill against.
+	// are live. A non-preset cli block may report usage if its output has a
+	// recognized envelope or fence, but aoa cannot know until a run.
 	if bCfg, isPlugin := cfg.Backends[name]; isPlugin {
-		if bCfg.Type == "cli" && agent.CLIOverrideReportsUsage(name, bCfg.Bin) {
+		if bCfg.Type == "cli" {
+			if agent.CLIOverrideReportsUsage(name, bCfg.Bin) {
+				return
+			}
+			fmt.Fprintf(w, "aoa: backend %q is a BYO harness; %s.\n", name, byoCLIUsageDetail)
 			return
 		}
 	} else {

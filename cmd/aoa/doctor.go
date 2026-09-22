@@ -222,6 +222,9 @@ func checkBackend(cfg config.Config) []check {
 	return out
 }
 
+// byoCLIUsageDetail explains how a BYO CLI harness's usage is read and verified.
+const byoCLIUsageDetail = "usage is read from its output if it prints a JSON envelope aoa recognises or an aoa:usage fence; aoa status after a first run shows whether it was charged"
+
 func checkOneBackend(name string, cfg config.Config) check {
 	label := "backend:" + name
 
@@ -249,7 +252,7 @@ func checkOneBackend(name string, cfg config.Config) check {
 				if agent.CLIOverrideReportsUsage(name, bCfg.Bin) {
 					c.detail += fmt.Sprintf(" (overrides the %s preset, same binary; reports token usage)", name)
 				} else {
-					c.detail += " (BYO harness; reports no token usage unless it emits an aoa:usage fence)"
+					c.detail += " (BYO harness; " + byoCLIUsageDetail + ")"
 				}
 			}
 			return c
