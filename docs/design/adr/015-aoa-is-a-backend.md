@@ -56,7 +56,7 @@ whether that work lands.**
    | `aoa status --json` | goals with origin, outcome, tickets and cost | A pure projection. The text `status` renders the same view. |
    | `aoa events --json --since N [--follow]` | ledger lines, byte for byte | A resumable cursor that never emits a partial line. |
    | `aoa approve` / `reject` / `amend` / `cancel` with `--json` | `{schema, …, seq}` | The check and the append are atomic under the ledger lock. |
-   | `aoa run` exit codes | `0` ok · `1` failed · `2` usage · `75` busy | Exactly one Scheduler per workspace. |
+   | `aoa run` exit codes | `0` ok · `1` failed · `2` usage · `75` busy | Exactly one Scheduler per workspace **and per repository** ([#131](https://github.com/bharadwaj6/ageOfAgents/issues/131)); `1` reports what failed during *that run*, not the workspace's history ([#156](https://github.com/bharadwaj6/ageOfAgents/issues/156)). |
 
    Result types live in `pkg/api`, the only importable package, under a `schema` version that only
    ever grows by addition.
