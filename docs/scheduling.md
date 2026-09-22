@@ -19,6 +19,12 @@ run holding the lock looks at the log once more after letting go and reconciles 
 exits, so there is never a stale lock to clean up. Like the Event Log's own lock, it assumes a local
 filesystem, not NFS.
 
+A run locks the repository it reconciles the same way (`<repo>/.git/aoa.lock`), because two workspaces
+can adopt one repository and would otherwise merge into the same working tree with neither merge queue
+seeing the other. A run refused there also exits `75`, but its goals are *not* picked up by the holder,
+which replays a different Event Log — so schedule that workspace to run again rather than treating the
+`75` as done.
+
 Those two properties are the whole scheduling story: `aoa` needs no daemon, no supervisor, and no leader
 election. Point any ordinary scheduler at it.
 

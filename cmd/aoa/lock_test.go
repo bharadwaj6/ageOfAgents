@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -125,6 +126,139 @@ func TestRunRefusesWhileAnotherSchedulerHoldsTheWorkspace(t *testing.T) {
 				t.Errorf("a refused run reconciled anyway: %d TicketCreated on the log", n)
 			}
 		})
+	}
+}
+
+// adoptSameRepo scaffolds a second workspace that adopts the repository ws
+// already reconciles, as `aoa init --adopt` lets anyone do.
+func adoptSameRepo(t *testing.T, root string) (string, workspace) {
+	t.Helper()
+	tmp := t.TempDir()
+	if err := cmdInit([]string{"--path", tmp, "--adopt", filepath.Join(root, "demo")}); err != nil {
+		t.Fatalf("init adopting the same repo: %v", err)
+	}
+	ws, err := workspaceAt(tmp)
+	if err != nil {
+		t.Fatalf("workspaceAt: %v", err)
+	}
+	return tmp, ws
+}
+
+// The Scheduler lock lived in the workspace, and two workspaces may adopt one
+// repository — so both were granted a Scheduler over the same working tree,
+// each merge queue blind to the other's merges and rollbacks (#131). The lock
+// has to cover the repository too, or ADR 002's linearizable branch does not
+// survive the second workspace.
+func TestSchedulerLockCoversTheRepositoryNotJustTheWorkspace(t *testing.T) {
+	root, ws := newMockWorkspace(t)
+	_, other := adoptSameRepo(t, root)
+
+	release, err := acquireSchedulerLock(ws)
+	if err != nil {
+		t.Fatalf("acquireSchedulerLock: %v", err)
+	}
+	if _, err := acquireSchedulerLock(other); !errors.Is(err, errSchedulerBusy) {
+		t.Fatalf("a second workspace adopting the same repository got a Scheduler: err = %v", err)
+	} else if strings.Contains(err.Error(), "picked up") {
+		// The holder replays its own Event Log; it never sees this workspace's
+		// goals, so telling a front door they are in hand would be a lie.
+		t.Errorf("refusal claims the holder picks this workspace's work up: %q", err)
+	}
+
+	// Not a global lock: a workspace with a repository of its own is unaffected.
+	_, elsewhere := newMockWorkspace(t)
+	releaseElsewhere, err := acquireSchedulerLock(elsewhere)
+	if err != nil {
+		t.Fatalf("a workspace on its own repository was refused: %v", err)
+	}
+	if err := releaseElsewhere(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+
+	// And the repository is handed over once its holder is done.
+	if err := release(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	releaseOther, err := acquireSchedulerLock(other)
+	if err != nil {
+		t.Fatalf("the repository stayed locked after its holder released it: %v", err)
+	}
+	if err := releaseOther(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+}
+
+// End to end, as the collision actually arrives: two workspaces adopting one
+// repository, both told to run. Before the repository lock this lost work —
+// one workspace's merge queue rolled a verification failure back over the
+// other's merge, leaving a `Merged` event on the log for a commit no longer on
+// the branch. Whichever run is refused must be refused with the busy status,
+// and its goal must still land when it runs again.
+func TestConcurrentRunsOnOneRepositoryLoseNoMergedWork(t *testing.T) {
+	root, ws := newMockWorkspace(t)
+	other, otherWS := adoptSameRepo(t, root)
+	repo := filepath.Join(root, "demo")
+	if err := cmdGoal([]string{"--path", root, "add", "a", "greeting"}); err != nil {
+		t.Fatalf("goal: %v", err)
+	}
+	if err := cmdGoal([]string{"--path", other, "add", "a", "farewell"}); err != nil {
+		t.Fatalf("goal: %v", err)
+	}
+
+	paths := []string{root, other}
+	errs := make([]error, len(paths))
+	var wg sync.WaitGroup
+	for i, path := range paths {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = cmdRun([]string{"--path", path})
+		}()
+	}
+	wg.Wait()
+
+	// A run that lost the repository says so with exit 75 and reconciles
+	// nothing; running it again, now that the repository is free, lands it.
+	for i, err := range errs {
+		if err == nil {
+			continue
+		}
+		var ee *exitError
+		if !errors.As(err, &ee) || ee.code != exitSchedulerBusy {
+			t.Fatalf("run %d: %v, want nil or the busy exit status", i, err)
+		}
+		if err := cmdRun([]string{"--path", paths[i]}); err != nil {
+			t.Fatalf("re-run %d after the repository was free: %v", i, err)
+		}
+	}
+
+	onBranch := map[string]bool{}
+	for _, sha := range strings.Fields(runGit(t, repo, "log", "--format=%H", "HEAD")) {
+		onBranch[sha] = true
+	}
+	for _, w := range []workspace{ws, otherWS} {
+		events, s := foldWorkspace(t, w)
+		if !s.Settled() {
+			t.Errorf("%s: work not settled", w.root)
+		}
+		merged := 0
+		for _, e := range events {
+			if e.Type != api.Merged {
+				continue
+			}
+			var p api.MergedPayload
+			if err := e.DecodePayload(&p); err != nil {
+				t.Fatalf("decode Merged: %v", err)
+			}
+			merged++
+			if !onBranch[p.Commit] {
+				t.Errorf("%s: the log records %s merged as %s, but that commit is not on the branch",
+					w.root, p.TicketID, p.Commit)
+			}
+		}
+		if merged == 0 {
+			t.Errorf("%s: nothing merged", w.root)
+		}
 	}
 }
 

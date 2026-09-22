@@ -243,3 +243,33 @@ func TestDeliveryGitPrimitives(t *testing.T) {
 	require.ErrorContains(t, err, "rejected")
 	require.Equal(t, foreign, revParse(t, origin, "refs/heads/aoa/g2"))
 }
+
+// GitDir names the working tree a Scheduler writes, which is what the
+// one-Scheduler-per-repository lock is taken on (#131): a repository reached by
+// two different paths — a symlink, a relative spelling — must resolve to one
+// place, and a linked worktree must not resolve to its parent's.
+func TestGitDirIdentifiesTheWorkingTree(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, err := InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
+
+	dir, err := repo.GitDir(ctx)
+	require.NoError(t, err)
+	real, err := filepath.EvalSymlinks(filepath.Join(repo.Dir, ".git"))
+	require.NoError(t, err)
+	require.Equal(t, real, dir)
+
+	link := filepath.Join(base, "link")
+	require.NoError(t, os.Symlink(repo.Dir, link))
+	viaLink, err := OpenRepo(link).GitDir(ctx)
+	require.NoError(t, err)
+	require.Equal(t, dir, viaLink, "the same repository reached through a symlink")
+
+	wt, err := repo.AddWorktree(ctx, filepath.Join(base, "wt"), "aoa/t1")
+	require.NoError(t, err)
+	linked, err := OpenRepo(wt.Path).GitDir(ctx)
+	require.NoError(t, err)
+	require.NotEqual(t, dir, linked, "a linked worktree is a working tree of its own")
+}
