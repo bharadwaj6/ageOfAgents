@@ -469,6 +469,35 @@ func TestFrontDoorCancelsAWithdrawnIssue(t *testing.T) {
 	}
 }
 
+// A cancel is reported when the Goal is Complete, not when it is asked for: a
+// Goal cancelled with a proposal still parked is Cancelling until the next
+// aoa run fails that proposal, and only then does "nothing more will land" hold.
+func TestFrontDoorReportsACancelOnceComplete(t *testing.T) {
+	f := newFrontDoor(t, true, trustedIssue())
+	cfg, err := config.Load(f.ws.configPath)
+	require.NoError(t, err)
+	cfg.RequireApproval = true
+	require.NoError(t, cfg.Save(f.ws.configPath))
+
+	f.run("cycle")
+	id, outcome := f.goal("gh:" + fdRepo + "#7/0")
+	require.Equal(t, api.OutcomeAwaitingApproval, outcome)
+	require.Len(t, f.ourComments(7), 1, "the approval request")
+
+	f.edit(7, func(is *ghIssue) { is.State = "CLOSED" })
+	f.run("intake")
+	_, outcome = f.goal("gh:" + fdRepo + "#7/0")
+	require.Equal(t, api.OutcomeCancelled, outcome)
+	f.run("report")
+	require.Len(t, f.ourComments(7), 1, "a Cancelling Goal is not reported yet")
+
+	f.run("cycle") // the run fails the parked proposal
+	f.run("report")
+	comments := f.ourComments(7)
+	require.Len(t, comments, 2)
+	require.Contains(t, comments[1], marker(id, "cancelled"))
+}
+
 // A Goal that fails the Gate is reported once, without the workspace's paths,
 // and its label removed. Adding the label again is a retry: a new Goal under
 // the next attempt's key.

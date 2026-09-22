@@ -56,8 +56,11 @@ skip() {
 # jq helpers for every filter below. Data always reaches jq through --arg.
 # shellcheck disable=SC2016 # $names in here are jq's, not the shell's
 JQ_DEFS='
-def live: .outcome == "queued" or .outcome == "running" or .outcome == "awaiting_approval";
-def terminal: .outcome == "delivered" or .outcome == "merged" or .outcome == "failed" or .outcome == "cancelled";
+# Whether nothing more happens to a goal without new input, read from its
+# Complete condition (ADR 020) rather than a list of final outcomes. A goal
+# cancelled while an attempt is still finishing is not complete yet.
+def complete: any(.conditions[]?; .type == "Complete" and .status == "True");
+def live: complete | not;
 
 # The number of the issue a goal ref names, when it is an issue of repository $r.
 def issue_of($r):
@@ -175,7 +178,7 @@ withdraw() {
       # It settled after the snapshot was taken; report says how.
       log "#$n: could not cancel goal $goal"
     fi
-  done 3< <(jq -r --arg r "$REPO" "$JQ_DEFS"'.goals[] | select(.source == "github" and live)
+  done 3< <(jq -r --arg r "$REPO" "$JQ_DEFS"'.goals[] | select(.source == "github" and live and .outcome != "cancelled")
     | issue_of($r) as $n | select($n != null) | [.id, $n, .ref] | @tsv' <<<"$status")
 }
 
@@ -269,7 +272,7 @@ report() {
       continue
     fi
     log "#$n: reported goal $goal: $outcome"
-  done 3< <(jq -r --arg r "$REPO" "$JQ_DEFS"'.goals[] | select(.source == "github" and (terminal or .outcome == "awaiting_approval"))
+  done 3< <(jq -r --arg r "$REPO" "$JQ_DEFS"'.goals[] | select(.source == "github" and (complete or .outcome == "awaiting_approval"))
     | issue_of($r) as $n | select($n != null) | [.id, $n, .outcome] | @tsv' <<<"$status")
 }
 

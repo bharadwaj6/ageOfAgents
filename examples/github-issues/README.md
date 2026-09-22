@@ -90,6 +90,9 @@ untrusted input, bounded by the Gate, the sandbox and the budgets. Read
   comments. `intake` counts its own final markers to choose the attempt number in the key. Markers in
   anyone else's comments are ignored, so nobody can fake an attempt or silence a report. Failure reasons
   are quoted with absolute paths removed, and cut to 300 characters.
+- **A Goal is final when its `Complete` condition is `True`.** The script reads that condition from
+  `aoa status --json` rather than keeping its own list of final outcomes (see
+  [Is it done?](../../docs/backend.md#is-it-done)). Only an approval request is reported before then.
 - **A final outcome takes the label off before it comments.** To try again, a trusted person adds the
   label back, and the next attempt is a new Goal under a new key. If the comment fails after the label
   came off, the next `report` posts it.
@@ -99,8 +102,10 @@ untrusted input, bounded by the Gate, the sandbox and the budgets. Read
 
 ## Stopping work
 
-- **Remove the label or close the issue.** The next `intake` cancels the Goal, and the next `report`
-  says so on the issue. A cancelled Goal is never pushed. A merge that is already running when the cancel
+- **Remove the label or close the issue.** The next `intake` cancels the Goal, and the first `report`
+  after it is `Complete` says so on the issue. A Goal cancelled while an attempt is still finishing, or
+  with a change awaiting approval, stays `Cancelling` until the next `aoa run` settles it, so the comment
+  can wait a cycle. A cancelled Goal is never pushed. A merge that is already running when the cancel
   arrives can still finish on the Goal branch.
 - **Close the pull request.** aoa stops once the pull request is open, so review and merging are yours.
 - **Stop the schedule.** Nothing runs between cycles.
