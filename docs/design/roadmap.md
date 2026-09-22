@@ -110,7 +110,6 @@ on the maintainer's Mac on a subscription backend, and only in runs the maintain
 
 **Later increments** each need a design decision, and most need an ADR, before any code:
 
-- reporting back to the origin ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129));
 - a team HTTP transport for the same verbs, with auth and several workspaces
   ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)), plus a cross-run budget
   ([#77](https://github.com/bharadwaj6/ageOfAgents/issues/77));
@@ -138,6 +137,7 @@ decision is falsifiable rather than permanent:
 | Speculative / batched merge with an adaptive window | `merge_queue_wait_mean` climbs while queue depth stays high — i.e. serialization is demonstrably the bottleneck |
 | Best-of-N generation with the test suite as selector | Per-task cost data shows the extra attempts are cheaper than the retries they replace |
 | SPRT early-stopping for live evals | Eval runs get large enough that fixed-N sampling is the dominant cost |
+| Outbound notifications from `aoa` itself ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129)) | The team transport ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)) lands: a long-running server is somewhere a delivery cursor can live without a side table. Until then [ADR 019](adr/019-reporting-back-belongs-to-the-front-door.md) leaves reporting back to the front door, over `events --json --since` and `status --json` |
 
 Autonomous work discovery has left this table. It is no longer deferred: [ADR 015](adr/015-aoa-is-a-backend.md)
 assigns discovery to the front door, so `aoa` will not build it.

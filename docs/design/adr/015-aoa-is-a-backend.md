@@ -95,7 +95,8 @@ systems work internally:
 - **The contract becomes a compatibility surface.** Its result types carry a `schema` version, and a
   golden wire-shape test turns a renamed field into a failing test.
 - **Later increments get their own records.** These are delivery by push or PR (ADR 016, #128),
-  reporting back ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129)), a team HTTP transport
+  reporting back (ADR 019 records that it stays the front door's,
+  [#129](https://github.com/bharadwaj6/ageOfAgents/issues/129)), a team HTTP transport
   for the same verbs ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)), and reference
   integrations ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130)).
 - **Tradeoff.** `aoa` alone is not an end-to-end automator. A team wanting board-to-PR automation

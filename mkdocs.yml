@@ -103,6 +103,7 @@ nav:
           - 016 Deliver a Goal as a PR: design/adr/016-deliver-a-goal-as-a-pull-request.md
           - 017 Spend is bounded before it happens: design/adr/017-spend-is-bounded-before-it-happens.md
           - 018 The agent is not confined: design/adr/018-the-agent-is-not-confined.md
+          - 019 Reporting back is the front door's: design/adr/019-reporting-back-belongs-to-the-front-door.md
       - Metrics: design/metrics.md
       - Live evaluation: design/live_eval.md
       - Formal model (TLA+): design/formal/README.md
