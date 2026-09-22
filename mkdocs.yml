@@ -73,6 +73,7 @@ nav:
       - Anthropic: harnesses/anthropic.md
       - DeepSeek & OpenAI-compatible: harnesses/deepseek.md
       - Bring your own CLI: harnesses/byo-cli.md
+      - Antigravity CLI (agy): harnesses/agy.md
   - Guide:
       - CLI reference: cli.md
       - Driving aoa from another system: backend.md
