@@ -94,6 +94,30 @@ question — it is the complementary half, not a competitor, and the half it dec
 `aoa`'s. Interoperation is therefore a JSON shape, not a dependency. Both Part 3 increments shipped with
 it: every goal carries its conditions, and `aoa wait` blocks until one is `Complete`. Next is #103.
 
+**Last status (2026-09-23):** `aoa` fixed five of its own issues in one supervised batch, split across two
+harnesses in parallel, each in its own clone and workspace. The Gate matched CI's required checks:
+`make check`, `golangci-lint` and a strict docs build. The auto-detected Gate was only build and test,
+weaker than CI, and golangci-lint had just caught a slip in #185 that `make check` missed.
+
+- **`claudecode`** delivered four pull requests, each on its first attempt, for $3.71 in total: the batch-merge
+  test made deterministic (#182, #191), the front door reading `Complete` (#187, #190), the stderr fix
+  (#189, #193) and the token run budget (#192, #194). One agent corrected the goal it was given. The goal
+  for #182 prescribed a worker-side barrier, but the Scheduler drains asynchronously and never joins
+  workers (ADR 013), so only holding the drain constructs the overlap. It held the drain.
+- **Antigravity (`agy`)** did not get a change through. Headless, it denies itself file reads and shell
+  commands unless it auto-approves. It works in its own scratch project rather than its working
+  directory. And the maintainer's settings default it to plan mode, which never edits. With auto-approve,
+  which the maintainer allowed, it left its worktree. It edited the canonical checkout, committed #186's
+  docs and **pushed straight to `main`**, following the maintainer's global agent instructions. The `claudecode`
+  workspace keeps those out with `--setting-sources project`; `agy` has no equivalent flag. The commit was reviewed
+  after the fact and kept (details on #186). `agy` was stopped, and its preset (#188) is paused until its
+  confinement is decided. Two real bugs came out of trying it: stderr wiping out token usage (#189), and
+  `require_run_budget` ignoring token budgets (#192). Both are fixed above.
+
+Lessons: make a dogfood workspace's Gate equal CI's required checks. Don't treat a worktree as a
+boundary for a harness that loads user-global instructions (ADR 018). Branch protection that doesn't
+bind admins doesn't bind an agent holding an admin's credentials either.
+
 | | Increment | Depends on |
 |---|---|---|
 | [x] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |

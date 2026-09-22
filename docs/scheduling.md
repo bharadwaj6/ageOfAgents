@@ -142,9 +142,9 @@ elsewhere in the workspace does not poison the result. Its exit code maps direct
 | Exit status | Meaning for the job |
 |---|---|
 | `0` | Success. Every task merged past the Gate, or was delivered as a pull request. |
-| `1` | Failure. The goal failed (Gate rejection, run budget exceeded, task error) or was cancelled. |
+| `1` | Failure. The goal failed — the Gate rejected it, a task failed, or its own `max_usd_per_goal` / `max_tokens_per_goal` tripped — or was cancelled. |
 | `2` | Usage error. A flag could not be parsed, or the goal id was not found in the Event Log. |
-| `4` | Timeout. `--timeout` expired before the goal was complete. The output names what it was still waiting on. |
+| `4` | Timeout. `--timeout` expired before the goal was complete. The output names what it was still waiting on. A *run* budget that runs out leaves a goal queued rather than failed, so it ends here, not at `1`. |
 
 ## Interactive: `--interval`
 
