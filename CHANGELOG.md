@@ -16,6 +16,25 @@ All notable changes to this project are documented here. The format follows
   replaying the log. `aoa wait <goal-id>...` returns when each is `Complete`, exiting `0` if they landed,
   `1` if any failed or was cancelled, and `4` on `--timeout`. Additive to the JSON contract; `outcome`
   is unchanged. ([ADR 020](docs/design/adr/020-task-lifecycle-is-a-projection.md))
+- **`aoa diagnose` detects a flaky Gate.** With `max_attempts > 1`, a nondeterministic Gate can pass on a
+  lucky run and merge a patch it rejected before. A new `flaky_gate` failure mode flags content that drew
+  both a pass and a failure. It keys on the content, not the task, because a task that fails and then
+  passes is what a healthy retry looks like. To make that possible, Gate verdicts now record the git tree
+  they ran on (additive fields; older logs carry none). ([#104](https://github.com/bharadwaj6/ageOfAgents/issues/104))
+- **`aoa doctor` says what the agent can reach.** A `confinement` check names the backend and warns that
+  it runs as you, with your files, credentials and network. The worktree is not a boundary, and
+  `sandbox = "docker"` covers the Gate only. It warns rather than fails, because this is the documented
+  design. ([ADR 018](docs/design/adr/018-the-agent-is-not-confined.md), [#101](https://github.com/bharadwaj6/ageOfAgents/issues/101))
+
+### Changed
+
+- **`require_run_budget` accepts a token budget.** `aoa run --max-tokens N` now satisfies it, as
+  `--max-usd` does. A backend that reports tokens but no cost can only be bounded that way. `--max-goals`
+  alone still does not count, because it limits how many Goals start, not what they spend. ([#192](https://github.com/bharadwaj6/ageOfAgents/issues/192))
+- **The reference GitHub front door reads finality from the `Complete` condition** instead of its own
+  list of final outcomes. A Goal cancelled while an attempt is still finishing is now reported once it is
+  `Complete`, when nothing more will land, rather than the moment the cancel is asked for.
+  ([#187](https://github.com/bharadwaj6/ageOfAgents/issues/187))
 
 ### Fixed
 
@@ -25,6 +44,24 @@ All notable changes to this project are documented here. The format follows
   Actions alerting `docs/scheduling.md` recommends it for. A run now counts only what failed after it
   started; `aoa status` still reports every failure the workspace has ever had.
   ([#156](https://github.com/bharadwaj6/ageOfAgents/issues/156))
+- **A harness that wrote anything to stderr was charged nothing.** Its stdout and stderr were read as
+  one buffer, so a single warning line made its JSON envelope unparseable. The attempt was charged
+  0 tokens and $0, and token and cost budgets were silently inert for it. The envelope is now read from
+  stdout alone. ([#189](https://github.com/bharadwaj6/ageOfAgents/issues/189))
+- **A run budget could be overshot by more than ADR 017 allows.** A pass read spend before it counted
+  free worker slots, so it could see the slot a finished attempt freed without the charge that freed it,
+  and start work the budget had already paid for. This was seen in CI: $1.60 spent against a $1.00 limit
+  with one worker. Spend is now read where the dispatch decision is made. ([#166](https://github.com/bharadwaj6/ageOfAgents/issues/166))
+- **Two workspaces could run Schedulers over one repository.** A verification failure in one would roll
+  back a merge the other had already recorded as `Merged`, so the Event Log claimed commits that were no
+  longer on the branch. `aoa run` now also locks the repository, and exits `75` when another workspace
+  holds it. That workspace's goals then wait for its own next run. ([#131](https://github.com/bharadwaj6/ageOfAgents/issues/131))
+- **In local mode, a task could start from an unverified merge.** Its worktree was cut from a `HEAD`
+  that was carrying a candidate merge while the Gate was still judging it. Worktrees are now cut from the
+  last Gate-verified commit, as pull-request mode already was. ([#157](https://github.com/bharadwaj6/ageOfAgents/issues/157))
+- **`aoa run` and `aoa doctor` wrongly said a preset override reported no token usage.** A `cli` block
+  that shadows a preset and keeps its binary emits the same envelope, so its budgets were live all along.
+  ([#154](https://github.com/bharadwaj6/ageOfAgents/issues/154))
 
 ## [0.5.0] — 2026-09-20
 
