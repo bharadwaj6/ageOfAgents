@@ -118,6 +118,35 @@ Lessons: make a dogfood workspace's Gate equal CI's required checks. Don't treat
 boundary for a harness that loads user-global instructions (ADR 018). Branch protection that doesn't
 bind admins doesn't bind an agent holding an admin's credentials either.
 
+**Last status (2026-09-23, later):** the maintainer set the rules, and the second round ran under them:
+
+- Branch protection on `main` now binds admins.
+- `agy` runs only in its own clone and that clone's worktrees, and only through pull requests.
+- The orchestrator gives the instructions, and they override the user's global ones.
+
+The rules are enforced, not just asked for:
+
+- A wrapper refuses to start `agy` anywhere else.
+- A macOS seatbelt profile denies writes outside the clone and denies `gh`. It was proven with plain
+  commands and with an `agy` probe.
+- Standing instructions arrive through `conventions_file`. Since #196, a missing file is an error rather
+  than silence.
+
+The recipe is on the [agy harness page](../harnesses/agy.md).
+
+Under confinement `agy` delivered three Gate-verified pull requests, and nothing reached `origin` or
+another checkout:
+
+- #199 (for #196)
+- #200 (for #198)
+- #202, its own harness page (for #188)
+
+About half its attempts made no edits at all. Its transcripts show a *waiting trap*: it started
+`make check` in the background "to verify the baseline" and stopped to wait, and in headless mode that
+ends the turn. Telling it to edit first and leave the checks to the Gate fixed the next attempt. #197
+hit the same zero-edit pattern four times and went to `claudecode`, which did it on the first try (#201).
+Across the day, `claudecode` spent $4.09 on five goals, each on its first attempt.
+
 | | Increment | Depends on |
 |---|---|---|
 | [x] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |

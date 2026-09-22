@@ -21,6 +21,9 @@ All notable changes to this project are documented here. The format follows
   both a pass and a failure. It keys on the content, not the task, because a task that fails and then
   passes is what a healthy retry looks like. To make that possible, Gate verdicts now record the git tree
   they ran on (additive fields; older logs carry none). ([#104](https://github.com/bharadwaj6/ageOfAgents/issues/104))
+- **A harness page for Antigravity (`agy`)**, run as a bring-your-own CLI harness under operator-side
+  confinement: the flags that work headless, why it must be confined, a macOS `sandbox-exec` recipe,
+  and the headless waiting trap. It is not a preset. ([#188](https://github.com/bharadwaj6/ageOfAgents/issues/188))
 - **`aoa doctor` says what the agent can reach.** A `confinement` check names the backend and warns that
   it runs as you, with your files, credentials and network. The worktree is not a boundary, and
   `sandbox = "docker"` covers the Gate only. It warns rather than fails, because this is the documented
@@ -28,6 +31,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **An unreadable `conventions_file` is now an error.** It used to be silently dropped, so every agent ran
+  without the workspace's standing instructions and nothing said so. `aoa run` now fails before
+  dispatching and names the path, and `aoa doctor` reports it. An unset `conventions_file` is still fine.
+  ([#196](https://github.com/bharadwaj6/ageOfAgents/issues/196))
+- **The agent prompt names the worktree.** It says "in this working directory (`<path>`) and nowhere
+  else". A harness that keeps its own idea of a workspace was editing somewhere other than the directory
+  it was launched in. ([#197](https://github.com/bharadwaj6/ageOfAgents/issues/197))
 - **`require_run_budget` accepts a token budget.** `aoa run --max-tokens N` now satisfies it, as
   `--max-usd` does. A backend that reports tokens but no cost can only be bounded that way. `--max-goals`
   alone still does not count, because it limits how many Goals start, not what they spend. ([#192](https://github.com/bharadwaj6/ageOfAgents/issues/192))
@@ -38,6 +48,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **`aoa doctor` and `aoa run` no longer claim a bring-your-own CLI harness reports no token usage.**
+  That was a guess from the preset table, and it was wrong for any harness whose output `aoa` can parse.
+  Both now say the same thing: usage is read from the harness's output if it prints an envelope `aoa`
+  recognises or an `aoa:usage` fence, and `aoa status` after the first run shows whether it was charged.
+  ([#198](https://github.com/bharadwaj6/ageOfAgents/issues/198))
 - **`aoa run`'s exit status describes that run, not the workspace's whole history.** It counted every
   failed task on the Event Log, so in a long-lived workspace one old failure exited every later run `1`
   forever — even runs that delivered perfectly — which made the status useless for the cron, launchd and
