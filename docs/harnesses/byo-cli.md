@@ -57,8 +57,9 @@ Its stdout is kept as the attempt's trace in the Event Log. It does not need to 
 
 ## Cost accounting
 
-A BYO CLI reports no tokens, so `max_tokens_per_goal` and `max_usd_per_goal` cannot be enforced. `aoa`
-warns at startup rather than silently reporting `$0`.
+Usage for a BYO CLI is read from its output if it prints a JSON envelope `aoa` recognises or an
+`aoa:usage` fence; `aoa status` after a first run shows whether it was charged. `aoa` warns at startup
+since it cannot know until a run whether counts will be reported.
 
 To opt in, have the agent print a fence anywhere in its output:
 

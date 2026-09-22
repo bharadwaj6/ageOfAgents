@@ -128,13 +128,13 @@ verify  = []
 	}
 }
 
-// doctor made the same wrong claim as the startup warning: a [backends.<name>]
-// block that overrides a preset to correct its flags, but still runs the
-// preset's binary, emits the same output envelope and so still reports token
-// usage. Calling it inert sends the user looking for a governor that is live.
+// An override that still runs the preset's binary emits the same output
+// envelope and so reports token usage. A non-preset CLI backend (or a wrapper)
+// reports usage if it prints a recognized envelope or fence; doctor explains
+// how its usage is read rather than claiming it reports none.
 func TestDoctorTrustsAnOverriddenPresetForUsage(t *testing.T) {
 	dir := t.TempDir()
-	for _, bin := range []string{"claude", "my-claude-wrapper"} {
+	for _, bin := range []string{"claude", "my-claude-wrapper", "agy"} {
 		if err := os.WriteFile(filepath.Join(dir, bin), []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -142,14 +142,15 @@ func TestDoctorTrustsAnOverriddenPresetForUsage(t *testing.T) {
 	t.Setenv("PATH", dir)
 
 	tests := []struct {
-		name      string
-		backend   string
-		bin       string
-		wantInert bool
+		name    string
+		backend string
+		bin     string
+		wantBYO bool
 	}{
 		{name: "override keeps the preset's binary", backend: "claudecode", bin: "claude"},
-		{name: "override runs a wrapper", backend: "claudecode", bin: "my-claude-wrapper", wantInert: true},
-		{name: "byo harness that happens to run claude", backend: "mycoder", bin: "claude", wantInert: true},
+		{name: "override runs a wrapper", backend: "claudecode", bin: "my-claude-wrapper", wantBYO: true},
+		{name: "byo harness that happens to run claude", backend: "mycoder", bin: "claude", wantBYO: true},
+		{name: "byo harness like agy", backend: "agy", bin: "agy", wantBYO: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -161,9 +162,17 @@ func TestDoctorTrustsAnOverriddenPresetForUsage(t *testing.T) {
 			if !c.ok {
 				t.Fatalf("backend should be healthy, got %q", c.detail)
 			}
-			claimsInert := strings.Contains(c.detail, "reports no token usage")
-			if claimsInert != tt.wantInert {
-				t.Errorf("claims no usage = %v, want %v; detail: %q", claimsInert, tt.wantInert, c.detail)
+			claimsBYO := strings.Contains(c.detail, byoCLIUsageDetail)
+			if claimsBYO != tt.wantBYO {
+				t.Errorf("claims byo usage = %v, want %v; detail: %q", claimsBYO, tt.wantBYO, c.detail)
+			}
+			if tt.wantBYO {
+				if strings.Contains(c.detail, "reports no token usage") {
+					t.Errorf("should not claim no token usage; detail: %q", c.detail)
+				}
+				if !strings.Contains(c.detail, "aoa status after a first run shows whether it was charged") {
+					t.Errorf("should advise checking aoa status; detail: %q", c.detail)
+				}
 			}
 		})
 	}

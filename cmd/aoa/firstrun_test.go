@@ -229,6 +229,9 @@ func TestBuildOrchestratorPreflightsPRDelivery(t *testing.T) {
 // claudecode preset to add flags, and was told its ceilings were inert while
 // the same run billed 163k tokens. Usage is read off the harness's output
 // envelope, so an override that still runs the preset's binary still reports.
+// A non-preset CLI backend (or a wrapper) gets the honest warning: usage is
+// read from output if it prints a recognized envelope or fence, and aoa status
+// shows whether it was charged.
 func TestWarnInertGovernorsTrustsAnOverriddenPreset(t *testing.T) {
 	claudecode := func(bin string) map[string]config.BackendConfig {
 		return map[string]config.BackendConfig{"claudecode": {Type: "cli", Bin: bin}}
@@ -239,19 +242,22 @@ func TestWarnInertGovernorsTrustsAnOverriddenPreset(t *testing.T) {
 		backends map[string]config.BackendConfig
 		noLimits bool
 		wantWarn bool
+		wantBYO  bool
 	}{
 		{name: "bare preset that reports", backend: "claudecode"},
 		{name: "override with the preset's bin", backend: "claudecode", backends: claudecode("claude")},
 		{name: "override with an absolute path to it", backend: "claudecode", backends: claudecode("/opt/homebrew/bin/claude")},
-		{name: "override running another binary", backend: "claudecode", backends: claudecode("my-claude-wrapper"), wantWarn: true},
+		{name: "override running another binary", backend: "claudecode", backends: claudecode("my-claude-wrapper"), wantWarn: true, wantBYO: true},
 		{name: "override of a preset that reports nothing", backend: "cursor",
-			backends: map[string]config.BackendConfig{"cursor": {Type: "cli", Bin: "cursor-agent"}}, wantWarn: true},
+			backends: map[string]config.BackendConfig{"cursor": {Type: "cli", Bin: "cursor-agent"}}, wantWarn: true, wantBYO: true},
 		// A leftover bin from an earlier cli block is not a promise: an HTTP
 		// plugin never runs it, so its envelope is not what aoa will parse.
 		{name: "http plugin shadowing the name", backend: "claudecode",
 			backends: map[string]config.BackendConfig{"claudecode": {Type: "openai_compatible", Model: "x", Bin: "claude"}}, wantWarn: true},
 		{name: "byo harness", backend: "mycoder",
-			backends: map[string]config.BackendConfig{"mycoder": {Type: "cli", Bin: "mycoder"}}, wantWarn: true},
+			backends: map[string]config.BackendConfig{"mycoder": {Type: "cli", Bin: "mycoder"}}, wantWarn: true, wantBYO: true},
+		{name: "byo harness like agy", backend: "agy",
+			backends: map[string]config.BackendConfig{"agy": {Type: "cli", Bin: "agy"}}, wantWarn: true, wantBYO: true},
 		{name: "no ceilings, nothing to warn about", backend: "mycoder",
 			backends: map[string]config.BackendConfig{"mycoder": {Type: "cli", Bin: "mycoder"}}, noLimits: true},
 	}
@@ -263,9 +269,21 @@ func TestWarnInertGovernorsTrustsAnOverriddenPreset(t *testing.T) {
 			}
 			var buf strings.Builder
 			warnInertGovernors(cfg, &buf)
-			warned := strings.Contains(buf.String(), "does not report token usage")
+			warned := buf.Len() > 0
 			if warned != tt.wantWarn {
 				t.Errorf("warned = %v, want %v; output: %q", warned, tt.wantWarn, buf.String())
+			}
+			if tt.wantBYO {
+				if !strings.Contains(buf.String(), byoCLIUsageDetail) {
+					t.Errorf("expected BYO usage detail in warning; got %q", buf.String())
+				}
+				if strings.Contains(buf.String(), "does not report token usage") {
+					t.Errorf("should not claim no token usage for BYO CLI backend; got %q", buf.String())
+				}
+			} else if tt.wantWarn {
+				if !strings.Contains(buf.String(), "does not report token usage") {
+					t.Errorf("expected inert governor warning; got %q", buf.String())
+				}
 			}
 		})
 	}
