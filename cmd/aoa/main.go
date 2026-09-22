@@ -628,8 +628,9 @@ func cmdRun(args []string) error {
 		return err
 	}
 	runBudget := state.Budget{USD: *maxUSD, Tokens: *maxTokens, Goals: *maxGoals}
-	if cfg, cerr := config.Load(ws.configPath); cerr == nil && cfg.Budget.RequireRunBudget && runBudget.USD == 0 {
-		return &exitError{code: 2, err: fmt.Errorf("this workspace sets [budget] require_run_budget, so `aoa run` needs --max-usd (nothing runs here unbudgeted)")}
+	// A USD or a token budget bounds spend; --max-goals alone does not (#192).
+	if cfg, cerr := config.Load(ws.configPath); cerr == nil && cfg.Budget.RequireRunBudget && runBudget.USD == 0 && runBudget.Tokens == 0 {
+		return &exitError{code: 2, err: fmt.Errorf("this workspace sets [budget] require_run_budget, so `aoa run` needs --max-usd or --max-tokens (nothing runs here unbudgeted)")}
 	}
 	ctx := context.Background()
 

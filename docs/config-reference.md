@@ -123,10 +123,13 @@ front-door-driven workspace needs. Dollars are counted the same way: the cost th
 usd_per_day        = 10.0   # 0 = no limit
 tokens_per_day     = 0
 goals_per_day      = 3      # a Goal counts when its first task is created
-require_run_budget = true   # `aoa run` refuses to start without --max-usd
+require_run_budget = true   # `aoa run` refuses to start without --max-usd or --max-tokens
 ```
 
 A run's own budget is on the command line: `aoa run --max-usd 3 --max-tokens 0 --max-goals 1`.
+`require_run_budget` is satisfied by either a dollar or a token run budget — a backend that reports
+tokens but no cost is bounded only by `--max-tokens`. `--max-goals` alone does not count: it limits how
+many Goals start, not what they spend.
 
 **When a limit is reached**, the Scheduler starts no new Goal and dispatches no new attempt, and appends
 one `BudgetExhausted`. Attempts already running finish, so a window can end over its limit by at most

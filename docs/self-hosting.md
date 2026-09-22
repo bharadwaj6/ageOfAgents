@@ -63,7 +63,7 @@ mode = "pr"                           # remote "origin", base "main", opener `gh
 [budget]
 usd_per_day        = 10.0
 goals_per_day      = 3
-require_run_budget = true             # `aoa run` refuses without --max-usd
+require_run_budget = true             # `aoa run` refuses without --max-usd or --max-tokens
 
 [backends.claudecode]                 # your own settings and hooks stay out of unattended runs,
 type = "cli"                          # and the harness caps what one attempt may spend

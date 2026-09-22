@@ -107,6 +107,10 @@ any time — a settled workspace does no work. See [Scheduling](scheduling.md).
 
 Both OTel flags need `OTEL_EXPORTER_OTLP_ENDPOINT` — see [Observability](integrations/README.md).
 
+In a workspace that sets `[budget] require_run_budget = true`, `aoa run` exits 2 unless it has
+`--max-usd` or `--max-tokens`; `--max-goals` alone is not a spend budget. See
+[Configuration](config-reference.md).
+
 **One Scheduler per workspace, and per repository.** A run holds an OS lock on `.aoa/scheduler.lock`
 while it reconciles, and a second `aoa run` on the same workspace refuses rather than racing it. Goals
 already on the log are not lost: the run holding the lock reconciles them before it finishes (a `--once`
