@@ -117,6 +117,34 @@ The `concurrency` block is still required. `aoa`'s lock only excludes runs that 
 job gets its own runner and its own checkout, so nothing but `concurrency:` stops two jobs reconciling the
 same repository at once.
 
+## CI: submit, then wait
+
+For a pipeline triggered by an event — a pull request, an issue or a dispatched workflow — the natural
+pattern is to submit a goal, trigger a reconcile pass, and block until that goal completes rather than
+polling:
+
+```bash
+# 1. Submit the goal and capture its id
+GOAL_ID=$(aoa goal --path . --json --source ci "fix the flaky test" | jq -r .goal_id)
+
+# 2. Reconcile with a budget bound for this run
+aoa run --path . --max-usd 5.00
+
+# 3. Block until that goal completes
+aoa wait --path . --timeout 30m "$GOAL_ID"
+```
+
+A goal is complete when its `Complete` condition is `True` — merged, delivered, failed, or cancelled
+(see [Is it done?](backend.md#is-it-done)). `aoa wait` checks only the goals it names, so an old failure
+elsewhere in the workspace does not poison the result. Its exit code maps directly to the job's verdict:
+
+| Exit status | Meaning for the job |
+|---|---|
+| `0` | Success. Every task merged past the Gate, or was delivered as a pull request. |
+| `1` | Failure. The goal failed (Gate rejection, run budget exceeded, task error) or was cancelled. |
+| `2` | Usage error. A flag could not be parsed, or the goal id was not found in the Event Log. |
+| `4` | Timeout. `--timeout` expired before the goal was complete. The output names what it was still waiting on. |
+
 ## Interactive: `--interval`
 
 For a machine you are sitting at, `aoa run --interval 5m` reconciles, prints status, waits, and repeats

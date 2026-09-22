@@ -110,7 +110,7 @@ design is [ADR 016](design/adr/016-deliver-a-goal-as-a-pull-request.md).
 | `1` | An error, or (for `run`) a task failed or a delivery is stuck; tasks of a cancelled goal do not count. For `wait`, a goal named failed or was cancelled. Read `status --json` for which one and why. |
 | `2` | Usage: a flag could not be parsed. For `wait`, also no goal named, or one the Event Log does not hold. |
 | `4` | `wait` only: `--timeout` expired before every goal named was complete. The error says what each was still waiting on. |
-| `75` | `run` only: another Scheduler holds the workspace. Nothing to retry; your goal is on the log. |
+| `75` | `run` only: another Scheduler holds the workspace (your goal is on the log and will be picked up), or another workspace holds the repository it adopted (goals are not picked up; retry later). Nothing was done. |
 
 ## What a front door must still do
 

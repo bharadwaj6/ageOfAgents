@@ -139,7 +139,8 @@ Every verb speaks JSON:
 $ aoa goal --json --source linear --ref "$ISSUE_URL" --key linear:ENG-12 "fix the flaky shutdown test"
 {"schema":1,"goal_id":"g-4504fef6","duplicate":false,"seq":1}
 $ aoa run                                  # exits 75 if another run already holds the workspace
-$ aoa status --json                        # each goal's outcome: queued, running, awaiting_approval, merged, failed or cancelled
+$ aoa wait g-4504fef6                     # block until the goal is complete; exits 0 landed / 1 failed or cancelled / 4 timed out
+$ aoa status --json                        # each goal's outcome: queued, running, awaiting_approval, merged, delivered, failed or cancelled
 $ aoa events --json --since 41 --follow    # the Event Log as a resumable stream
 ```
 
