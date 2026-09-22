@@ -519,8 +519,15 @@ func BuildPrompt(task Task) string {
 		b.WriteString(tailLines(task.LastFailure, maxFailureChars))
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Make the necessary code changes in this working directory. " +
-		"Keep changes minimal and ensure the project still builds and its tests pass.\n\n")
+	// Name the worktree: a harness with its own notion of a workspace may
+	// otherwise edit somewhere other than the directory it was launched in.
+	if task.Worktree != "" {
+		fmt.Fprintf(&b, "Make the necessary code changes in this working directory (`%s`) and nowhere else. ",
+			task.Worktree)
+	} else {
+		b.WriteString("Make the necessary code changes in this working directory. ")
+	}
+	b.WriteString("Keep changes minimal and ensure the project still builds and its tests pass.\n\n")
 	b.WriteString("If this task is too large to implement in one focused change, do NOT edit any " +
 		"files. Instead, decompose it: output a single fenced block exactly like\n\n")
 	b.WriteString("```" + subtaskFence + "\n" +

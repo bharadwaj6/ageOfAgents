@@ -82,6 +82,15 @@ func TestBuildPromptIncludesContext(t *testing.T) {
 	}
 }
 
+func TestBuildPromptNamesWorktree(t *testing.T) {
+	// A harness with its own notion of a workspace must be told which directory
+	// to edit, not just "this working directory".
+	p := BuildPrompt(Task{Title: "T", Worktree: "/tmp/wt-x"})
+	if !strings.Contains(p, "/tmp/wt-x") {
+		t.Errorf("prompt does not name the worktree:\n%s", p)
+	}
+}
+
 func TestBuildPromptIncludesPriorFailure(t *testing.T) {
 	// A first attempt carries no failure context.
 	first := BuildPrompt(Task{Title: "T", Attempt: 1})
