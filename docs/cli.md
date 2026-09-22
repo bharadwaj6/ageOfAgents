@@ -361,7 +361,11 @@ status, which GitHub would redeliver — queues nothing, and logs one line namin
     work: adding `CONTRIBUTOR` or `NONE` lets strangers on a public repository run agents on your machine.
     See [Scheduling](scheduling.md) and [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
 
-No public endpoint? The reference front door in [`examples/github-issues`](https://github.com/bharadwaj6/ageOfAgents/tree/main/examples/github-issues) polls issues labelled `aoa` instead of receiving webhooks.
+`serve` only takes work in: it never comments back, and nothing else in `aoa` does either
+([ADR 019](design/adr/019-reporting-back-belongs-to-the-front-door.md)). Telling the issue what
+happened is the front door's job — see [reporting back](backend.md#reporting-back).
+
+No public endpoint? The reference front door in [`examples/github-issues`](https://github.com/bharadwaj6/ageOfAgents/tree/main/examples/github-issues) polls issues labelled `aoa` instead of receiving webhooks, and reports each outcome back to its issue.
 
 ## Shell integration
 

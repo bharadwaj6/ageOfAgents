@@ -87,8 +87,33 @@ design is [ADR 016](design/adr/016-deliver-a-goal-as-a-pull-request.md).
   `aoa`. The Gate, the budgets and `require_approval` bound it. Read [`SECURITY.md`](https://github.com/bharadwaj6/ageOfAgents/blob/main/SECURITY.md).
 - **Take the result to where people look.** With `[delivery] mode = "pr"` aoa opens the pull request
   itself (see [Delivery](#delivery)). Reporting back to the origin, such as a comment on the issue, is
-  still yours ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129)). The
-  [reference front door](#reference-front-door) does it with one issue comment per outcome.
+  yours — aoa sends no notifications of its own ([ADR 019](design/adr/019-reporting-back-belongs-to-the-front-door.md)).
+  The recipe is below, and the [reference front door](#reference-front-door) is a worked example.
+
+## Reporting back
+
+aoa never speaks to the requester. It has no idea who your users are, what credentials reach them, or
+what counts as a report — so the return leg is yours, the same way submitting is. Everything it takes is
+in the two read verbs.
+
+1. **What happened.** `aoa events --path "$WS" --json --since "$LAST_SEQ" [--follow]`. The events worth
+   telling someone about are `Merged`, `TicketFailed`, `ApprovalRequested`, `GoalBudgetExceeded`,
+   `GoalCancelled`, `Delivered` and `DeliveryFailed`. Skip the rest.
+2. **Who to tell, and what to say.** `aoa status --path "$WS" --json`. An event names a task; the
+   snapshot joins that task to its Goal, the Goal to the `ref` you recorded at submit time, and the Goal
+   to its `outcome`. Report the Goal's outcome, not the event: a Goal with three tasks is only `merged`
+   once all three are, and that fold lives in the snapshot.
+3. **Resume from the snapshot.** `status --json` carries `last_seq`; pass it as the next `--since`, and
+   you get every event after it, none of them twice.
+
+Two things are worth stealing from the reference front door:
+
+- **Let the report be the cursor.** It reads back the markers in the comments it wrote, so it knows what
+  it has already said. At-least-once delivery becomes exactly-once *visible* reporting, and a crashed or
+  restarted reporter neither repeats itself nor goes quiet — with no state file to keep.
+- **Don't let your own report queue more work.** Whoever owns intake owns this: the reference front door
+  triggers on a label rather than on comment text, and `aoa serve` bounds who may queue work with
+  `--allow`. A bot comment that begins with `@aoa` would otherwise be read as a new command.
 
 ## Reference front door
 

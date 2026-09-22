@@ -110,6 +110,10 @@ decision that settled it.
 - **A supervisor daemon.** A long-lived controller would be a second control loop (ADR 003). `aoa run`
   exits cleanly and re-runs safely, so cron and systemd cover it — better, since they already solve
   restart, backoff, and logging.
+- **Outbound notifications** — an `aoa` that comments on the issue or posts to a webhook. Reporting back
+  is the return leg of intake, and intake belongs to the front door (ADR 015). Delivery also needs a
+  durable "last notified" cursor, which has no home inside `aoa` that is not a side table (ADR 001) —
+  while outside it the cursor is just the `--since` the caller already passes. (ADR 019.)
 
 ## Where the harnesses fit
 
