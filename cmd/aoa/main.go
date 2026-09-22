@@ -85,6 +85,8 @@ func main() {
 		err = cmdApprove(args, false)
 	case "cancel":
 		err = cmdCancel(args)
+	case "wait":
+		err = cmdWait(args)
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -150,6 +152,8 @@ Usage:
                                           Reject a parked proposal (require_approval)
   aoa cancel  [--path DIR] [--json] [--by B] [--reason R] <goal-id>
                                           Withdraw a goal so none of its work lands
+  aoa wait    [--path DIR] [--json] [--timeout D] <goal-id>...
+                                          Block until each goal is complete; exit with its outcome
   aoa version                             Print the build version
   aoa completion bash|zsh|fish            Print a shell completion script
 

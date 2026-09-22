@@ -243,6 +243,36 @@ that merged are still listed in `commits`. In pr delivery mode a goal whose work
 output prints it as `delivery pending: …` (and the pull request as `pr: …` once delivered). `last_seq` is the log position the snapshot reflects, so
 `aoa events --json --since <last_seq> --follow` continues from exactly there.
 
+Each goal also carries `conditions` — `Accepted`, `Verified`, `Delivered` and `Complete`, each with a
+`status`, a `reason` and the time its status last changed. They say what `outcome` cannot, such as
+whether a `running` goal is mid-attempt or only waiting for its push. Every type and reason is listed in
+[Is it done?](backend.md#is-it-done).
+
+### `aoa wait`
+
+Block until each named goal is complete, then exit with how it ended — for a script or CI step that
+submitted work and needs the answer. Takes one or more goal ids.
+
+```bash
+aoa wait --path ./ws --timeout 1h g-45973ca0
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--path DIR` | `.` | workspace root |
+| `--timeout D` | `0` | give up after this long and exit `4`; `0` waits indefinitely |
+| `--poll D` | `500ms` | how often to re-read the Event Log |
+| `--json` | `false` | print each goal's final view (`GoalView`) as one JSON line, in the order named |
+
+A goal is complete when its `Complete` condition is `True`: merged, delivered, failed, or cancelled with
+no attempt still finishing. `aoa wait` exits `0` if every goal named merged or was delivered, `1` if any
+failed or was cancelled, and `4` if `--timeout` expired first, naming what each goal was still waiting
+on. No goal, or an id the Event Log does not hold, is a usage error (`2`) reported at once.
+
+It waits for the goals it names and nothing else, so an old failure elsewhere in the workspace does not
+change its answer. It only reads the log: something must be running `aoa run` for a goal to move, and a
+goal parked for `aoa approve` waits until someone decides.
+
 ### `aoa events`
 
 Inspect the Event Log — the append-only record every other number is derived from. It is also how a

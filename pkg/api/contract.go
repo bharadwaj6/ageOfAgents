@@ -101,10 +101,9 @@ const (
 // `aoa events --json --since <last_seq> --follow`.
 //
 // Settled is true when nothing more will happen without new input: every Goal
-// is merged, delivered or failed, or cancelled with none of its tasks still in
-// flight. A
-// queued Goal or a task awaiting approval is not settled. An empty workspace is
-// settled, with an empty Goals list.
+// is Complete (see [Condition]) — merged, delivered or failed, or cancelled with
+// none of its tasks still in flight. A queued Goal or a task awaiting approval
+// is not settled. An empty workspace is settled, with an empty Goals list.
 //
 // Goals are listed in submission order (the seq of their GoalSubmitted event).
 // Budget is present only when a day budget is configured.
@@ -157,6 +156,10 @@ type BudgetView struct {
 //
 // Tickets lists the Goal's tasks in creation order, so a decomposed task comes
 // before its children. It is empty, not absent, for a queued Goal.
+//
+// Conditions is the Goal's lifecycle as conditions (see [Condition]): always
+// the four types, in the order Accepted, Verified, Delivered, Complete. Outcome
+// stays the one-word summary; conditions add why, and since when.
 type GoalView struct {
 	ID             string       `json:"id"`
 	Text           string       `json:"text"`
@@ -175,7 +178,59 @@ type GoalView struct {
 	DeliveryError  string       `json:"delivery_error,omitempty"`
 	Graph          GraphView    `json:"graph"`
 	Tickets        []TicketView `json:"tickets"`
+	Conditions     []Condition  `json:"conditions"`
 }
+
+// Condition is one dimension of a Goal's lifecycle, in the shape
+// Kubernetes-style runtimes already parse (ADR 020): a Type, a Status of True,
+// False or Unknown, a machine-readable CamelCase Reason, a human Message where
+// there is more to say, and LastTransitionTime — the timestamp of the event at
+// which Status last changed. A change of Reason alone does not move it.
+//
+// The four types, and what True means:
+//
+//   - Accepted: the Scheduler has created the Goal's first task. False with
+//     reason Queued until then (Cancelled if it was withdrawn first).
+//   - Verified: every one of its tasks merged past the Gate. False reasons:
+//     Queued, WorkInProgress, AwaitingApproval, Cancelled, BudgetExceeded,
+//     ApprovalDenied (a human rejected a task), TaskFailed (the Message names
+//     the task and why).
+//   - Delivered: its Goal branch was pushed (reason BranchPushed) and its pull
+//     request opened (PullRequestOpened, the Message is its URL). Unknown with
+//     reason NoGoalBranch while no work has merged onto a Goal branch, which is
+//     every Goal outside pull-request delivery mode. False reasons:
+//     DeliveryPending, DeliveryFailed (the Message is why), NotVerified (the
+//     branch exists but its work is not all merged), Cancelled.
+//   - Complete: nothing more happens to the Goal without new input — the one
+//     to wait on. True with the outcome as its reason: Merged, Delivered, Failed
+//     or Cancelled. False with Queued, WorkInProgress, AwaitingApproval,
+//     DeliveryPending, DeliveryFailed, or Cancelling (cancelled, with an
+//     attempt still finishing).
+//
+// Callers must treat an unknown Type or Reason as they would an unknown field:
+// new ones may be added within a ContractVersion.
+type Condition struct {
+	Type               string    `json:"type"`
+	Status             string    `json:"status"`
+	Reason             string    `json:"reason"`
+	Message            string    `json:"message,omitempty"`
+	LastTransitionTime time.Time `json:"last_transition_time"`
+}
+
+// Condition types reported in [GoalView].Conditions.
+const (
+	ConditionAccepted  = "Accepted"
+	ConditionVerified  = "Verified"
+	ConditionDelivered = "Delivered"
+	ConditionComplete  = "Complete"
+)
+
+// Condition statuses.
+const (
+	ConditionTrue    = "True"
+	ConditionFalse   = "False"
+	ConditionUnknown = "Unknown"
+)
 
 // GraphView is the shape of a Goal's task graph: MaxDepth is the deepest
 // decomposition level reached (0 when nothing was decomposed) and MaxFanOut the

@@ -779,7 +779,10 @@ func (s *State) ActiveCount() int {
 }
 
 // Settled reports whether no ticket remains in a non-terminal state. With at
-// least one ticket present, this means the run is complete.
+// least one ticket present, this means the run is complete. It is the
+// Scheduler's stop condition over tasks, not whether a Goal is done: a queued
+// Goal has no task to count. Whether a Goal is done is its Complete condition
+// (GoalConditions).
 func (s *State) Settled() bool {
 	for _, t := range s.Tickets {
 		if !t.Status.IsTerminal() {
@@ -800,7 +803,9 @@ func (s *State) Deliverable(goalID string) bool {
 }
 
 // GoalComplete reports whether a Goal has at least one ticket and every one of
-// them is complete: merged, or decomposed into children that all are.
+// them is complete: merged, or decomposed into children that all are. It is
+// success only — the Verified condition and the delivery precondition. Whether a
+// Goal is done, successfully or not, is its Complete condition (GoalConditions).
 func (s *State) GoalComplete(goalID string) bool {
 	has := false
 	for _, t := range s.Tickets {
@@ -884,4 +889,134 @@ func (s *State) GoalOutcome(goalID string) string {
 	default:
 		return api.OutcomeRunning
 	}
+}
+
+// outcomeReasons names each settled outcome as the Complete condition's reason.
+var outcomeReasons = map[string]string{
+	api.OutcomeMerged:    "Merged",
+	api.OutcomeDelivered: "Delivered",
+	api.OutcomeFailed:    "Failed",
+	api.OutcomeCancelled: "Cancelled",
+}
+
+// GoalConditions reports a Goal's lifecycle as the four api.Condition types, in
+// the order Accepted, Verified, Delivered, Complete (ADR 020). The meaning of
+// each status and reason is documented on api.Condition. Like GoalOutcome, whose
+// precedence it follows, it is a pure function of the replayed state.
+//
+// LastTransitionTime is left zero: when a status last changed is a fact about
+// the log's history, which a snapshot does not hold, so the caller replaying
+// the log stamps it. An id that names no Goal reports nil.
+//
+// Complete is the one notion of a Goal being done: merged, delivered or failed,
+// or cancelled with none of its tasks still in flight. StatusView.Settled and
+// `aoa wait` both read it rather than restating the rule.
+func (s *State) GoalConditions(goalID string) []api.Condition {
+	g := s.Goals[goalID]
+	if g == nil {
+		return nil
+	}
+	outcome := s.GoalOutcome(goalID)
+	verified := s.GoalComplete(goalID)
+	var hasTickets, awaiting, inFlight bool
+	var failed, rejected *Ticket // the first of each, in creation order
+	for _, id := range s.TicketOrder {
+		t := s.Tickets[id]
+		if t == nil || t.GoalID != goalID {
+			continue
+		}
+		hasTickets = true
+		switch {
+		case t.Status == StatusAwaiting:
+			awaiting = true
+		case !t.Status.IsTerminal():
+			inFlight = true
+		case t.Status == StatusFailed:
+			if failed == nil {
+				failed = t
+			}
+			if t.Rejected && rejected == nil {
+				rejected = t
+			}
+		}
+	}
+	cond := func(typ, status, reason, message string) api.Condition {
+		return api.Condition{Type: typ, Status: status, Reason: reason, Message: message}
+	}
+	no := func(typ, reason, message string) api.Condition {
+		return cond(typ, api.ConditionFalse, reason, message)
+	}
+
+	var accepted api.Condition
+	switch {
+	case hasTickets:
+		accepted = cond(api.ConditionAccepted, api.ConditionTrue, "TasksCreated", "")
+	case g.Cancelled:
+		accepted = no(api.ConditionAccepted, "Cancelled", "")
+	default:
+		accepted = no(api.ConditionAccepted, "Queued", "")
+	}
+
+	var ver api.Condition
+	switch {
+	case verified:
+		ver = cond(api.ConditionVerified, api.ConditionTrue, "AllMerged", "")
+	case g.Cancelled:
+		ver = no(api.ConditionVerified, "Cancelled", "")
+	case !hasTickets:
+		ver = no(api.ConditionVerified, "Queued", "")
+	case awaiting:
+		ver = no(api.ConditionVerified, "AwaitingApproval", "")
+	case inFlight:
+		ver = no(api.ConditionVerified, "WorkInProgress", "")
+	case g.BudgetExceeded:
+		ver = no(api.ConditionVerified, "BudgetExceeded", "")
+	case rejected != nil:
+		ver = no(api.ConditionVerified, "ApprovalDenied", rejected.ID+" was rejected at the approval gate")
+	case failed != nil:
+		msg := failed.ID + " failed"
+		if failed.LastFailReason != "" {
+			msg = failed.ID + ": " + failed.LastFailReason
+		}
+		ver = no(api.ConditionVerified, "TaskFailed", msg)
+	default: // a decomposition names a child not on the log yet
+		ver = no(api.ConditionVerified, "WorkInProgress", "")
+	}
+
+	var del api.Condition
+	switch {
+	case g.Delivered && g.PRURL != "":
+		del = cond(api.ConditionDelivered, api.ConditionTrue, "PullRequestOpened", g.PRURL)
+	case g.Delivered:
+		del = cond(api.ConditionDelivered, api.ConditionTrue, "BranchPushed", "pushed "+g.Branch)
+	case g.Cancelled:
+		del = no(api.ConditionDelivered, "Cancelled", "")
+	case g.DeliveryError != "":
+		del = no(api.ConditionDelivered, "DeliveryFailed", g.DeliveryError)
+	case g.Branch == "":
+		del = cond(api.ConditionDelivered, api.ConditionUnknown, "NoGoalBranch", "")
+	case verified:
+		del = no(api.ConditionDelivered, "DeliveryPending", "")
+	default:
+		del = no(api.ConditionDelivered, "NotVerified", "")
+	}
+
+	var complete api.Condition
+	switch {
+	case outcome == api.OutcomeCancelled && (inFlight || awaiting):
+		complete = no(api.ConditionComplete, "Cancelling", "")
+	case outcomeReasons[outcome] != "":
+		complete = cond(api.ConditionComplete, api.ConditionTrue, outcomeReasons[outcome], "")
+	case outcome == api.OutcomeQueued:
+		complete = no(api.ConditionComplete, "Queued", "")
+	case outcome == api.OutcomeAwaitingApproval:
+		complete = no(api.ConditionComplete, "AwaitingApproval", "")
+	case verified && g.Branch != "" && g.DeliveryError != "":
+		complete = no(api.ConditionComplete, "DeliveryFailed", "")
+	case verified && g.Branch != "":
+		complete = no(api.ConditionComplete, "DeliveryPending", "")
+	default:
+		complete = no(api.ConditionComplete, "WorkInProgress", "")
+	}
+	return []api.Condition{accepted, ver, del, complete}
 }

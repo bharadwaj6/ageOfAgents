@@ -91,8 +91,8 @@ that fail on slow runners and train people to hit re-run on a required check.
 in the shape Kubernetes-style runtimes already parse, and ratifies ADR 019 in the same breath: a caller
 may **ask**, `aoa` still does not **send**. Reading [AX](https://github.com/google/ax) settled the wider
 question — it is the complementary half, not a competitor, and the half it declines to model is exactly
-`aoa`'s. Interoperation is therefore a JSON shape, not a dependency. Next are the two Part 3 increments,
-then #103.
+`aoa`'s. Interoperation is therefore a JSON shape, not a dependency. Both Part 3 increments shipped with
+it: every goal carries its conditions, and `aoa wait` blocks until one is `Complete`. Next is #103.
 
 | | Increment | Depends on |
 |---|---|---|
@@ -157,8 +157,8 @@ already parse, and take no dependency on a pre-stable API that would cost a Kube
 | | Increment | Depends on |
 |---|---|---|
 | [x] | [ADR 020](adr/020-task-lifecycle-is-a-projection.md): lifecycle is a projection; ratifies [ADR 019](adr/019-reporting-back-belongs-to-the-front-door.md) and closes [#129](https://github.com/bharadwaj6/ageOfAgents/issues/129) | ADR 015, ADR 012 |
-| [ ] | `GoalView.Conditions` — `Accepted`/`Verified`/`Delivered`/`Complete`, replayed, additive to the contract | ADR 020 |
-| [ ] | `aoa wait` — block until `Complete`, exit with the outcome | conditions |
+| [x] | `GoalView.Conditions` — `Accepted`/`Verified`/`Delivered`/`Complete`, replayed, additive to the contract | ADR 020 |
+| [x] | `aoa wait` — block until `Complete`, exit with the outcome | conditions |
 
 ## Not yet scheduled
 
