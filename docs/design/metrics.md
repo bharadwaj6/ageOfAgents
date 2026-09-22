@@ -112,6 +112,35 @@ are **measured, not assumed**. All are **0** on a healthy, settled run.
 | **retry_livelock** | a ticket terminated by the crash-loop governor (`TicketFailed` reason begins `crash loop:`) | the same failure repeated until the governor gave up — distinct from `retry_churn`, which counts *all* rejections |
 | **verification_blind_spot** | a `RegressionEscaped` event — a merge the Gate accepted but the broader Shadow set rejected | the dangerous one (see above): the Gate was green but insufficient |
 | **stale_spec_drift** | a worker was in-flight (running) when its Goal was amended (`GoalAmended`) | the worker is proceeding against a now-superseded spec; mid-run amendment steers *future* dispatches but does not preempt a running one |
+| **flaky_gate** | the Gate returned **both** a pass and a failure for the same verified `tree` | the Gate is not a function of the code alone, so a lucky retry can merge what an earlier run rejected — see below |
+
+### The flaky Gate (and what detecting it can and cannot prove)
+
+`aoa` retries a rejected proposal, so a **nondeterministic** Gate can pass on a lucky run and merge a patch
+a previous run rejected — quietly weakening "nothing merges that fails the Gate"
+([ADR 002](adr/002-verifier-gated-merge-queue.md)). The crash-loop governor cannot see it: it keys on
+repeated *identical* failures, and a verdict that flips is the opposite signal.
+
+The signature is **content identity**. Every Gate verdict records the git `tree` hash of what it ran against
+— the post-merge state, not the proposal's commit. Tree hashes are content-addressed, so two runs over
+identical content share one hash however their commits differ, and a `tree` that drew both verdicts is the
+Gate contradicting itself. A commit hash cannot stand in: it changes with the author, the timestamp and the
+parent even when the code is byte-identical.
+
+Read the number honestly:
+
+- It **cannot** say which verdict was right, or that merged code is broken. A flagged ticket is a candidate
+  for a human to look at, not a defect.
+- **0 is not evidence of a deterministic Gate.** Only the provable subset is visible. A retry re-runs the
+  agent from scratch, and any change at all to the patch produces a different tree, which nothing here can
+  compare — the common case, and invisible. Measuring the *rate* of flakiness needs the Gate re-run
+  deliberately on identical content (`confirm_runs`), which is a behaviour change, not a projection, and
+  is not implemented.
+- Two runs of the same content can legitimately disagree when something *outside* the content moved: the
+  gate commands were edited in `aoa.toml`, the toolchain or sandbox image changed, a test timed out under
+  load, or a test reached the network. Infrastructure failures the Gate itself recognised (`Result.Infra`)
+  are already excluded; the rest are real false positives, which is why this is a finding and not an
+  invariant violation.
 
 ## What we explicitly do NOT measure
 
