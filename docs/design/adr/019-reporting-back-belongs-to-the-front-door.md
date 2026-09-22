@@ -1,9 +1,14 @@
 # ADR 019: Reporting Back Belongs to the Front Door
 
 ## Status
-Proposed. Extends [ADR 015](015-aoa-is-a-backend.md) (where the boundary runs) and bounds
+Accepted. Extends [ADR 015](015-aoa-is-a-backend.md) (where the boundary runs) and bounds
 [ADR 012](012-observability-as-replay-projection.md) (what a replay projection is for). Resolves
 [#129](https://github.com/bharadwaj6/ageOfAgents/issues/129).
+
+Bounded in turn by [ADR 020](020-task-lifecycle-is-a-projection.md), which publishes the Goal
+lifecycle a caller reads. This record governs what `aoa` will not **send**; ADR 020 governs what a
+caller may **ask**. A read projection needs neither the credentials nor the cursor this record found
+nowhere to put, so the two stand together rather than in tension.
 
 ## Context
 `aoa` never speaks to anyone. Work arrives, the Gate decides, the Event Log records it — and whoever

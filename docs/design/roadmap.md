@@ -78,13 +78,21 @@ red-test-first and mutation-checked. Three of them found the issue had understat
 | [#157](https://github.com/bharadwaj6/ageOfAgents/issues/157) | Local mode cut worktrees from a `HEAD` carrying an unverified candidate merge; now cut from the last Gate-verified commit, as PR mode already was | [#178](https://github.com/bharadwaj6/ageOfAgents/pull/178) |
 | [#101](https://github.com/bharadwaj6/ageOfAgents/issues/101) | Answered honestly rather than built: [ADR 018](adr/018-the-agent-is-not-confined.md) states what is true — the worktree is not a boundary, the agent inherits the environment, `sandbox` covers the Gate only — plus an `aoa doctor` check | [#176](https://github.com/bharadwaj6/ageOfAgents/pull/176) |
 | [#154](https://github.com/bharadwaj6/ageOfAgents/issues/154) | A `cli` block shadowing a preset with the same `bin` emits the same envelope, so the governor was live and the warning was false | [#175](https://github.com/bharadwaj6/ageOfAgents/pull/175) |
-| [#129](https://github.com/bharadwaj6/ageOfAgents/issues/129) | Argued for refusal rather than built: [ADR 019](adr/019-reporting-back-belongs-to-the-front-door.md) (**Proposed**, awaiting ratification) — a delivery cursor has no home inside `aoa` without a side table, and `events --json --since` already is the mechanism | [#180](https://github.com/bharadwaj6/ageOfAgents/pull/180) |
+| [#129](https://github.com/bharadwaj6/ageOfAgents/issues/129) | Argued for refusal rather than built: [ADR 019](adr/019-reporting-back-belongs-to-the-front-door.md) — a delivery cursor has no home inside `aoa` without a side table, and `events --json --since` already is the mechanism. Ratified with [ADR 020](adr/020-task-lifecycle-is-a-projection.md) | [#180](https://github.com/bharadwaj6/ageOfAgents/pull/180) |
 
 What is left is not a backlog of bugs. It is **the open question above** — does the Gate change outcomes
 at scale ([#103](https://github.com/bharadwaj6/ageOfAgents/issues/103)) — which needs budget and a run,
 not a patch; the three `deferred` items (#76, #75, #71), whose label says to wait for a metric that #103
-would produce; #129's ratification; and [#182](https://github.com/bharadwaj6/ageOfAgents/issues/182), two
-timing-shaped tests that fail on slow runners and train people to hit re-run on a required check.
+would produce; and [#182](https://github.com/bharadwaj6/ageOfAgents/issues/182), two timing-shaped tests
+that fail on slow runners and train people to hit re-run on a required check.
+
+**Last status (2026-09-22, latest):** the question of *when is it done* has an answer and a direction.
+[ADR 020](adr/020-task-lifecycle-is-a-projection.md) publishes a Goal's lifecycle as replayed conditions
+in the shape Kubernetes-style runtimes already parse, and ratifies ADR 019 in the same breath: a caller
+may **ask**, `aoa` still does not **send**. Reading [AX](https://github.com/google/ax) settled the wider
+question — it is the complementary half, not a competitor, and the half it declines to model is exactly
+`aoa`'s. Interoperation is therefore a JSON shape, not a dependency. Next are the two Part 3 increments,
+then #103.
 
 | | Increment | Depends on |
 |---|---|---|
@@ -135,11 +143,30 @@ on the maintainer's Mac on a subscription backend, and only in runs the maintain
   ([#130](https://github.com/bharadwaj6/ageOfAgents/issues/130); GitHub Issues is Part 2);
 - one repo adopted by two workspaces ([#131](https://github.com/bharadwaj6/ageOfAgents/issues/131)).
 
+**Part 3: interoperating with agent runtimes** ([ADR 020](adr/020-task-lifecycle-is-a-projection.md)).
+
+Runtimes like [AX](https://github.com/google/ax) run agents in sandboxes with network fencing and
+suspend/resume, and say plainly that they do not model the shape of the work: no gate, no merge queue,
+no completion signal — AX's control plane *"does not currently read the command's exit status back from
+the container"*, and the budget and approval policy its `TaskSpec` once carried is `reserved`. That is
+the half `aoa` has. The half `aoa` lacks — confinement — is the one ADR 018 declines to build.
+
+So the direction is interoperation, not adoption: publish the lifecycle in a shape those runtimes
+already parse, and take no dependency on a pre-stable API that would cost a Kubernetes cluster.
+
+| | Increment | Depends on |
+|---|---|---|
+| [x] | [ADR 020](adr/020-task-lifecycle-is-a-projection.md): lifecycle is a projection; ratifies [ADR 019](adr/019-reporting-back-belongs-to-the-front-door.md) and closes [#129](https://github.com/bharadwaj6/ageOfAgents/issues/129) | ADR 015, ADR 012 |
+| [ ] | `GoalView.Conditions` — `Accepted`/`Verified`/`Delivered`/`Complete`, replayed, additive to the contract | ADR 020 |
+| [ ] | `aoa wait` — block until `Complete`, exit with the outcome | conditions |
+
 ## Not yet scheduled
 
 Directions, not commitments. Detail and rationale in [proposals](improvements.md#not-yet-scheduled):
 
-- **Firecracker microVM sandboxing** — Docker isolates the Gate; the agent itself is not confined.
+- **Firecracker microVM sandboxing** — Docker isolates the Gate; the agent itself is not confined. If
+  confinement is ever needed, the cheaper route is delegating to a runtime that already has it (see the
+  deferral table) rather than building a microVM story here.
 - **Persistent server mode.** A durable server with a dashboard over the Event Log, now framed as the
   team transport for the backend contract ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)).
 - **A cross-run `$` circuit breaker** — `max_usd_per_goal` bounds one goal; nothing bounds a week.
@@ -156,6 +183,8 @@ decision is falsifiable rather than permanent:
 | Best-of-N generation with the test suite as selector | Per-task cost data shows the extra attempts are cheaper than the retries they replace |
 | SPRT early-stopping for live evals | Eval runs get large enough that fixed-N sampling is the dominant cost |
 | Outbound notifications from `aoa` itself ([#129](https://github.com/bharadwaj6/ageOfAgents/issues/129)) | The team transport ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)) lands: a long-running server is somewhere a delivery cursor can live without a side table. Until then [ADR 019](adr/019-reporting-back-belongs-to-the-front-door.md) leaves reporting back to the front door, over `events --json --since` and `status --json` |
+| Running each worker attempt as an AX `Task`, behind a new `agent.Backend` ([#71](https://github.com/bharadwaj6/ageOfAgents/issues/71)) | A real deployment takes goals whose text `aoa` does not control. Confinement would then arrive by delegating to a runtime that already does it, which is [ADR 018](adr/018-the-agent-is-not-confined.md)'s answer — the sandbox is the machine you run on — made first-class rather than replaced |
+| Speaking [A2A](https://a2a-protocol.org): `TaskState`, streaming updates and push notifications | The team transport ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)) lands, i.e. the row above fires. A2A's `Task` maps onto a Goal, so it becomes a transport over [ADR 020](adr/020-task-lifecycle-is-a-projection.md)'s fold rather than a second lifecycle model |
 
 Autonomous work discovery has left this table. It is no longer deferred: [ADR 015](adr/015-aoa-is-a-backend.md)
 assigns discovery to the front door, so `aoa` will not build it.
