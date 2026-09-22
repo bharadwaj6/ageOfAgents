@@ -91,6 +91,19 @@ func (r *Repo) Head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// GitDir returns the absolute path of the repository's git directory — usually
+// <dir>/.git, and the linked worktree's own directory for a checkout added with
+// `git worktree add`. It identifies the working tree a Scheduler writes: two
+// workspaces that adopted the same repository resolve to the same path however
+// their configured paths were spelled.
+func (r *Repo) GitDir(ctx context.Context) (string, error) {
+	out, err := git(ctx, r.Dir, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // CurrentBranch returns the name of the repo's currently checked-out branch.
 func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	out, err := git(ctx, r.Dir, "rev-parse", "--abbrev-ref", "HEAD")

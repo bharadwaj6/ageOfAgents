@@ -593,7 +593,7 @@ func amendGoal(led *ledger.Ledger, goalID, guidance string) (api.AmendResult, er
 
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	describe(fs, "aoa run \u2014 drive the Scheduler until all work is settled, then exit.\n\nIdempotent and crash-safe: re-running is always allowed and does nothing when\nthere is nothing to do. Exits non-zero if a task failed during this run (older\nfailures are `aoa status`'s business), and 75 if another aoa run is already\nreconciling this workspace.", "aoa run --path ./workspace")
+	describe(fs, "aoa run \u2014 drive the Scheduler until all work is settled, then exit.\n\nIdempotent and crash-safe: re-running is always allowed and does nothing when\nthere is nothing to do. Exits non-zero if a task failed during this run (older\nfailures are `aoa status`'s business), and 75 if another aoa run is already\nreconciling this workspace or the repository it adopted.", "aoa run --path ./workspace")
 	path := fs.String("path", ".", "workspace root")
 	once := fs.Bool("once", false, "run a single reconcile pass instead of looping")
 	interval := fs.Duration("interval", 0, "keep running, reconciling again every <dur> until interrupted (0 = run until settled, then exit)")
@@ -748,7 +748,7 @@ func runEvery(ctx context.Context, o *orchestrator.Orchestrator, led *ledger.Led
 		err := withSchedulerLock(ws, led, true, func() error { return o.Run(ctx) })
 		switch {
 		case errors.Is(err, errSchedulerBusy):
-			fmt.Fprintln(os.Stderr, "skipping pass: another aoa run is reconciling this workspace")
+			fmt.Fprintln(os.Stderr, "skipping pass: "+err.Error())
 		case err != nil && ctx.Err() != nil:
 			return nil
 		default:

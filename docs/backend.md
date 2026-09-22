@@ -35,7 +35,7 @@ aoa cancel  --path "$WS" --json --by "$WHO" --reason "issue closed" "$GOAL"
 |---|---|
 | **Submitting is idempotent.** The same `--key` returns the same goal with `"duplicate":true` and writes nothing, even when several submitters race. | The check and the append happen atomically under the Event Log's cross-process lock. |
 | **Any number of front doors can write at once.** | Appends are serialised across processes, so sequence numbers stay gapless. |
-| **Exactly one Scheduler per workspace.** | `aoa run` holds an OS lock. A second run exits `75` without doing anything, and its goals are still picked up. |
+| **Exactly one Scheduler per workspace, and per repository.** | `aoa run` holds an OS lock on each. A second run on the workspace exits `75` without doing anything, and its goals are still picked up. A run whose repository is held by *another* workspace also exits `75`, but its goals are not picked up — that Scheduler reads a different log — so retry it later. |
 | **Decisions are safe to retry.** Repeating an approve, reject or cancel returns `already_decided` / `already_cancelled` and writes nothing. | Checked and appended atomically, like submit. |
 | **The log is a resumable stream.** `events --json --since N` prints every event after `N`, byte for byte. | Resume with the last `seq` you received. Partial lines are never emitted. |
 | **Nothing lands that fails the Gate, or that was cancelled.** | The Gate runs on the post-merge state ([ADR 002](design/adr/002-verifier-gated-merge-queue.md)). A cancelled goal gets no new attempts, and its proposals are dropped before merging. A merge already executing when the cancel arrives can still complete. |

@@ -203,8 +203,8 @@ emitting ordinary `agent.Backend` work, never as a second coordinator (ADR 011).
   with a live view from `aoa status --watch`.
 - **Drive:** a front door (a person, CI, a tracker poller, an orchestrator) uses the same verbs with
   `--json` ([ADR 015](adr/015-aoa-is-a-backend.md), [backend contract](../backend.md)). Submitting is
-  idempotent, any number of processes may write, and an OS lock keeps exactly one Scheduler per
-  workspace.
+  idempotent, any number of processes may write, and OS locks keep exactly one Scheduler per workspace
+  and per repository.
 - **Validate:** the deterministic `mock` Backend runs the whole loop in `go test` with no network; the
   Gate is the correctness mechanism; the Event Log replays for debugging.
 - **Port:** static Go binary, plain JSONL events, no DB, one config file.

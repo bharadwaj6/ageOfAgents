@@ -107,17 +107,23 @@ any time — a settled workspace does no work. See [Scheduling](scheduling.md).
 
 Both OTel flags need `OTEL_EXPORTER_OTLP_ENDPOINT` — see [Observability](integrations/README.md).
 
-**One Scheduler per workspace.** A run holds an OS lock on `.aoa/scheduler.lock` while it reconciles, and
-a second `aoa run` on the same workspace refuses rather than racing it. Goals already on the log are
-not lost: the run holding the lock reconciles them before it finishes (a `--once` run leaves them to the
-next run). With `--interval`, a pass that finds the workspace busy is skipped and the loop carries on.
+**One Scheduler per workspace, and per repository.** A run holds an OS lock on `.aoa/scheduler.lock`
+while it reconciles, and a second `aoa run` on the same workspace refuses rather than racing it. Goals
+already on the log are not lost: the run holding the lock reconciles them before it finishes (a `--once`
+run leaves them to the next run). With `--interval`, a pass that finds the workspace busy is skipped and
+the loop carries on.
+
+Two workspaces can adopt one repository, so a run also locks the repository it reconciles
+(`<repo>/.git/aoa.lock`). A run refused there is refused for a different reason: the Scheduler holding
+the repository replays its own Event Log and never sees this workspace's goals, so they wait for the
+next `aoa run` here rather than being picked up. Both refusals exit `75`.
 
 | Exit status | Meaning |
 |---|---|
 | `0` | all work settled and nothing failed during this run |
 | `1` | a task failed during this run (not counting cancelled goals), a pull request could not be delivered (pr mode), or the run hit an error |
 | `2` | a flag could not be parsed |
-| `75` | another `aoa run` holds the workspace (`EX_TEMPFAIL`); nothing was done |
+| `75` | another `aoa run` holds the workspace, or the repository it adopted (`EX_TEMPFAIL`); nothing was done |
 
 **The status covers this run, not the workspace.** A workspace outlives the runs in it, so `aoa run`
 counts only what failed after it started: a run that delivers cleanly exits `0` even where earlier runs
