@@ -58,6 +58,12 @@ type Options struct {
 	DayBudget          state.Budget       // the [budget] limits per UTC day; zero = none
 	Now                func() time.Time
 	Sleep              func(time.Duration) // injectable for tests; default time.Sleep
+	// draining is a test seam: when set, the Scheduler calls it with the IDs of
+	// the proposals it is about to drain, and reloads them if it returns true,
+	// so a test can hold the merge queue until a known set of proposals is on
+	// the log. Workers are not joined before a drain (ADR 013), so a barrier on
+	// the Worker side cannot do this. nil = no-op.
+	draining func(proposed []string) (reload bool)
 }
 
 // Orchestrator owns one run of the control loop.
@@ -383,6 +389,18 @@ func (o *Orchestrator) ReconcileOnce(ctx context.Context) error {
 		return err
 	}
 	proposed := s.Proposed()
+	if o.opt.draining != nil {
+		ids := make([]string, len(proposed))
+		for i, t := range proposed {
+			ids[i] = t.ID
+		}
+		if o.opt.draining(ids) {
+			if s, err = o.loadState(); err != nil {
+				return err
+			}
+			proposed = s.Proposed()
+		}
+	}
 	if len(proposed) > 1 && !o.opt.RequireApproval && len(o.mq.Shadow.Commands) == 0 && !o.prMode() {
 		if proposed, err = o.dropCancelled(ctx, proposed); err != nil {
 			return err
