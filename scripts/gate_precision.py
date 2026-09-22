@@ -32,7 +32,8 @@ def main():
                     help="model_name_or_path recorded in the predictions")
     a = ap.parse_args()
 
-    reports = json.load(open(a.report))
+    with open(a.report) as f:
+        reports = json.load(f)
     preds, tasks_with_rejects, skipped = [], 0, 0
     for rep in reports:
         rejected = rep.get("rejected_patches") or []
@@ -53,7 +54,8 @@ def main():
             })
             print(f"  {rep['task']}: rejected — {rp['reason'][:90]}", file=sys.stderr)
 
-    json.dump(preds, open(a.out, "w"), indent=2)
+    with open(a.out, "w") as f:
+        json.dump(preds, f, indent=2)
     print(f"wrote {len(preds)} rejected prediction(s) from {tasks_with_rejects} task(s) "
           f"to {a.out}", file=sys.stderr)
     if skipped:
