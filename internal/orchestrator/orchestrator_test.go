@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -890,12 +891,43 @@ func TestBatchMergePathEngagesAndStaysCorrect(t *testing.T) {
 	// same pass, so the merge queue's disjoint-batch path runs. Assert everything
 	// merged and the queue actually held >1 proposal at once (batching engaged).
 	pass := verify.Verifier{Commands: []verify.Command{{"true"}}}
-	// Rendezvous ensures both sibling workers (backend + frontend) are inside
-	// Mock.Run simultaneously, so their proposals land before the merge queue
-	// drains — making the MergeQueueMaxDepth >= 2 assertion deterministic
-	// regardless of goroutine scheduling on slow CI runners.
-	siblings := &sync.WaitGroup{}
-	siblings.Add(2)
+	// MergeQueueMaxDepth is a projection of log order, so both siblings'
+	// ProposalSubmitted events must be on the log before the Scheduler drains
+	// (appends Merged for) the first. Workers are not joined before a drain, so
+	// the barrier is on the Scheduler side: while only one sibling has proposed,
+	// hold the drain until the other has too. The timeout turns a regression
+	// into a failure rather than a hang.
+	siblings := []string{"g1-impl/backend", "g1-impl/frontend"}
+	var h *harness
+	draining := func(proposed []string) bool {
+		held := 0
+		for _, id := range siblings {
+			if slices.Contains(proposed, id) {
+				held++
+			}
+		}
+		if held != 1 {
+			return false
+		}
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			s := h.state(t)
+			both := true
+			for _, id := range siblings {
+				if tk := s.Tickets[id]; tk == nil || tk.Status != state.StatusProposed {
+					both = false
+				}
+			}
+			if both {
+				return true
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("timed out waiting for both %v to propose", siblings)
+				return false
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	mock := &agent.Mock{
 		Decompose: map[string][]agent.Subtask{
 			"Implement: build app": {
@@ -904,12 +936,8 @@ func TestBatchMergePathEngagesAndStaysCorrect(t *testing.T) {
 				{LocalID: "frontend", Title: "frontend", DependsOn: []string{"types"}, IdempotencyKey: "g1:frontend"},
 			},
 		},
-		Rendezvous: map[string]*sync.WaitGroup{
-			"backend":  siblings,
-			"frontend": siblings,
-		},
 	}
-	o, h := setup(t, mock, pass, Options{Concurrency: 4})
+	o, h := setup(t, mock, pass, Options{Concurrency: 4, draining: draining})
 	h.submitGoal(t, "g1", "build app")
 	if err := o.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
