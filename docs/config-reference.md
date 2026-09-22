@@ -13,7 +13,7 @@ config behaves exactly like the hermetic suite until you opt in.
 | `concurrency` | int | `4` | Max Workers in flight (the Concurrency Limit). |
 | `max_attempts` | int | `2` | How many times a Task is retried before it fails. |
 | `best_of_n` | int | `1` | Concurrent attempts dispatched per Task (parallel generation). Each attempt consumes a concurrency slot, and the Gate — never a vote — picks the winner (ADR 002). |
-| `conventions_file` | string | — | A file whose contents are injected into every agent prompt as shared coding rules. |
+| `conventions_file` | string | — | A file whose contents are injected into every agent prompt as shared coding rules. When set, must be readable; a missing file fails doctor and run. |
 | `sandbox` | string | `""` (host) | How the Gate's commands are isolated. `"docker"` runs each verify command in a container; `""` runs them on the host. |
 | `sandbox_image` | string | `"golang:1.26"` | Container image used when `sandbox = "docker"`. The default carries only a Go toolchain — set a prepared image when the Gate needs another language's dependencies. |
 

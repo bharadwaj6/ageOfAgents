@@ -254,3 +254,46 @@ func gitInit(t *testing.T, dir string) {
 		t.Skipf("git unavailable: %v", err)
 	}
 }
+
+func TestDoctorFlagsUnreadableConventionsFile(t *testing.T) {
+	root := writeWorkspace(t, `
+repo             = "./repo"
+backend          = "mock"
+conventions_file = "DOES_NOT_EXIST.md"
+verify           = [["go", "build", "./..."]]
+`)
+	checks := runDoctor(root)
+	c := find(t, checks, "conventions")
+	if c.ok {
+		t.Fatal("doctor must flag a missing conventions_file as failed")
+	}
+	missing := filepath.Join(root, "DOES_NOT_EXIST.md")
+	if !strings.Contains(c.detail, missing) {
+		t.Errorf("doctor detail must name resolved path %q, got: %q", missing, c.detail)
+	}
+	if c.fix == "" {
+		t.Fatal("conventions failure must carry a fix line")
+	}
+
+	// An existing readable conventions file passes.
+	if err := os.WriteFile(missing, []byte("# Rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checks = runDoctor(root)
+	c = find(t, checks, "conventions")
+	if !c.ok {
+		t.Fatalf("doctor must pass when conventions_file exists and is readable, got: %q", c.detail)
+	}
+
+	// An unset conventions_file stays fine.
+	rootUnset := writeWorkspace(t, `
+repo    = "./repo"
+backend = "mock"
+verify  = [["go", "build", "./..."]]
+`)
+	checksUnset := runDoctor(rootUnset)
+	cUnset := find(t, checksUnset, "conventions")
+	if !cUnset.ok {
+		t.Fatalf("doctor must pass when conventions_file is unset, got: %q", cUnset.detail)
+	}
+}
