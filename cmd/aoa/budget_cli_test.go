@@ -51,3 +51,39 @@ func TestRunRefusesWithoutABudgetWhenRequired(t *testing.T) {
 		t.Fatalf("run with a budget: %v", err)
 	}
 }
+
+// A token run budget satisfies require_run_budget too: a backend that reports
+// tokens but no cost can only be bounded by --max-tokens (#192). --max-goals
+// alone does not count — it bounds how many Goals start, not what they spend.
+func TestRunAcceptsATokenBudgetWhenRequired(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	if err := cmdInit([]string{"--path", tmp, "--repo", "./demo"}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	cfg := "repo = \"./demo\"\nbackend = \"mock\"\nconcurrency = 1\nverify = [[\"true\"]]\n\n[budget]\nrequire_run_budget = true\n"
+	if err := os.WriteFile(filepath.Join(tmp, "aoa.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := cmdGoal([]string{"--path", tmp, "add a greeting"}); err != nil {
+		t.Fatalf("goal: %v", err)
+	}
+
+	for _, args := range [][]string{nil, {"--max-goals", "1"}} {
+		err := cmdRun(append([]string{"--path", tmp}, args...))
+		var ee *exitError
+		if !errors.As(err, &ee) || ee.code != 2 {
+			t.Fatalf("run %v: want a usage error (exit 2), got %v", args, err)
+		}
+		for _, flag := range []string{"--max-usd", "--max-tokens"} {
+			if !strings.Contains(err.Error(), flag) {
+				t.Errorf("run %v: the error should name %s, got %q", args, flag, err)
+			}
+		}
+	}
+	if err := cmdRun([]string{"--path", tmp, "--max-tokens", "100000"}); err != nil {
+		t.Fatalf("run with a token budget: %v", err)
+	}
+}

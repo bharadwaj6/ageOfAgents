@@ -58,7 +58,8 @@ type BudgetConfig struct {
 	USDPerDay    float64 `toml:"usd_per_day"`    // dollars, as the harnesses report them or [pricing] prices them
 	TokensPerDay int     `toml:"tokens_per_day"` // tokens, every attempt's
 	GoalsPerDay  int     `toml:"goals_per_day"`  // Goals started: a Goal starts when its first task is created
-	// RequireRunBudget makes `aoa run` refuse to start without --max-usd, so
+	// RequireRunBudget makes `aoa run` refuse to start without --max-usd or
+	// --max-tokens (--max-goals alone does not count), so
 	// nothing runs in this workspace unbudgeted. Default false.
 	RequireRunBudget bool `toml:"require_run_budget"`
 }

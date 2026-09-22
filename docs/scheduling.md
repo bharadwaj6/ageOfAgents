@@ -127,7 +127,8 @@ polling:
 # 1. Submit the goal and capture its id
 GOAL_ID=$(aoa goal --path . --json --source ci "fix the flaky test" | jq -r .goal_id)
 
-# 2. Reconcile with a budget bound for this run
+# 2. Reconcile with a budget bound for this run (--max-usd or --max-tokens
+#    satisfies [budget] require_run_budget)
 aoa run --path . --max-usd 5.00
 
 # 3. Block until that goal completes
