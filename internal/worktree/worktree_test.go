@@ -262,10 +262,14 @@ func TestGitDirIdentifiesTheWorkingTree(t *testing.T) {
 	require.Equal(t, real, dir)
 
 	link := filepath.Join(base, "link")
-	require.NoError(t, os.Symlink(repo.Dir, link))
-	viaLink, err := OpenRepo(link).GitDir(ctx)
-	require.NoError(t, err)
-	require.Equal(t, dir, viaLink, "the same repository reached through a symlink")
+	if err := os.Symlink(repo.Dir, link); err != nil {
+		// Unprivileged Windows cannot create one; the rest of the test still holds.
+		t.Logf("skipping the symlink case: %v", err)
+	} else {
+		viaLink, err := OpenRepo(link).GitDir(ctx)
+		require.NoError(t, err)
+		require.Equal(t, dir, viaLink, "the same repository reached through a symlink")
+	}
 
 	wt, err := repo.AddWorktree(ctx, filepath.Join(base, "wt"), "aoa/t1")
 	require.NoError(t, err)
