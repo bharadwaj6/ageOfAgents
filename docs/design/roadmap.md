@@ -65,8 +65,26 @@ date while the window it checks is counted from real event timestamps, so it pas
 was written ([#172](https://github.com/bharadwaj6/ageOfAgents/pull/172)). And `TestRunBudgetStopsNewWork`
 failed once on the Linux runner with a run budget overshooting its documented bound ($1.60 against
 $1.40), which is [#166](https://github.com/bharadwaj6/ageOfAgents/issues/166)'s race observed in the
-wild, with one worker and no decomposition; the evidence is on that issue. Next are the open questions
-below, and the follow-ups #166, #157 and #154.
+wild, with one worker and no decomposition; the evidence is on that issue.
+
+**Last status (2026-09-22, later):** the correctness backlog is swept — seven pull requests, each
+red-test-first and mutation-checked. Three of them found the issue had understated the problem:
+
+| Issue | What it turned out to be | PR |
+|---|---|---|
+| [#166](https://github.com/bharadwaj6/ageOfAgents/issues/166) | Wider than its title: *any* pass that read spend before the charge landed could dispatch work the budget had already paid for, decomposition or not. Fixed by reading spend at step 3, where the dispatch decision is made — no lock across the control loop | [#177](https://github.com/bharadwaj6/ageOfAgents/pull/177) |
+| [#131](https://github.com/bharadwaj6/ageOfAgents/issues/131) | Worse than predicted: the merge queue's **rollback** discards a commit another workspace merged, *after* that merge was recorded as `Merged` — so the Event Log claims commits that no longer exist, and 4 of 5 concurrent runs lost one. `aoa run` now locks the repository as well as the workspace | [#179](https://github.com/bharadwaj6/ageOfAgents/pull/179) |
+| [#104](https://github.com/bharadwaj6/ageOfAgents/issues/104) | The signature the issue proposed ("passed and failed") is what the *healthy* retry looks like. The real signature is content identity, so Gate verdicts now record the **tree** they ran against | [#181](https://github.com/bharadwaj6/ageOfAgents/pull/181) |
+| [#157](https://github.com/bharadwaj6/ageOfAgents/issues/157) | Local mode cut worktrees from a `HEAD` carrying an unverified candidate merge; now cut from the last Gate-verified commit, as PR mode already was | [#178](https://github.com/bharadwaj6/ageOfAgents/pull/178) |
+| [#101](https://github.com/bharadwaj6/ageOfAgents/issues/101) | Answered honestly rather than built: [ADR 018](adr/018-the-agent-is-not-confined.md) states what is true — the worktree is not a boundary, the agent inherits the environment, `sandbox` covers the Gate only — plus an `aoa doctor` check | [#176](https://github.com/bharadwaj6/ageOfAgents/pull/176) |
+| [#154](https://github.com/bharadwaj6/ageOfAgents/issues/154) | A `cli` block shadowing a preset with the same `bin` emits the same envelope, so the governor was live and the warning was false | [#175](https://github.com/bharadwaj6/ageOfAgents/pull/175) |
+| [#129](https://github.com/bharadwaj6/ageOfAgents/issues/129) | Argued for refusal rather than built: [ADR 019](adr/019-reporting-back-belongs-to-the-front-door.md) (**Proposed**, awaiting ratification) — a delivery cursor has no home inside `aoa` without a side table, and `events --json --since` already is the mechanism | [#180](https://github.com/bharadwaj6/ageOfAgents/pull/180) |
+
+What is left is not a backlog of bugs. It is **the open question above** — does the Gate change outcomes
+at scale ([#103](https://github.com/bharadwaj6/ageOfAgents/issues/103)) — which needs budget and a run,
+not a patch; the three `deferred` items (#76, #75, #71), whose label says to wait for a metric that #103
+would produce; #129's ratification; and [#182](https://github.com/bharadwaj6/ageOfAgents/issues/182), two
+timing-shaped tests that fail on slow runners and train people to hit re-run on a required check.
 
 | | Increment | Depends on |
 |---|---|---|
