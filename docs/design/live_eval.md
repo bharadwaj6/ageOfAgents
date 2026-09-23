@@ -201,6 +201,10 @@ uv run --with "swebench==4.1.0" python -m swebench.harness.run_evaluation \
 `scripts/gate_precision_run.sh INSTANCES.json BACKEND` measures precision one instance at a time: pull →
 eval → oracle → `docker rmi`, keeping peak disk to one image. It records outcomes in `RUN_DIR/results.jsonl`
 (one JSON line per instance) and skips ids already present, so a stopped run resumes from where it left off.
+Before every `aoa eval` on that instance — each arm, and the Gate-validity `mock` run — the task
+repository is reset to the commit recorded in `instances/<id>/base_sha` at prepare time
+(`scripts/gate_precision_reset.sh`), so one arm's merge cannot become the next arm's base. A resumed
+instance that has `tasks.toml` but no `base_sha` is recorded as `error`.
 The seeded sampler (`scripts/gate_precision_sample.py --n N --seed S`) selects a reproducible subset of
 instances that have a non-empty `PASS_TO_PASS`; `STOP_AFTER_REJECTIONS` (default 30) bounds the run.
 Preview the plan without touching docker with `DRY_RUN=1`, and summarise a run with

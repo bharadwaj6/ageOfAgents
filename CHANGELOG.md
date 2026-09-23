@@ -54,6 +54,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Each precision-runner eval starts from the same pristine commit.** `aoa eval` merges into the
+  instance repository, so the next arm — and the Gate-validity `mock` run — was starting from that
+  merge instead of the prepared base. The runner records the base once and resets `main` to it before
+  every eval. A resumed instance with tasks but no recorded base is an `error`.
+  ([#220](https://github.com/bharadwaj6/ageOfAgents/issues/220))
 - **`aoa doctor` and `aoa run` no longer claim a bring-your-own CLI harness reports no token usage.**
   That was a guess from the preset table, and it was wrong for any harness whose output `aoa` can parse.
   Both now say the same thing: usage is read from the harness's output if it prints an envelope `aoa`

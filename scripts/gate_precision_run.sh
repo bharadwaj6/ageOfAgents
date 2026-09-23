@@ -36,6 +36,13 @@
 # Resume: re-run the same command; any (instance, backend) pair already in
 # results.jsonl is skipped automatically.
 #
+# Every aoa eval for an instance — each backend, and the Gate-validity mock
+# run — is reset to the commit recorded in instances/<id>/base_sha when the
+# instance was prepared (scripts/gate_precision_reset.sh). aoa merges a passing
+# change into that repository's main, so without the reset the next eval would
+# start from the previous merge. A resumed instance that has tasks.toml but no
+# base_sha is recorded as error; the base is not guessed.
+#
 # Summarise (single backend or with --backend flag):
 #   uv run python scripts/precision_summary.py RUN_DIR/results.jsonl [--backend NAME]
 set -euo pipefail
@@ -272,11 +279,22 @@ PYEOF
 
     TASKS="$INST_DIR/tasks.toml"
     REPOS_DIR="$INST_DIR/repos"
+    REPO_DIR="$REPOS_DIR/$IID"
+    BASE_SHA_FILE="$INST_DIR/base_sha"
     mkdir -p "$REPOS_DIR"
     if [[ ! -f "$TASKS" ]]; then
         uv run python "$ROOT/scripts/swebench_to_tasks.py" \
             "$ONE_INST" "$REPOS_DIR" "$TASKS" \
             --gate repo --max-attempts 1
+        # Once, at prepare time. A later resume must not re-read HEAD: main may
+        # already contain a merge from an eval that ran before the runner stopped.
+        git -C "$REPO_DIR" rev-parse HEAD > "$BASE_SHA_FILE"
+    elif [[ ! -f "$BASE_SHA_FILE" ]]; then
+        echo "  FAILED: $IID has tasks.toml but no base_sha — recording error for all active backends"
+        for BACKEND in "${ACTIVE_BACKENDS[@]}"; do
+            append_result "$IID" "$REPO" "$BACKEND" "error" "null" "null" 0 0
+        done
+        continue
     fi
 
     # Pull image once (only if at least one backend still needs it).
@@ -312,6 +330,11 @@ PYEOF
 
             AOA_REPORT="$INST_DIR/aoa_report.$BACKEND.json"
 
+            # The previous arm may have merged into main. Start from the base
+            # recorded when this instance was prepared.
+            "$ROOT/scripts/gate_precision_reset.sh" \
+                "$REPO_DIR" "$(cat "$BASE_SHA_FILE")"
+
             # Run aoa eval for this backend.
             (cd "$EVAL_DIR" && \
                 TMPDIR="$RUN_DIR/tmp" "$ROOT/aoa" eval \
@@ -329,6 +352,10 @@ PYEOF
                 # Gate validity: run mock at most once per instance.
                 if [[ ! -f "$MOCK_RESULT_FILE" ]]; then
                     MOCK_REPORT="$INST_DIR/mock_report.json"
+                    # The arm above may have merged. The validity run has to
+                    # see the same pristine base as every arm.
+                    "$ROOT/scripts/gate_precision_reset.sh" \
+                        "$REPO_DIR" "$(cat "$BASE_SHA_FILE")"
                     (cd "$EVAL_DIR" && \
                         TMPDIR="$RUN_DIR/tmp" "$ROOT/aoa" eval \
                             --tasks "$TASKS" \
