@@ -134,6 +134,8 @@ counts only what failed after it started: a run that delivers cleanly exits `0` 
 left failures on the log. `aoa status` still reports every failure the workspace has ever had — that is
 the history, and this is the alert.
 
+A `SIGINT` or `SIGTERM` cancels the running agents as well: both the agent process and any subprocesses it started are stopped before `aoa` exits.
+
 ### `aoa amend`
 
 Append steering guidance to a Goal mid-run. Future dispatches pick it up; the attempt already in flight
