@@ -512,3 +512,27 @@ def test_cli_backend_in_json_output(tmp_path: Path) -> None:
     data = json.loads(proc.stdout)
     assert "backend" in data
     assert data["backend"] == "agy"
+
+
+def test_named_backend_mixed_with_unnamed_rows_is_refused(tmp_path: Path) -> None:
+    """Rows with no backend beside a named arm are a second arm, not part of the first."""
+    results = load_results(
+        _write(
+            tmp_path,
+            [
+                _row("i1", "merged", None, None),
+                _row("i2", "rejected", True, "unresolved", backend="agy"),
+            ],
+        )
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        filter_by_backend(results, None)
+    assert exc_info.value.code != 0
+
+
+def test_backend_flag_matching_no_rows_is_an_error(tmp_path: Path) -> None:
+    """A --backend that matches nothing (a typo) fails instead of summarising zero rows."""
+    results = load_results(_write(tmp_path, [_row("i1", "merged", None, None, backend="agy")]))
+    with pytest.raises(SystemExit) as exc_info:
+        filter_by_backend(results, "gork")
+    assert exc_info.value.code != 0

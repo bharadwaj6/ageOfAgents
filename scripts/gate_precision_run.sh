@@ -163,21 +163,6 @@ sys.exit(0 if any(r.get('instance_id') == iid and r.get('backend') == be for r i
 PYEOF
 }
 
-# needs_image INSTANCE_ID → exit 0 if any backend still needs this instance
-needs_image() {
-    local iid="$1"
-    for be in "${BACKEND_LIST[@]}"; do
-        if ! already_done_pair "$iid" "$be"; then
-            # at least one backend not yet done
-            python3 - <<'PYEOF'
-import sys; sys.exit(0)
-PYEOF
-            return 0
-        fi
-    done
-    return 1
-}
-
 # docker image name matching the adapter's escaping
 image_name() {
     local iid="$1"
@@ -187,19 +172,7 @@ image_name() {
 
 # count_gate_valid_rejections_for BACKEND → prints integer
 count_gate_valid_rejections_for() {
-    local backend="$1"
-    uv run python "$ROOT/scripts/aoa_eval_report.py" outcome /dev/null /dev/null 2>/dev/null || true
-    python3 - "$RESULTS" "$backend" <<'PYEOF'
-import json, sys
-path, be = sys.argv[1], sys.argv[2]
-try:
-    rows = [json.loads(l) for l in open(path) if l.strip()]
-except FileNotFoundError:
-    print(0)
-    sys.exit(0)
-print(sum(r.get('outcome') == 'rejected' and r.get('gate_valid') is True
-          and r.get('backend') == be for r in rows))
-PYEOF
+    python3 "$ROOT/scripts/aoa_eval_report.py" rejections "$RESULTS" "$1"
 }
 
 # append_result iid repo backend outcome gate_valid oracle tokens seconds
@@ -307,7 +280,7 @@ PYEOF
     fi
 
     # Pull image once (only if at least one backend still needs it).
-    IMAGE_PULLED=false
+    rm -f "$INST_DIR/image_pulled"   # a marker left by an earlier attempt must not vouch for this pull
     (
         set -euo pipefail
         echo "  docker pull $IMAGE"

@@ -7,6 +7,7 @@ one tested place.
 Usage:
     aoa_eval_report.py outcome REPORT TASK   # merged | rejected | infra | error
     aoa_eval_report.py tokens  REPORT TASK   # tokens spent, 0 if absent
+    aoa_eval_report.py rejections RESULTS BACKEND  # gate-valid rejections so far
 """
 from __future__ import annotations
 
@@ -46,8 +47,8 @@ def count_gate_valid_rejections_per_backend(results_path: Path) -> dict[str, int
     """Return a mapping of backend name -> gate-valid rejection count.
 
     Reads a results.jsonl written by gate_precision_run.sh.  Lines that have no
-    ``backend`` field are counted under the empty string ``""``.  Lines that are
-    blank or not valid JSON are silently skipped.
+    ``backend`` field are counted under the empty string ``""``.  Blank lines are
+    skipped; a corrupt line raises, because skipping it would miscount the stop rule.
     """
     counts: dict[str, int] = {}
     if not results_path.exists():
@@ -56,10 +57,7 @@ def count_gate_valid_rejections_per_backend(results_path: Path) -> dict[str, int
         raw = raw.strip()
         if not raw:
             continue
-        try:
-            row = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
+        row = json.loads(raw)
         if not isinstance(row, dict):
             continue
         backend = str(row.get("backend", ""))
@@ -73,10 +71,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("field", choices=("outcome", "tokens"))
-    ap.add_argument("report", type=Path)
-    ap.add_argument("task")
+    ap.add_argument("field", choices=("outcome", "tokens", "rejections"))
+    ap.add_argument("report", type=Path, help="aoa eval --json report, or results.jsonl for rejections")
+    ap.add_argument("task", help="task id, or the backend name for rejections")
     a = ap.parse_args()
+    if a.field == "rejections":
+        print(count_gate_valid_rejections_per_backend(a.report).get(a.task, 0))
+        return
     rep = find(json.loads(a.report.read_text()), a.task)
     print(outcome(rep) if a.field == "outcome" else tokens(rep))
 
