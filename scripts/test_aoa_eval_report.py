@@ -67,3 +67,78 @@ def test_cli(tmp_path: Path) -> None:
     assert run("outcome", str(report), "psf__requests-2317") == "rejected"
     assert run("tokens", str(report), "pallets__flask-4992") == "172897"
     assert run("outcome", str(report), "absent") == "error"
+
+
+# ── new: per-backend stop count ──────────────────────────────────────────────
+
+
+def _results_line(
+    instance_id: str,
+    backend: str,
+    outcome: str,
+    gate_valid: bool | None,
+) -> str:
+    """Return a JSON line matching the results.jsonl schema."""
+    return json.dumps(
+        {
+            "instance_id": instance_id,
+            "repo": "r",
+            "backend": backend,
+            "outcome": outcome,
+            "gate_valid": gate_valid,
+            "oracle": None,
+            "tokens": 1,
+            "seconds": 1.0,
+        }
+    )
+
+
+def test_count_gate_valid_rejections_per_backend_empty(tmp_path: Path) -> None:
+    """Returns empty dict when the file does not exist."""
+    counts = r.count_gate_valid_rejections_per_backend(tmp_path / "missing.jsonl")
+    assert counts == {}
+
+
+def test_count_gate_valid_rejections_per_backend_two_backends(tmp_path: Path) -> None:
+    """Counts gate-valid rejections per backend correctly on a two-backend results.jsonl."""
+    lines = [
+        # agy: 2 gate-valid rejections
+        _results_line("i1", "agy", "rejected", True),
+        _results_line("i2", "agy", "rejected", True),
+        # agy: not gate-valid -> does not count
+        _results_line("i3", "agy", "rejected", False),
+        # agy: merged -> does not count
+        _results_line("i4", "agy", "merged", None),
+        # grok: 1 gate-valid rejection
+        _results_line("i1", "grok", "rejected", True),
+        # grok: gate_valid None -> does not count
+        _results_line("i2", "grok", "rejected", None),
+    ]
+    path = tmp_path / "results.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    counts = r.count_gate_valid_rejections_per_backend(path)
+    assert counts.get("agy") == 2
+    assert counts.get("grok") == 1
+    # Backends with zero rejections are not present
+    assert "mock" not in counts
+
+
+def test_count_gate_valid_rejections_per_backend_no_backend_field(tmp_path: Path) -> None:
+    """Lines without a backend field are counted under the empty string key."""
+    line = json.dumps(
+        {
+            "instance_id": "i1",
+            "repo": "r",
+            "outcome": "rejected",
+            "gate_valid": True,
+            "oracle": None,
+            "tokens": 1,
+            "seconds": 1.0,
+        }
+    )
+    path = tmp_path / "results.jsonl"
+    path.write_text(line + "\n", encoding="utf-8")
+
+    counts = r.count_gate_valid_rejections_per_backend(path)
+    assert counts.get("") == 1

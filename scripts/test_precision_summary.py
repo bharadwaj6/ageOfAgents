@@ -19,6 +19,7 @@ for _p in (str(_repo_root), str(_scripts_dir)):
 try:
     from scripts.precision_summary import (
         SCREENING_WARNING,
+        filter_by_backend,
         load_results,
         summarize_results,
         wilson_score_interval,
@@ -26,6 +27,7 @@ try:
 except ModuleNotFoundError:
     from precision_summary import (  # type: ignore[no-redef]
         SCREENING_WARNING,
+        filter_by_backend,
         load_results,
         summarize_results,
         wilson_score_interval,
@@ -307,6 +309,7 @@ def test_cli_human_and_json_output(tmp_path: Path) -> None:
     assert proc_json.stdout.count("\n") == 1, "--json prints one line"
     data = json.loads(proc_json.stdout)
     assert set(data) == {
+        "backend",
         "instances",
         "outcomes",
         "rejection_rate",
@@ -372,3 +375,140 @@ def test_unknown_oracle_raises_error(tmp_path: Path) -> None:
     """An oracle value outside the contract is an error, not an exclusion."""
     with pytest.raises(ValueError, match="unknown oracle"):
         load_results(_write(tmp_path, [_rejected("x", True, "passed")]))
+
+
+# ── new: backend field tests ─────────────────────────────────────────────────
+
+
+def _row(
+    instance_id: str,
+    outcome: str,
+    gate_valid: bool | None,
+    oracle: str | None,
+    backend: str | None = None,
+) -> dict[str, Any]:
+    """Build a minimal results row, optionally with a backend field."""
+    row: dict[str, Any] = {
+        "instance_id": instance_id,
+        "repo": "r",
+        "outcome": outcome,
+        "gate_valid": gate_valid,
+        "oracle": oracle,
+        "tokens": 1,
+        "seconds": 1.0,
+    }
+    if backend is not None:
+        row["backend"] = backend
+    return row
+
+
+def test_line_without_backend_still_parses(tmp_path: Path) -> None:
+    """A line with no backend field is valid and its backend is None."""
+    path = _write(tmp_path, [_row("i1", "merged", None, None)])
+    results = load_results(path)
+    assert len(results) == 1
+    assert results[0].backend is None
+
+
+def test_two_backend_file_refused_without_flag(tmp_path: Path) -> None:
+    """filter_by_backend exits non-zero when two backends are present and no filter given."""
+    results = load_results(
+        _write(
+            tmp_path,
+            [
+                _row("i1", "merged", None, None, backend="agy"),
+                _row("i2", "rejected", True, "unresolved", backend="grok"),
+            ],
+        )
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        filter_by_backend(results, None)
+    assert exc_info.value.code != 0
+
+
+def test_two_backend_file_filtered_by_flag(tmp_path: Path) -> None:
+    """With --backend, only rows for that backend are summarised."""
+    path = _write(
+        tmp_path,
+        [
+            _row("i1", "merged", None, None, backend="agy"),
+            _row("i2", "rejected", True, "unresolved", backend="agy"),
+            _row("i3", "merged", None, None, backend="grok"),
+            _row("i4", "rejected", True, "resolved", backend="grok"),
+        ],
+    )
+    results = load_results(path)
+
+    filtered_agy, be_agy = filter_by_backend(results, "agy")
+    assert be_agy == "agy"
+    assert len(filtered_agy) == 2
+    summary_agy = summarize_results(filtered_agy, backend=be_agy)
+    assert summary_agy.total_instances == 2
+    assert summary_agy.outcomes["merged"] == 1
+    assert summary_agy.outcomes["rejected"] == 1
+    assert summary_agy.backend == "agy"
+
+    filtered_grok, be_grok = filter_by_backend(results, "grok")
+    assert be_grok == "grok"
+    summary_grok = summarize_results(filtered_grok, backend=be_grok)
+    assert summary_grok.total_instances == 2
+    assert summary_grok.backend == "grok"
+    # grok has one resolved rejection -> precision = 0.0
+    assert summary_grok.resolved_rejections == 1
+    assert summary_grok.unresolved_rejections == 0
+
+
+def test_cli_two_backend_refused(tmp_path: Path) -> None:
+    """CLI exits non-zero when two backends are present and --backend is omitted."""
+    path = _write(
+        tmp_path,
+        [
+            _row("i1", "merged", None, None, backend="agy"),
+            _row("i2", "merged", None, None, backend="grok"),
+        ],
+    )
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "backend" in proc.stderr.lower()
+
+
+def test_cli_two_backend_with_flag(tmp_path: Path) -> None:
+    """CLI succeeds with --backend and reports only that arm."""
+    path = _write(
+        tmp_path,
+        [
+            _row("i1", "merged", None, None, backend="agy"),
+            _row("i2", "rejected", True, "unresolved", backend="agy"),
+            _row("i3", "merged", None, None, backend="grok"),
+        ],
+    )
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path), "--backend", "agy"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "Backend: agy" in proc.stdout
+    assert "Instances: 2" in proc.stdout
+
+
+def test_cli_backend_in_json_output(tmp_path: Path) -> None:
+    """--json output contains a backend key."""
+    path = _write(
+        tmp_path,
+        [_row("i1", "merged", None, None, backend="agy")],
+    )
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path), "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    data = json.loads(proc.stdout)
+    assert "backend" in data
+    assert data["backend"] == "agy"

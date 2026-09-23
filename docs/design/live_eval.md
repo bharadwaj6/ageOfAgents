@@ -207,6 +207,13 @@ Preview the plan without touching docker with `DRY_RUN=1`, and summarise a run w
 `scripts/precision_summary.py RUN_DIR/results.jsonl`. `aoa eval` makes its worktrees under `RUN_DIR/tmp`, so
 a [confined harness](../harnesses/agy.md) needs its root to contain `RUN_DIR`.
 
+**Two-arm comparison.** Set `BACKENDS="agy grok"` to run two pinned backends against the same sampled
+instances: the image is pulled once per instance, each backend is evaluated in turn, and `results.jsonl`
+records one line per `(instance, backend)` pair with a `backend` field.  Each arm is stopped independently
+once it reaches `STOP_AFTER_REJECTIONS`; the other continues until its own limit.  Summarise a single arm
+with `scripts/precision_summary.py RUN_DIR/results.jsonl --backend agy`; omitting `--backend` when the
+file contains more than one backend is an error, preventing inadvertent pooling of the two arms.
+
 **Exclude sandbox faults first.** A gate that could not run is not a verdict on the patch. The first
 precision sweep (2026-08-23, 4 instances) produced 2 rejections and **both were spurious**: replaying each
 rejected patch through the same gate at `base_commit` passed (13 and 179 tests), so neither said anything
