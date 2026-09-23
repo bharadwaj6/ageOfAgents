@@ -19,6 +19,10 @@
 #                          (default 30)
 #   DRY_RUN=1            — print plan and exit without touching docker/network
 #
+# aoa eval makes its worktrees under TMPDIR, which this script sets to
+# RUN_DIR/tmp. A confined harness (see docs/harnesses/agy.md) refuses to run
+# outside its root, so that root must contain RUN_DIR.
+#
 # Output:
 #   RUN_DIR/plan.json       — sampled instance ids (written once)
 #   RUN_DIR/results.jsonl   — one JSON line per completed instance
@@ -28,7 +32,7 @@
 # is skipped automatically.
 #
 # Summarise:
-#   uv run python scripts/gate_precision.py RUN_DIR/results.jsonl ...
+#   uv run python scripts/precision_summary.py RUN_DIR/results.jsonl
 set -euo pipefail
 
 INSTANCES="${1:?usage: gate_precision_run.sh INSTANCES.json BACKEND}"
@@ -60,7 +64,7 @@ if [[ -n "$DRY_RUN" ]]; then
     uv run python "$ROOT/scripts/gate_precision_sample.py" \
         "$INSTANCES" --n "$SAMPLE" --seed "$SEED" --out "$PLAN_TMP"
 
-    N_SAMPLED="$(python3 -c "import json; print(len(json.load(open('$PLAN_TMP'))))")"
+    N_SAMPLED="$(python3 -c 'import json, sys; print(len(json.load(open(sys.argv[1]))))' "$PLAN_TMP")"
     echo "Sampled: $N_SAMPLED instances"
     echo ""
 
@@ -106,7 +110,7 @@ for _cmd in docker uv go jq; do
 done
 
 # ── setup ───────────────────────────────────────────────────────────────────
-mkdir -p "$RUN_DIR/instances"
+mkdir -p "$RUN_DIR/instances" "$RUN_DIR/tmp"
 RESULTS="$RUN_DIR/results.jsonl"
 PLAN="$RUN_DIR/plan.json"
 
@@ -144,15 +148,11 @@ image_name() {
 # count_gate_valid_rejections → prints integer
 count_gate_valid_rejections() {
     if [[ ! -f "$RESULTS" ]]; then echo 0; return; fi
-    python3 -c "
-import json
-count = 0
-for line in open('$RESULTS'):
-    r = json.loads(line)
-    if r.get('outcome') == 'rejected' and r.get('gate_valid') is True:
-        count += 1
-print(count)
-"
+    python3 - "$RESULTS" <<'PYEOF'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+print(sum(r.get('outcome') == 'rejected' and r.get('gate_valid') is True for r in rows))
+PYEOF
 }
 
 # append_result iid repo outcome gate_valid oracle tokens seconds
@@ -173,47 +173,19 @@ print(json.dumps({
 
 # instance_repo INSTANCE_ID → repo string
 instance_repo() {
-    local iid="$1"
-    python3 -c "
-import json
-raw = open('$INSTANCES').read().strip()
+    python3 - "$INSTANCES" "$1" <<'PYEOF'
+import json, sys
+raw = open(sys.argv[1]).read().strip()
 rows = json.loads(raw) if raw.startswith('[') else \
     [json.loads(l) for l in raw.splitlines() if l.strip()]
 idx = {r['instance_id']: r for r in rows}
-print(idx.get('$iid', {}).get('repo', ''))
-"
+print(idx.get(sys.argv[2], {}).get('repo', ''))
+PYEOF
 }
 
-# read_tokens AOA_REPORT IID → token count (0 if not found)
-read_tokens() {
-    python3 -c "
-import json
-reports = json.load(open('$1'))
-rep = next((r for r in reports if r.get('task') == '$2'), None)
-print(rep.get('tokens', 0) if rep else 0)
-"
-}
-
-# classify_outcome AOA_REPORT IID → merged|rejected|infra|error
-classify_outcome() {
-    python3 -c "
-import json, sys
-reports = json.load(open('$1'))
-rep = next((r for r in reports if r.get('task') == '$2'), None)
-if rep is None:
-    print('error'); sys.exit(0)
-rejected = rep.get('rejected_patches') or []
-real_rejects = [r for r in rejected if 'sandbox failure' not in (r.get('reason') or '')]
-sandbox_fails = [r for r in rejected if 'sandbox failure' in (r.get('reason') or '')]
-if rep.get('merged'):
-    print('merged')
-elif real_rejects:
-    print('rejected')
-elif sandbox_fails:
-    print('infra')
-else:
-    print('error')
-"
+# report FIELD AOA_REPORT IID → outcome (merged|rejected|infra|error) or tokens
+report() {
+    python3 "$ROOT/scripts/aoa_eval_report.py" "$@"
 }
 
 # ── per-instance loop ───────────────────────────────────────────────────────
@@ -231,7 +203,7 @@ while IFS= read -r IID; do
 
     echo ""
     echo "=== $IID ==="
-    T_START="$(date +%s%N)"
+    T_START="$(date +%s)"
 
     REPO="$(instance_repo "$IID")"
     IMAGE="$(image_name "$IID")"
@@ -257,14 +229,13 @@ while IFS= read -r IID; do
 
         # 2. Prepare a one-instance JSON and build tasks.toml
         ONE_INST="$INST_DIR/one_instance.json"
-        python3 -c "
-import json
-raw = open('$INSTANCES').read().strip()
+        python3 - "$INSTANCES" "$IID" "$ONE_INST" <<'PYEOF'
+import json, sys
+raw = open(sys.argv[1]).read().strip()
 rows = json.loads(raw) if raw.startswith('[') else \
     [json.loads(l) for l in raw.splitlines() if l.strip()]
-match = [r for r in rows if r['instance_id'] == '$IID']
-json.dump(match, open('$ONE_INST', 'w'))
-"
+json.dump([r for r in rows if r['instance_id'] == sys.argv[2]], open(sys.argv[3], 'w'))
+PYEOF
 
         TASKS="$INST_DIR/tasks.toml"
         REPOS_DIR="$INST_DIR/repos"
@@ -276,15 +247,15 @@ json.dump(match, open('$ONE_INST', 'w'))
         # Run aoa eval from EVAL_DIR so it picks up its aoa.toml
         AOA_REPORT="$INST_DIR/aoa_report.json"
         (cd "$EVAL_DIR" && \
-            "$ROOT/aoa" eval \
+            TMPDIR="$RUN_DIR/tmp" "$ROOT/aoa" eval \
                 --tasks "$TASKS" \
                 --backend "$BACKEND" \
                 --json \
         ) > "$AOA_REPORT"
 
         # 3. Classify outcome
-        CLS="$(classify_outcome "$AOA_REPORT" "$IID")"
-        TOK="$(read_tokens "$AOA_REPORT" "$IID")"
+        CLS="$(report outcome "$AOA_REPORT" "$IID")"
+        TOK="$(report tokens "$AOA_REPORT" "$IID")"
         GV="null"
         ORA="null"
 
@@ -293,18 +264,14 @@ json.dump(match, open('$ONE_INST', 'w'))
             # Gate validity: re-run with mock backend (null patch)
             MOCK_REPORT="$INST_DIR/mock_report.json"
             (cd "$EVAL_DIR" && \
-                "$ROOT/aoa" eval \
+                TMPDIR="$RUN_DIR/tmp" "$ROOT/aoa" eval \
                     --tasks "$TASKS" \
                     --backend mock \
                     --json \
             ) > "$MOCK_REPORT"
 
-            GV="$(python3 -c "
-import json
-reports = json.load(open('$MOCK_REPORT'))
-rep = next((r for r in reports if r.get('task') == '$IID'), None)
-print('true' if rep and rep.get('merged') else 'false')
-")"
+            GV=false
+            [[ "$(report outcome "$MOCK_REPORT" "$IID")" == merged ]] && GV=true
 
             # Oracle: turn rejected patch into a SWE-bench prediction and score
             PREDICTIONS="$INST_DIR/rejected_predictions.json"
@@ -336,17 +303,12 @@ print('true' if rep and rep.get('merged') else 'false')
             fi
 
             if [[ -n "$REPORT_PATH" && -f "$REPORT_PATH" ]]; then
-                ORA="$(python3 -c "
+                ORA="$(python3 - "$REPORT_PATH" "$IID" 2>/dev/null <<'PYEOF' || echo error
 import json, sys
-data = json.load(open('$REPORT_PATH'))
-inst = data.get('$IID', {})
-if inst.get('resolved') is True:
-    print('resolved')
-elif 'resolved' in inst:
-    print('unresolved')
-else:
-    print('error')
-" 2>/dev/null || echo "error")"
+inst = json.load(open(sys.argv[1])).get(sys.argv[2], {})
+print('resolved' if inst.get('resolved') is True else 'unresolved' if 'resolved' in inst else 'error')
+PYEOF
+)"
             else
                 ORA="error"
             fi
@@ -359,8 +321,7 @@ else:
         echo "$CLS $GV $ORA $TOK" > "$INST_STATUS"
     ) 2>&1 | tee "$INST_DIR/run.log" || true
 
-    T_END="$(date +%s%N)"
-    SECS="$(python3 -c "print(round(($T_END - $T_START) / 1e9, 2))")"
+    SECS=$(( $(date +%s) - T_START ))
 
     # Read outcome from status file (set inside subshell)
     if [[ -f "$INST_STATUS" ]]; then
@@ -376,12 +337,12 @@ else:
 
     append_result "$IID" "$REPO" "$OUTCOME" "$GATE_VALID_VAL" "$ORACLE_VAL" "$TOKENS" "$SECS"
     echo "  → outcome=$OUTCOME gate_valid=$GATE_VALID_VAL oracle=$ORACLE_VAL tokens=$TOKENS seconds=${SECS}s"
-done < <(python3 -c "import json; [print(i) for i in json.load(open('$PLAN'))]")
+done < <(python3 -c 'import json, sys; print(*json.load(open(sys.argv[1])), sep="\n")' "$PLAN")
 
 echo ""
 echo "=== Done ==="
 echo "  results:   $RESULTS"
-echo "  Summarise: uv run python scripts/gate_precision.py --help"
+echo "  Summarise: uv run python scripts/precision_summary.py \"$RESULTS\""
 echo ""
 FINAL_COUNT="$(count_gate_valid_rejections)"
 echo "Gate-valid rejections: $FINAL_COUNT / $STOP_AFTER_REJECTIONS"

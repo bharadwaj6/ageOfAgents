@@ -77,17 +77,11 @@ def main() -> None:
     )
     a = ap.parse_args()
 
-    instances = load_instances(a.instances)
-    pool = eligible_ids(instances)
-    if a.n > len(pool):
-        print(
-            f"error: requested {a.n} instances but only {len(pool)} "
-            f"have non-empty PASS_TO_PASS",
-            file=sys.stderr,
-        )
+    try:
+        chosen = sample(a.instances, a.n, a.seed)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
-
-    chosen = random.Random(a.seed).sample(pool, a.n)
     a.out.write_text(json.dumps(chosen, indent=2) + "\n")
     print(f"sampled {len(chosen)} instances → {a.out}", file=sys.stderr)
 
