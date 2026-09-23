@@ -41,7 +41,9 @@
 # instance was prepared (scripts/gate_precision_reset.sh). aoa merges a passing
 # change into that repository's main, so without the reset the next eval would
 # start from the previous merge. A resumed instance that has tasks.toml but no
-# base_sha is recorded as error; the base is not guessed.
+# base_sha is recorded as error; the base is not guessed. A non-zero image pull
+# records error for every active backend. A non-zero reset, aoa eval, or
+# harness command records error for that arm and does not continue it.
 #
 # Summarise (single backend or with --backend flag):
 #   uv run python scripts/precision_summary.py RUN_DIR/results.jsonl [--backend NAME]
@@ -299,14 +301,20 @@ PYEOF
 
     # Pull image once (only if at least one backend still needs it).
     rm -f "$INST_DIR/image_pulled"   # a marker left by an earlier attempt must not vouch for this pull
+    # A compound command on the left of || ignores set -e for every command
+    # inside it, including a subshell that sets -e again. Run the pipeline
+    # outside that context and keep the subshell's status.
+    set +e
     (
         set -euo pipefail
         echo "  docker pull $IMAGE"
         docker pull --platform linux/amd64 "$IMAGE"
         echo "ok" > "$INST_DIR/image_pulled"
-    ) 2>&1 | tee -a "$INST_DIR/run.log" || true
+    ) 2>&1 | tee -a "$INST_DIR/run.log"
+    pull_rc=${PIPESTATUS[0]}
+    set -e
 
-    if [[ ! -f "$INST_DIR/image_pulled" ]]; then
+    if [[ "$pull_rc" -ne 0 || ! -f "$INST_DIR/image_pulled" ]]; then
         echo "  FAILED: could not pull image for $IID — recording error for all active backends"
         for BACKEND in "${ACTIVE_BACKENDS[@]}"; do
             append_result "$IID" "$REPO" "$BACKEND" "error" "null" "null" 0 0
@@ -325,6 +333,8 @@ PYEOF
         BACKEND_STATUS="$INST_DIR/status.$BACKEND"
         rm -f "$BACKEND_STATUS"
 
+        # Same set -e constraint as the image pull above.
+        set +e
         (
             set -euo pipefail
 
@@ -408,18 +418,20 @@ PYEOF
             fi
 
             echo "$CLS $GV $ORA $TOK" > "$BACKEND_STATUS"
-        ) 2>&1 | tee -a "$INST_DIR/run.$BACKEND.log" || true
+        ) 2>&1 | tee -a "$INST_DIR/run.$BACKEND.log"
+        arm_rc=${PIPESTATUS[0]}
+        set -e
 
         SECS=$(( $(date +%s) - T_START ))
 
-        if [[ -f "$BACKEND_STATUS" ]]; then
-            read -r B_OUTCOME B_GV B_ORA B_TOK < "$BACKEND_STATUS"
-        else
+        if [[ "$arm_rc" -ne 0 || ! -f "$BACKEND_STATUS" ]]; then
             echo "  FAILED: no status written for $IID/$BACKEND — recording error"
             B_OUTCOME="error"
             B_GV="null"
             B_ORA="null"
             B_TOK=0
+        else
+            read -r B_OUTCOME B_GV B_ORA B_TOK < "$BACKEND_STATUS"
         fi
 
         append_result "$IID" "$REPO" "$BACKEND" "$B_OUTCOME" "$B_GV" "$B_ORA" "$B_TOK" "$SECS"

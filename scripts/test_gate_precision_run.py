@@ -113,6 +113,24 @@ print(json.dumps([{
 """
 )
 
+# "bad" exits before writing a report. That arm is error; the other arm is the
+# report it wrote.
+AOA_FAILS_ONE = (
+    """#!/usr/bin/env bash
+set -euo pipefail
+"""
+    + _AOA_BACKEND_PARSE
+    + """if [[ "$backend" == "bad" ]]; then
+    exit 1
+fi
+python3 -c 'import json, os
+print(json.dumps([{
+    "task": os.environ["AOA_STUB_TASK"],
+    "metrics": {"merged": 1, "tokens_total": 3},
+}]))'
+"""
+)
+
 # Records the HEAD it was given, then merges an empty commit the way aoa would,
 # so the next eval is wrong unless the runner resets again. "bad" is rejected;
 # every other backend, including the Gate-validity mock, merges.
@@ -142,6 +160,12 @@ print(json.dumps([body]))' "$merged"
 DOCKER_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
 exit 0
+"""
+
+# Every docker command fails. The pull is the one the runner must honour.
+DOCKER_FAILS = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$DOCKER_LOG"
+exit 1
 """
 
 
@@ -207,12 +231,17 @@ def _stage(tmp_path: Path) -> Path:
     return root
 
 
-def _install_stubs(tmp_path: Path, aoa_body: str, uv_body: str) -> Path:
+def _install_stubs(
+    tmp_path: Path,
+    aoa_body: str,
+    uv_body: str,
+    docker_body: str = DOCKER_STUB,
+) -> Path:
     bindir = tmp_path / "bin"
     _exe(tmp_path / "aoa-stub", aoa_body)
     _exe(bindir / "go", GO_STUB)
     _exe(bindir / "uv", uv_body)
-    _exe(bindir / "docker", DOCKER_STUB)
+    _exe(bindir / "docker", docker_body)
     _exe(bindir / "jq", "#!/usr/bin/env bash\nexit 0\n")
     return bindir
 
@@ -324,6 +353,75 @@ def test_runner_records_base_sha_after_prepare(tmp_path: Path) -> None:
     assert recorded == _git(repo, "rev-parse", "HEAD").strip()
     assert _aoa_log(tmp_path) == [f"ok {recorded}"]
     assert _results(run_dir)[0]["outcome"] == "merged"
+
+
+def test_runner_records_error_when_eval_fails(tmp_path: Path) -> None:
+    root = _stage(tmp_path)
+    run_dir = tmp_path / "run"
+    repo = run_dir / "instances" / IID / "repos" / IID
+    base = _init_repo(repo)
+    inst = run_dir / "instances" / IID
+    (inst / "tasks.toml").write_text(f'name = "{IID}"\n')
+    (inst / "base_sha").write_text(base + "\n")
+    _plan(run_dir)
+    bindir = _install_stubs(tmp_path, AOA_FAILS_ONE, UV_NOOP)
+    env = _env(tmp_path, run_dir, repo, bindir, "bad other")
+
+    proc = _run(root, _instances(tmp_path), env)
+
+    detail = proc.stdout[-2000:] + proc.stderr[-2000:]
+    assert proc.returncode == 0, detail
+    seen = [line.split()[0] for line in _aoa_log(tmp_path)]
+    assert seen == ["bad", "other"], detail
+    rows = {str(row["backend"]): row for row in _results(run_dir)}
+    assert rows["bad"]["outcome"] == "error"
+    assert rows["other"]["outcome"] == "merged"
+    assert rows["other"]["tokens"] == 3
+
+
+def test_runner_records_error_when_reset_fails(tmp_path: Path) -> None:
+    root = _stage(tmp_path)
+    run_dir = tmp_path / "run"
+    repo = run_dir / "instances" / IID / "repos" / IID
+    _init_repo(repo)
+    inst = run_dir / "instances" / IID
+    (inst / "tasks.toml").write_text(f'name = "{IID}"\n')
+    (inst / "base_sha").write_text("0123456789abcdef0123456789abcdef01234567\n")
+    _plan(run_dir)
+    bindir = _install_stubs(tmp_path, AOA_MERGED, UV_NOOP)
+    env = _env(tmp_path, run_dir, repo, bindir, "bad other")
+
+    proc = _run(root, _instances(tmp_path), env)
+
+    detail = proc.stdout[-2000:] + proc.stderr[-2000:]
+    assert proc.returncode == 0, detail
+    assert _aoa_log(tmp_path) == [], detail
+    rows = _results(run_dir)
+    assert [row["backend"] for row in rows] == ["bad", "other"]
+    assert [row["outcome"] for row in rows] == ["error", "error"]
+
+
+def test_runner_records_error_when_pull_fails(tmp_path: Path) -> None:
+    root = _stage(tmp_path)
+    run_dir = tmp_path / "run"
+    repo = run_dir / "instances" / IID / "repos" / IID
+    base = _init_repo(repo)
+    inst = run_dir / "instances" / IID
+    (inst / "tasks.toml").write_text(f'name = "{IID}"\n')
+    (inst / "base_sha").write_text(base + "\n")
+    _plan(run_dir)
+    bindir = _install_stubs(tmp_path, AOA_MERGED, UV_NOOP, DOCKER_FAILS)
+    env = _env(tmp_path, run_dir, repo, bindir, "bad other")
+
+    proc = _run(root, _instances(tmp_path), env)
+
+    detail = proc.stdout[-2000:] + proc.stderr[-2000:]
+    assert proc.returncode == 0, detail
+    assert _aoa_log(tmp_path) == [], detail
+    assert not (inst / "image_pulled").exists()
+    rows = _results(run_dir)
+    assert [row["backend"] for row in rows] == ["bad", "other"]
+    assert [row["outcome"] for row in rows] == ["error", "error"]
 
 
 def test_runner_errors_when_resumed_without_base_sha(tmp_path: Path) -> None:

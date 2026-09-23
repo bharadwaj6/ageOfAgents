@@ -8,7 +8,9 @@
 # Usage: gate_precision_reset.sh REPO BASE_SHA
 #
 # Prints nothing on success. Exits non-zero with a message on stderr when REPO
-# is not a git repository or BASE_SHA is not a commit in it.
+# is not a git repository or BASE_SHA is not a commit in it. A worktree whose
+# directory is already gone (aoa eval deletes its temporary worktrees and leaves
+# the registration) is pruned.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -34,8 +36,13 @@ git -C "$REPO" reset --hard --quiet "$BASE_SHA"
 git -C "$REPO" clean --quiet -fdx
 
 # A preserved aoa worktree keeps its branch checked out, so the branch cannot
-# be deleted until that worktree is gone. Compare physical paths: a linked
-# checkout and `rev-parse --show-toplevel` can disagree on a symlinked prefix.
+# be deleted until that worktree is gone. aoa eval also deletes temporary
+# worktrees without unregistering them. Prune those first: `cd` into a missing
+# directory aborts this script, and its branch stays locked until the
+# registration is gone. Skip any entry whose path still does not exist.
+# Compare physical paths: a linked checkout and `rev-parse --show-toplevel`
+# can disagree on a symlinked prefix.
+git -C "$REPO" worktree prune
 primary="$(git -C "$REPO" rev-parse --show-toplevel)"
 primary="$(cd "$primary" && pwd -P)"
 while IFS= read -r line; do
@@ -43,6 +50,9 @@ while IFS= read -r line; do
         worktree\ *) wt="${line#worktree }" ;;
         *) continue ;;
     esac
+    if [[ ! -d "$wt" ]]; then
+        continue
+    fi
     wt_phys="$(cd "$wt" && pwd -P)"
     if [[ -z "$wt_phys" || "$wt_phys" == "$primary" ]]; then
         continue

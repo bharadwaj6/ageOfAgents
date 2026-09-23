@@ -204,7 +204,9 @@ eval → oracle → `docker rmi`, keeping peak disk to one image. It records out
 Before every `aoa eval` on that instance — each arm, and the Gate-validity `mock` run — the task
 repository is reset to the commit recorded in `instances/<id>/base_sha` at prepare time
 (`scripts/gate_precision_reset.sh`), so one arm's merge cannot become the next arm's base. A resumed
-instance that has `tasks.toml` but no `base_sha` is recorded as `error`.
+instance that has `tasks.toml` but no `base_sha` is recorded as `error`. So is an arm whose reset, eval,
+or harness command fails, and every active arm when the image pull fails. The reset prunes worktree
+registrations whose directory `aoa eval` has already deleted.
 The seeded sampler (`scripts/gate_precision_sample.py --n N --seed S`) selects a reproducible subset of
 instances that have a non-empty `PASS_TO_PASS`; `STOP_AFTER_REJECTIONS` (default 30) bounds the run.
 Preview the plan without touching docker with `DRY_RUN=1`, and summarise a run with
