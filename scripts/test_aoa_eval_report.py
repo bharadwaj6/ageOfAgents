@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import aoa_eval_report as r
+import pytest
 
 SCRIPT = Path(__file__).resolve().parent / "aoa_eval_report.py"
 
@@ -142,3 +143,37 @@ def test_count_gate_valid_rejections_per_backend_no_backend_field(tmp_path: Path
 
     counts = r.count_gate_valid_rejections_per_backend(path)
     assert counts.get("") == 1
+
+
+def test_cli_rejections_counts_one_backend(tmp_path: Path) -> None:
+    """The runner's stop rule reads the per-backend count through the CLI."""
+    path = tmp_path / "results.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                _results_line("i1", "agy", "rejected", True),
+                _results_line("i2", "agy", "rejected", True),
+                _results_line("i1", "grok", "rejected", True),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def run(*args: str) -> str:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *args], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    assert run("rejections", str(path), "agy") == "2"
+    assert run("rejections", str(path), "grok") == "1"
+    assert run("rejections", str(path), "mock") == "0"
+    assert run("rejections", str(tmp_path / "missing.jsonl"), "agy") == "0"
+
+
+def test_count_rejects_a_corrupt_results_line(tmp_path: Path) -> None:
+    """A corrupt results line stops the run loudly; silently skipping it would miscount."""
+    path = tmp_path / "results.jsonl"
+    path.write_text(_results_line("i1", "agy", "rejected", True) + "\n{not json\n", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        r.count_gate_valid_rejections_per_backend(path)

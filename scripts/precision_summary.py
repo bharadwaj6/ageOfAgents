@@ -182,33 +182,28 @@ def filter_by_backend(
     """Return (filtered_results, effective_backend_name).
 
     When *backend* is given, keep only rows for that backend and return it as
-    the effective name.  When *backend* is None and the file contains more than
-    one distinct backend value, raise SystemExit with an informative message
-    rather than silently pooling two arms.  Lines without a ``backend`` field
-    (value None) are treated as belonging to a single unnamed arm and are
-    accepted as long as no named arm is also present.
+    the effective name; a name that matches no row is an error, not an empty
+    summary. When *backend* is None and the file holds more than one arm, exit
+    non-zero rather than pool them. Rows without a ``backend`` field are an arm
+    of their own, so they never pool with a named one.
     """
     if backend is not None:
         filtered = [r for r in results if r.backend == backend]
+        if not filtered:
+            print(f"error: no rows for backend {backend!r}", file=sys.stderr)
+            sys.exit(1)
         return filtered, backend
 
     backends: set[str | None] = {r.backend for r in results}
-    # Strip out None only if there are also named backends; if everything is
-    # None the file is a single-arm run and that's fine.
-    named = {b for b in backends if b is not None}
-    if len(named) > 1:
-        names = ", ".join(sorted(named))
+    if len(backends) > 1:
+        names = ", ".join(sorted(b if b is not None else "(no backend)" for b in backends))
         print(
             f"error: results file contains more than one backend ({names}); "
             "use --backend NAME to summarise a single arm",
             file=sys.stderr,
         )
         sys.exit(1)
-
-    # Exactly one named backend (possibly alongside None rows) or all-None:
-    # accept as-is; determine the canonical name.
-    effective: str | None = next(iter(named)) if named else None
-    return results, effective
+    return results, next(iter(backends), None)
 
 
 def summarize_results(
