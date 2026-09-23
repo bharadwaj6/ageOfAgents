@@ -8,6 +8,10 @@ Input schema contract (results.jsonl, one JSON object per line):
   {"instance_id": "...", "repo": "...", "outcome": "...",
    "gate_valid": true|false|null, "oracle": "...",
    "tokens": 123456, "seconds": 412.5}
+
+The optional ``backend`` field is used when a results file contains rows from
+more than one backend arm.  Use ``--backend NAME`` to summarise a single arm;
+without it the tool exits non-zero if the file mixes backends.
 """
 
 import argparse
@@ -46,6 +50,7 @@ class InstanceResult:
     oracle: str | None
     tokens: int
     seconds: float
+    backend: str | None
 
 
 @dataclass(frozen=True)
@@ -63,10 +68,12 @@ class PrecisionSummary:
     exclusions: dict[str, list[str]]
     rejections_by_repo: dict[str, int]
     warning: str | None
+    backend: str | None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert summary metrics to a serializable dictionary, one key per metric."""
         return {
+            "backend": self.backend,
             "instances": self.total_instances,
             "outcomes": dict(self.outcomes),
             "rejection_rate": self.rejection_rate,
@@ -145,6 +152,9 @@ def parse_results(
                 f"for instance {row.get('instance_id')!r}"
             )
 
+        backend_raw = row.get("backend")
+        backend: str | None = str(backend_raw) if backend_raw is not None else None
+
         results.append(
             InstanceResult(
                 instance_id=str(row["instance_id"]),
@@ -154,6 +164,7 @@ def parse_results(
                 oracle=oracle,
                 tokens=int(row.get("tokens", 0)),
                 seconds=float(row.get("seconds", 0.0)),
+                backend=backend,
             )
         )
     return results
@@ -165,7 +176,44 @@ def load_results(path: Path) -> list[InstanceResult]:
         return parse_results(f, source_name=str(path))
 
 
-def summarize_results(results: list[InstanceResult]) -> PrecisionSummary:
+def filter_by_backend(
+    results: list[InstanceResult], backend: str | None
+) -> tuple[list[InstanceResult], str | None]:
+    """Return (filtered_results, effective_backend_name).
+
+    When *backend* is given, keep only rows for that backend and return it as
+    the effective name.  When *backend* is None and the file contains more than
+    one distinct backend value, raise SystemExit with an informative message
+    rather than silently pooling two arms.  Lines without a ``backend`` field
+    (value None) are treated as belonging to a single unnamed arm and are
+    accepted as long as no named arm is also present.
+    """
+    if backend is not None:
+        filtered = [r for r in results if r.backend == backend]
+        return filtered, backend
+
+    backends: set[str | None] = {r.backend for r in results}
+    # Strip out None only if there are also named backends; if everything is
+    # None the file is a single-arm run and that's fine.
+    named = {b for b in backends if b is not None}
+    if len(named) > 1:
+        names = ", ".join(sorted(named))
+        print(
+            f"error: results file contains more than one backend ({names}); "
+            "use --backend NAME to summarise a single arm",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Exactly one named backend (possibly alongside None rows) or all-None:
+    # accept as-is; determine the canonical name.
+    effective: str | None = next(iter(named)) if named else None
+    return results, effective
+
+
+def summarize_results(
+    results: list[InstanceResult], backend: str | None = None
+) -> "PrecisionSummary":
     """Compute precision, rejection rate, exclusions, and Wilson interval."""
     total_instances = len(results)
     outcomes: dict[str, int] = {
@@ -229,12 +277,16 @@ def summarize_results(results: list[InstanceResult]) -> PrecisionSummary:
         exclusions=exclusions,
         rejections_by_repo=rejections_by_repo,
         warning=warning,
+        backend=backend,
     )
 
 
 def format_human(summary: PrecisionSummary) -> str:
     """Format the PrecisionSummary into human-readable text."""
-    lines: list[str] = [
+    lines: list[str] = []
+    if summary.backend is not None:
+        lines.append(f"Backend: {summary.backend}")
+    lines += [
         f"Instances: {summary.total_instances}",
         "Outcomes:",
         f"  merged: {summary.outcomes.get('merged', 0)}",
@@ -303,6 +355,12 @@ def main() -> None:
         dest="json_output",
         help="Print summary as a single JSON object",
     )
+    parser.add_argument(
+        "--backend",
+        metavar="NAME",
+        default=None,
+        help="Summarise only rows for this backend",
+    )
     args = parser.parse_args()
 
     if not args.results.exists():
@@ -310,8 +368,9 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        results = load_results(args.results)
-        summary = summarize_results(results)
+        all_results = load_results(args.results)
+        filtered, effective_backend = filter_by_backend(all_results, args.backend)
+        summary = summarize_results(filtered, backend=effective_backend)
     except (ValueError, TypeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)

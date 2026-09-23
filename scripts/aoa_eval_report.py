@@ -42,8 +42,37 @@ def tokens(rep: dict | None) -> int:
     return int(((rep or {}).get("metrics") or {}).get("tokens_total") or 0)
 
 
+def count_gate_valid_rejections_per_backend(results_path: Path) -> dict[str, int]:
+    """Return a mapping of backend name -> gate-valid rejection count.
+
+    Reads a results.jsonl written by gate_precision_run.sh.  Lines that have no
+    ``backend`` field are counted under the empty string ``""``.  Lines that are
+    blank or not valid JSON are silently skipped.
+    """
+    counts: dict[str, int] = {}
+    if not results_path.exists():
+        return counts
+    for raw in results_path.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        backend = str(row.get("backend", ""))
+        if row.get("outcome") == "rejected" and row.get("gate_valid") is True:
+            counts[backend] = counts.get(backend, 0) + 1
+    return counts
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    """CLI entry point."""
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("field", choices=("outcome", "tokens"))
     ap.add_argument("report", type=Path)
     ap.add_argument("task")

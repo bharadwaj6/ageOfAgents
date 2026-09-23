@@ -8,7 +8,12 @@
 # Usage:
 #   scripts/gate_precision_run.sh INSTANCES.json BACKEND
 #
+# Multi-backend usage (two pre-registered arms, same instances):
+#   BACKENDS="agy grok" scripts/gate_precision_run.sh INSTANCES.json
+#
 # Environment variables (all optional):
+#   BACKENDS             — space-separated list of backends to run per instance;
+#                          when set, the BACKEND positional argument is ignored
 #   SAMPLE               — number of instances to evaluate (default 100)
 #   SEED                 — sampling seed (default 103)
 #   RUN_DIR              — directory for all run output (default gp-runs/<run-id>)
@@ -16,7 +21,7 @@
 #                          (backend plugins, conventions_file) from here
 #                          (default: repo root)
 #   STOP_AFTER_REJECTIONS — stop once this many gate_valid rejections are seen
-#                          (default 30)
+#                          per backend (default 30)
 #   DRY_RUN=1            — print plan and exit without touching docker/network
 #
 # aoa eval makes its worktrees under TMPDIR, which this script sets to
@@ -25,18 +30,19 @@
 #
 # Output:
 #   RUN_DIR/plan.json       — sampled instance ids (written once)
-#   RUN_DIR/results.jsonl   — one JSON line per completed instance
+#   RUN_DIR/results.jsonl   — one JSON line per (instance, backend)
 #   RUN_DIR/instances/      — per-instance workdirs (tasks, reports, patches)
 #
-# Resume: re-run the same command; any instance id already in results.jsonl
-# is skipped automatically.
+# Resume: re-run the same command; any (instance, backend) pair already in
+# results.jsonl is skipped automatically.
 #
-# Summarise:
-#   uv run python scripts/precision_summary.py RUN_DIR/results.jsonl
+# Summarise (single backend or with --backend flag):
+#   uv run python scripts/precision_summary.py RUN_DIR/results.jsonl [--backend NAME]
 set -euo pipefail
 
 INSTANCES="${1:?usage: gate_precision_run.sh INSTANCES.json BACKEND}"
-BACKEND="${2:?usage: gate_precision_run.sh INSTANCES.json BACKEND}"
+# BACKEND positional arg is used only when BACKENDS env var is not set.
+_BACKEND_ARG="${2:-}"
 
 SAMPLE="${SAMPLE:-100}"
 SEED="${SEED:-103}"
@@ -49,11 +55,23 @@ EVAL_DIR="${EVAL_DIR:-$ROOT}"
 RUN_ID="gp-$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="${RUN_DIR:-$ROOT/gp-runs/$RUN_ID}"
 
+# Resolve backends list: BACKENDS env var overrides positional BACKEND arg.
+if [[ -n "${BACKENDS:-}" ]]; then
+    # shellcheck disable=SC2206
+    BACKEND_LIST=($BACKENDS)
+else
+    if [[ -z "$_BACKEND_ARG" ]]; then
+        echo "error: supply BACKEND positional arg or set BACKENDS env var" >&2
+        exit 1
+    fi
+    BACKEND_LIST=("$_BACKEND_ARG")
+fi
+
 # ── dry-run path (no docker, no network) ───────────────────────────────────
 if [[ -n "$DRY_RUN" ]]; then
     echo "=== Gate precision dry run ==="
     echo "  INSTANCES:  $INSTANCES"
-    echo "  BACKEND:    $BACKEND"
+    echo "  BACKENDS:   ${BACKEND_LIST[*]}"
     echo "  SAMPLE:     $SAMPLE"
     echo "  SEED:       $SEED"
     echo "  STOP_AFTER_REJECTIONS: $STOP_AFTER_REJECTIONS"
@@ -96,8 +114,8 @@ PYEOF
     echo ""
     echo "Assumptions:"
     echo "  ~3 GB peak disk (one image at a time: pull → eval → docker rmi)"
-    echo "  ~10–20 minutes per instance"
-    echo "  Total estimate: $SAMPLE instances × 10–20 min = $((SAMPLE * 10))–$((SAMPLE * 20)) minutes"
+    echo "  ~10–20 minutes per instance per backend"
+    echo "  Total estimate: $SAMPLE instances × ${#BACKEND_LIST[@]} backend(s) × 10–20 min"
     exit 0
 fi
 
@@ -116,7 +134,7 @@ PLAN="$RUN_DIR/plan.json"
 
 echo "=== Gate precision run: $RUN_ID ==="
 echo "  RUN_DIR:  $RUN_DIR"
-echo "  BACKEND:  $BACKEND"
+echo "  BACKENDS: ${BACKEND_LIST[*]}"
 echo "  SAMPLE:   $SAMPLE  SEED: $SEED  STOP_AFTER: $STOP_AFTER_REJECTIONS"
 echo ""
 
@@ -132,10 +150,32 @@ fi
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
-# already_done INSTANCE_ID → exit 0 if result recorded, else exit 1
-already_done() {
+# already_done_pair INSTANCE_ID BACKEND → exit 0 if (iid, backend) result recorded
+already_done_pair() {
     local iid="$1"
-    [[ -f "$RESULTS" ]] && grep -q "\"instance_id\": \"$iid\"" "$RESULTS"
+    local backend="$2"
+    [[ -f "$RESULTS" ]] && \
+        python3 - "$RESULTS" "$iid" "$backend" <<'PYEOF'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+iid, be = sys.argv[2], sys.argv[3]
+sys.exit(0 if any(r.get('instance_id') == iid and r.get('backend') == be for r in rows) else 1)
+PYEOF
+}
+
+# needs_image INSTANCE_ID → exit 0 if any backend still needs this instance
+needs_image() {
+    local iid="$1"
+    for be in "${BACKEND_LIST[@]}"; do
+        if ! already_done_pair "$iid" "$be"; then
+            # at least one backend not yet done
+            python3 - <<'PYEOF'
+import sys; sys.exit(0)
+PYEOF
+            return 0
+        fi
+    done
+    return 1
 }
 
 # docker image name matching the adapter's escaping
@@ -145,30 +185,38 @@ image_name() {
     echo "swebench/sweb.eval.x86_64.${escaped}:latest"
 }
 
-# count_gate_valid_rejections → prints integer
-count_gate_valid_rejections() {
-    if [[ ! -f "$RESULTS" ]]; then echo 0; return; fi
-    python3 - "$RESULTS" <<'PYEOF'
+# count_gate_valid_rejections_for BACKEND → prints integer
+count_gate_valid_rejections_for() {
+    local backend="$1"
+    uv run python "$ROOT/scripts/aoa_eval_report.py" outcome /dev/null /dev/null 2>/dev/null || true
+    python3 - "$RESULTS" "$backend" <<'PYEOF'
 import json, sys
-rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
-print(sum(r.get('outcome') == 'rejected' and r.get('gate_valid') is True for r in rows))
+path, be = sys.argv[1], sys.argv[2]
+try:
+    rows = [json.loads(l) for l in open(path) if l.strip()]
+except FileNotFoundError:
+    print(0)
+    sys.exit(0)
+print(sum(r.get('outcome') == 'rejected' and r.get('gate_valid') is True
+          and r.get('backend') == be for r in rows))
 PYEOF
 }
 
-# append_result iid repo outcome gate_valid oracle tokens seconds
+# append_result iid repo backend outcome gate_valid oracle tokens seconds
 append_result() {
     python3 -c "
 import json, sys
 print(json.dumps({
     'instance_id': sys.argv[1],
     'repo': sys.argv[2],
-    'outcome': sys.argv[3],
-    'gate_valid': None if sys.argv[4] == 'null' else (sys.argv[4] == 'true'),
-    'oracle': None if sys.argv[5] == 'null' else sys.argv[5],
-    'tokens': int(sys.argv[6]),
-    'seconds': float(sys.argv[7]),
+    'backend': sys.argv[3],
+    'outcome': sys.argv[4],
+    'gate_valid': None if sys.argv[5] == 'null' else (sys.argv[5] == 'true'),
+    'oracle': None if sys.argv[6] == 'null' else sys.argv[6],
+    'tokens': int(sys.argv[7]),
+    'seconds': float(sys.argv[8]),
 }))
-" "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$RESULTS"
+" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >> "$RESULTS"
 }
 
 # instance_repo INSTANCE_ID → repo string
@@ -188,47 +236,58 @@ report() {
     python3 "$ROOT/scripts/aoa_eval_report.py" "$@"
 }
 
+# is_backend_stopped BACKEND → exit 0 if that backend has reached its stop limit
+is_backend_stopped() {
+    local backend="$1"
+    local cnt
+    cnt="$(count_gate_valid_rejections_for "$backend")"
+    (( cnt >= STOP_AFTER_REJECTIONS ))
+}
+
 # ── per-instance loop ───────────────────────────────────────────────────────
 while IFS= read -r IID; do
-    GATE_VALID_COUNT="$(count_gate_valid_rejections)"
-    if (( GATE_VALID_COUNT >= STOP_AFTER_REJECTIONS )); then
-        echo "Reached STOP_AFTER_REJECTIONS=$STOP_AFTER_REJECTIONS gate-valid rejections. Stopping."
+
+    # Check if every backend has already stopped (reached its own limit).
+    ALL_STOPPED=true
+    for BACKEND in "${BACKEND_LIST[@]}"; do
+        if ! is_backend_stopped "$BACKEND"; then
+            ALL_STOPPED=false
+            break
+        fi
+    done
+    if [[ "$ALL_STOPPED" == "true" ]]; then
+        echo "All backends reached STOP_AFTER_REJECTIONS=$STOP_AFTER_REJECTIONS. Stopping."
         break
     fi
-
-    if already_done "$IID"; then
-        echo "  skip $IID (already in results.jsonl)"
-        continue
-    fi
-
-    echo ""
-    echo "=== $IID ==="
-    T_START="$(date +%s)"
 
     REPO="$(instance_repo "$IID")"
     IMAGE="$(image_name "$IID")"
     INST_DIR="$RUN_DIR/instances/$IID"
     mkdir -p "$INST_DIR"
 
-    OUTCOME="error"
-    GATE_VALID_VAL="null"
-    ORACLE_VAL="null"
-    TOKENS=0
+    # Determine which backends still need to run for this instance.
+    ACTIVE_BACKENDS=()
+    for BACKEND in "${BACKEND_LIST[@]}"; do
+        if is_backend_stopped "$BACKEND"; then
+            continue
+        fi
+        if already_done_pair "$IID" "$BACKEND"; then
+            echo "  skip $IID/$BACKEND (already in results.jsonl)"
+            continue
+        fi
+        ACTIVE_BACKENDS+=("$BACKEND")
+    done
 
-    # Use a temp file to communicate per-instance success to the outer shell.
-    INST_STATUS="$INST_DIR/status"
-    rm -f "$INST_STATUS"
+    if [[ ${#ACTIVE_BACKENDS[@]} -eq 0 ]]; then
+        continue
+    fi
 
-    # Subshell per instance: failures record 'error' without aborting the run.
-    (
-        set -euo pipefail
+    echo ""
+    echo "=== $IID (backends: ${ACTIVE_BACKENDS[*]}) ==="
 
-        # 1. Pull image
-        echo "  docker pull $IMAGE"
-        docker pull --platform linux/amd64 "$IMAGE"
-
-        # 2. Prepare a one-instance JSON and build tasks.toml
-        ONE_INST="$INST_DIR/one_instance.json"
+    # Prepare instance files once (idempotent).
+    ONE_INST="$INST_DIR/one_instance.json"
+    if [[ ! -f "$ONE_INST" ]]; then
         python3 - "$INSTANCES" "$IID" "$ONE_INST" <<'PYEOF'
 import json, sys
 raw = open(sys.argv[1]).read().strip()
@@ -236,113 +295,153 @@ rows = json.loads(raw) if raw.startswith('[') else \
     [json.loads(l) for l in raw.splitlines() if l.strip()]
 json.dump([r for r in rows if r['instance_id'] == sys.argv[2]], open(sys.argv[3], 'w'))
 PYEOF
+    fi
 
-        TASKS="$INST_DIR/tasks.toml"
-        REPOS_DIR="$INST_DIR/repos"
-        mkdir -p "$REPOS_DIR"
+    TASKS="$INST_DIR/tasks.toml"
+    REPOS_DIR="$INST_DIR/repos"
+    mkdir -p "$REPOS_DIR"
+    if [[ ! -f "$TASKS" ]]; then
         uv run python "$ROOT/scripts/swebench_to_tasks.py" \
             "$ONE_INST" "$REPOS_DIR" "$TASKS" \
             --gate repo --max-attempts 1
+    fi
 
-        # Run aoa eval from EVAL_DIR so it picks up its aoa.toml
-        AOA_REPORT="$INST_DIR/aoa_report.json"
-        (cd "$EVAL_DIR" && \
-            TMPDIR="$RUN_DIR/tmp" "$ROOT/aoa" eval \
-                --tasks "$TASKS" \
-                --backend "$BACKEND" \
-                --json \
-        ) > "$AOA_REPORT"
+    # Pull image once (only if at least one backend still needs it).
+    IMAGE_PULLED=false
+    (
+        set -euo pipefail
+        echo "  docker pull $IMAGE"
+        docker pull --platform linux/amd64 "$IMAGE"
+        echo "ok" > "$INST_DIR/image_pulled"
+    ) 2>&1 | tee -a "$INST_DIR/run.log" || true
 
-        # 3. Classify outcome
-        CLS="$(report outcome "$AOA_REPORT" "$IID")"
-        TOK="$(report tokens "$AOA_REPORT" "$IID")"
-        GV="null"
-        ORA="null"
+    if [[ ! -f "$INST_DIR/image_pulled" ]]; then
+        echo "  FAILED: could not pull image for $IID — recording error for all active backends"
+        for BACKEND in "${ACTIVE_BACKENDS[@]}"; do
+            append_result "$IID" "$REPO" "$BACKEND" "error" "null" "null" 0 0
+        done
+        continue
+    fi
 
-        # 4. If rejected: gate validity + oracle
-        if [[ "$CLS" == "rejected" ]]; then
-            # Gate validity: re-run with mock backend (null patch)
-            MOCK_REPORT="$INST_DIR/mock_report.json"
+    # Gate-validity result cache for this instance (run at most once).
+    # "unknown" = not yet checked; "true"/"false" = result cached.
+    MOCK_RESULT_FILE="$INST_DIR/mock_result"
+
+    # ── per-backend loop ────────────────────────────────────────────────
+    for BACKEND in "${ACTIVE_BACKENDS[@]}"; do
+        T_START="$(date +%s)"
+
+        BACKEND_STATUS="$INST_DIR/status.$BACKEND"
+        rm -f "$BACKEND_STATUS"
+
+        (
+            set -euo pipefail
+
+            AOA_REPORT="$INST_DIR/aoa_report.$BACKEND.json"
+
+            # Run aoa eval for this backend.
             (cd "$EVAL_DIR" && \
                 TMPDIR="$RUN_DIR/tmp" "$ROOT/aoa" eval \
                     --tasks "$TASKS" \
-                    --backend mock \
+                    --backend "$BACKEND" \
                     --json \
-            ) > "$MOCK_REPORT"
+            ) > "$AOA_REPORT"
 
-            GV=false
-            [[ "$(report outcome "$MOCK_REPORT" "$IID")" == merged ]] && GV=true
+            CLS="$(report outcome "$AOA_REPORT" "$IID")"
+            TOK="$(report tokens  "$AOA_REPORT" "$IID")"
+            GV="null"
+            ORA="null"
 
-            # Oracle: turn rejected patch into a SWE-bench prediction and score
-            PREDICTIONS="$INST_DIR/rejected_predictions.json"
-            uv run python "$ROOT/scripts/gate_precision.py" \
-                "$AOA_REPORT" "$PREDICTIONS"
+            if [[ "$CLS" == "rejected" ]]; then
+                # Gate validity: run mock at most once per instance.
+                if [[ ! -f "$MOCK_RESULT_FILE" ]]; then
+                    MOCK_REPORT="$INST_DIR/mock_report.json"
+                    (cd "$EVAL_DIR" && \
+                        TMPDIR="$RUN_DIR/tmp" "$ROOT/aoa" eval \
+                            --tasks "$TASKS" \
+                            --backend mock \
+                            --json \
+                    ) > "$MOCK_REPORT"
+                    if [[ "$(report outcome "$MOCK_REPORT" "$IID")" == merged ]]; then
+                        echo "true" > "$MOCK_RESULT_FILE"
+                    else
+                        echo "false" > "$MOCK_RESULT_FILE"
+                    fi
+                fi
+                GV="$(cat "$MOCK_RESULT_FILE")"
 
-            # Run swebench harness (pinned to 4.1.0, matches eval_swebench_docker.sh)
-            # swebench 4.1.0: RUN_EVALUATION_LOG_DIR = "logs/run_evaluation"
-            # per-instance report: logs/run_evaluation/<run_id>/<model>/<instance_id>/report.json
-            HARNESS_RUN_ID="gp-${IID//\//_}-$(date +%s)"
-            (cd "$EVAL_DIR" && \
-                uv run --with "swebench==4.1.0" \
-                    python -m swebench.harness.run_evaluation \
-                    --predictions_path "$PREDICTIONS" \
-                    --run_id "$HARNESS_RUN_ID" \
-                    --max_workers 1 \
-                    --cache_level env \
-                    --dataset_name "princeton-nlp/SWE-bench_Lite" \
-                    --split test \
-            )
+                # Oracle: score the rejected patch for this backend.
+                PREDICTIONS="$INST_DIR/rejected_predictions.$BACKEND.json"
+                uv run python "$ROOT/scripts/gate_precision.py" \
+                    "$AOA_REPORT" "$PREDICTIONS"
 
-            # model_name_or_path from gate_precision.py default is "aoa-rejected"
-            MODEL_ESCAPED="aoa-rejected"
-            REPORT_PATH="$EVAL_DIR/logs/run_evaluation/$HARNESS_RUN_ID/$MODEL_ESCAPED/$IID/report.json"
-            if [[ ! -f "$REPORT_PATH" ]]; then
-                # Fallback: search if model name contained slashes (replaced with __)
-                REPORT_PATH="$(find "$EVAL_DIR/logs/run_evaluation/$HARNESS_RUN_ID" \
-                    -name "report.json" -path "*/$IID/report.json" 2>/dev/null | head -1 || true)"
-            fi
+                # Run swebench harness with a backend-scoped run id.
+                HARNESS_RUN_ID="gp-${IID//\//_}-${BACKEND}-$(date +%s)"
+                (cd "$EVAL_DIR" && \
+                    uv run --with "swebench==4.1.0" \
+                        python -m swebench.harness.run_evaluation \
+                        --predictions_path "$PREDICTIONS" \
+                        --run_id "$HARNESS_RUN_ID" \
+                        --max_workers 1 \
+                        --cache_level env \
+                        --dataset_name "princeton-nlp/SWE-bench_Lite" \
+                        --split test \
+                )
 
-            if [[ -n "$REPORT_PATH" && -f "$REPORT_PATH" ]]; then
-                ORA="$(python3 - "$REPORT_PATH" "$IID" 2>/dev/null <<'PYEOF' || echo error
+                MODEL_ESCAPED="aoa-rejected"
+                REPORT_PATH="$EVAL_DIR/logs/run_evaluation/$HARNESS_RUN_ID/$MODEL_ESCAPED/$IID/report.json"
+                if [[ ! -f "$REPORT_PATH" ]]; then
+                    REPORT_PATH="$(find "$EVAL_DIR/logs/run_evaluation/$HARNESS_RUN_ID" \
+                        -name "report.json" -path "*/$IID/report.json" 2>/dev/null | head -1 || true)"
+                fi
+
+                if [[ -n "$REPORT_PATH" && -f "$REPORT_PATH" ]]; then
+                    ORA="$(python3 - "$REPORT_PATH" "$IID" 2>/dev/null <<'PYEOF' || echo error
 import json, sys
 inst = json.load(open(sys.argv[1])).get(sys.argv[2], {})
 print('resolved' if inst.get('resolved') is True else 'unresolved' if 'resolved' in inst else 'error')
 PYEOF
 )"
-            else
-                ORA="error"
+                else
+                    ORA="error"
+                fi
             fi
+
+            echo "$CLS $GV $ORA $TOK" > "$BACKEND_STATUS"
+        ) 2>&1 | tee -a "$INST_DIR/run.$BACKEND.log" || true
+
+        SECS=$(( $(date +%s) - T_START ))
+
+        if [[ -f "$BACKEND_STATUS" ]]; then
+            read -r B_OUTCOME B_GV B_ORA B_TOK < "$BACKEND_STATUS"
+        else
+            echo "  FAILED: no status written for $IID/$BACKEND — recording error"
+            B_OUTCOME="error"
+            B_GV="null"
+            B_ORA="null"
+            B_TOK=0
         fi
 
-        # 5. Remove image (best-effort)
-        docker rmi "$IMAGE" 2>/dev/null || true
+        append_result "$IID" "$REPO" "$BACKEND" "$B_OUTCOME" "$B_GV" "$B_ORA" "$B_TOK" "$SECS"
+        echo "  → backend=$BACKEND outcome=$B_OUTCOME gate_valid=$B_GV oracle=$B_ORA tokens=$B_TOK seconds=${SECS}s"
+    done
 
-        # Signal success with outcome details
-        echo "$CLS $GV $ORA $TOK" > "$INST_STATUS"
-    ) 2>&1 | tee "$INST_DIR/run.log" || true
+    # Remove image once all backends are done with this instance.
+    docker rmi "$IMAGE" 2>/dev/null || true
 
-    SECS=$(( $(date +%s) - T_START ))
-
-    # Read outcome from status file (set inside subshell)
-    if [[ -f "$INST_STATUS" ]]; then
-        read -r OUTCOME GATE_VALID_VAL ORACLE_VAL TOKENS < "$INST_STATUS"
-    else
-        echo "  FAILED: no status written for $IID — recording error"
-        OUTCOME="error"
-        GATE_VALID_VAL="null"
-        ORACLE_VAL="null"
-        TOKENS=0
-        docker rmi "$IMAGE" 2>/dev/null || true
-    fi
-
-    append_result "$IID" "$REPO" "$OUTCOME" "$GATE_VALID_VAL" "$ORACLE_VAL" "$TOKENS" "$SECS"
-    echo "  → outcome=$OUTCOME gate_valid=$GATE_VALID_VAL oracle=$ORACLE_VAL tokens=$TOKENS seconds=${SECS}s"
 done < <(python3 -c 'import json, sys; print(*json.load(open(sys.argv[1])), sep="\n")' "$PLAN")
 
 echo ""
 echo "=== Done ==="
 echo "  results:   $RESULTS"
-echo "  Summarise: uv run python scripts/precision_summary.py \"$RESULTS\""
 echo ""
-FINAL_COUNT="$(count_gate_valid_rejections)"
-echo "Gate-valid rejections: $FINAL_COUNT / $STOP_AFTER_REJECTIONS"
+echo "Gate-valid rejections per backend:"
+for BACKEND in "${BACKEND_LIST[@]}"; do
+    CNT="$(count_gate_valid_rejections_for "$BACKEND")"
+    echo "  $BACKEND: $CNT / $STOP_AFTER_REJECTIONS"
+done
+echo ""
+echo "Summarise:"
+for BACKEND in "${BACKEND_LIST[@]}"; do
+    echo "  uv run python scripts/precision_summary.py \"$RESULTS\" --backend \"$BACKEND\""
+done
