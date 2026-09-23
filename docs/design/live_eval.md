@@ -234,6 +234,65 @@ cases the held-out test patch adds exited "not found" and the Gate failed on eve
 the agent's work. Gating on test files fixed it. A Gate that can never pass produces a plausible number,
 so check any new Gate against `base_commit` before believing a rejection.
 
+### Protocol for #103 (pre-registered 2026-09-23, before any run)
+
+Fixed before the first instance runs, so the result cannot be shaped after the fact. A change after the
+pilot is recorded here with its date and reason. Nothing changes once the main run starts.
+
+**Question.** Of the proposals the `repo` Gate rejects, what fraction would the held-out SWE-bench oracle
+also reject? That is precision, reported with a Wilson 95% interval. It is not a solve rate. The rejection
+rate is reported beside it, because precision over a handful of rejections says little.
+
+**Two arms, each pinned.** Precision is conditional on the backend, since the rejections come from its
+mistakes. So there are two arms, each one backend and one model, run on the same instances and reported
+separately, never pooled:
+
+| Arm | Backend | Model |
+|---|---|---|
+| A | `agy` (Antigravity CLI 1.2.8) | `gemini-3.8-flash-high` |
+| B | `grok` (grok CLI 1.0.41) | `grok-4.7`, `--reasoning-effort high` |
+
+Both run confined (see the [agy](../harnesses/agy.md) and [grok](../harnesses/grok.md) pages), with
+identical worker instructions. A router that picks the model per request is not eligible as an arm,
+because what it measured could not be named. A weaker model makes more rejections, so it reaches a usable
+sample sooner, but its broken patches are also easier to reject, which tends to flatter precision. The
+protocol states this rather than corrects for it. If the two arms disagree, that is itself a finding.
+
+**Instances.** A seeded random sample (`SEED=103`) of the SWE-bench Lite instances with a non-empty
+`PASS_TO_PASS`, which is 294 of the 300. Not the head of the split: that was the selection bias in the
+earlier runs. The repo mix is reported.
+
+**Run.** `--gate=repo` and `--max-attempts 1`, so every rejection is terminal and its patch is kept. One
+instance at a time with `scripts/gate_precision_run.sh`: the image is pulled once, used by both arms,
+then removed.
+
+**What counts.** A rejection is scored only if all three hold:
+
+- the Gate ran. A sandbox failure is recorded as `infra` and not scored;
+- the Gate is valid for that instance: the same Gate passes a null patch (the `mock` backend) at
+  `base_commit`, recorded as `gate_valid`. This is the check that would have caught the broken Gate
+  above. It is a property of the instance, so it runs once and both arms share it;
+- the official harness (`swebench==4.1.0`) returned a verdict.
+
+Every exclusion is counted and named. A scored rejection that the oracle marks *resolved* is a Gate false
+positive.
+
+**Stopping rule.** Each arm stops at 30 scored rejections. The run ends when both arms have stopped, or
+after 100 instances. A 10-instance pilot comes first, to measure the rejection rate and the time per
+instance. If the pilot shows fewer than 2 rejections in an arm, the main run is re-sized before it starts,
+and that decision is recorded here.
+
+**What gets published, per arm:**
+
+- precision with its interval;
+- the rejection rate;
+- the count of every exclusion;
+- the backend, model, seed and harness version;
+- the per-instance `results.jsonl`, with local paths removed.
+
+Below 10 scored rejections, an arm is reported as a screen, not a rate. A null result, where the Gate
+rarely rejects anything, is published as a finding, not dropped.
+
 ## Prior runs (as of 2026-08-22)
 
 Every run below was produced with **`--gate=none`** — `eval_swebench_docker.sh` hardcoded
