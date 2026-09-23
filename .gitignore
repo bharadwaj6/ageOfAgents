@@ -24,6 +24,7 @@ aoa-*.json
 /logs/
 scripts/swebench_lite.json
 scripts/astropy_5.json
+/gp-runs/
 
 # MkDocs build output
 /site/
