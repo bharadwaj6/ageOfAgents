@@ -54,6 +54,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Stopping `aoa run` stops its agents.** Only `--interval` runs listened for signals, so a `SIGTERM`
+  to a plain `aoa run` ended it at once. The agent it had launched kept working, unsupervised, until it
+  finished on its own. Every run path now cancels on `SIGINT` or `SIGTERM`. On unix the agent runs in
+  its own process group, and the whole group is signalled, children included. A cancelled agent that
+  exits cleanly still reads as cancelled, never as a finished attempt.
+  ([#217](https://github.com/bharadwaj6/ageOfAgents/issues/217))
+- **`make check` no longer fails in a shell that exports `OTEL_*`.** Three `internal/otel` tests assumed
+  no OTLP settings were in the environment, so a developer with telemetry configured got a red suite on
+  a clean checkout. So did an `aoa` Gate launched from that shell. The package's tests now clear
+  `OTEL_*` first. ([#215](https://github.com/bharadwaj6/ageOfAgents/issues/215))
 - **Each precision-runner eval starts from the same pristine commit.** `aoa eval` merges into the
   instance repository, so the next arm — and the Gate-validity `mock` run — was starting from that
   merge instead of the prepared base. The runner records the base once and resets `main` to it before
