@@ -81,6 +81,7 @@ Save the following profile as `agy.sb`. It is reproduced verbatim:
     (require-not (subpath "/private/tmp"))
     (require-not (subpath "/dev"))))
 (deny process-exec (regex #"/gh$"))
+(deny process-exec (regex #"/git-remote-(https?|ftps?|ext|fd)$") (regex #"/git-credential-[^/]*$") (regex #"/ssh$"))
 ```
 
 How this profile works:
@@ -94,6 +95,8 @@ How this profile works:
     - Temp and devices: `/private/var/folders`, `/private/tmp`, `/dev`.
 - **`gh` is denied by a regex**: `/opt/homebrew/bin/gh` is a symlink, and a `literal` rule does not
   match the resolved target path. A regex (`#"/gh$"`) matches the executed binary name directly.
+- **Network git is denied**: `aoa` pushes the branch itself, from outside the sandbox. Without this
+  rule, a credential manager on the machine lets the agent push.
 - **Reads stay open**: The agent can inspect system headers, toolchains, and repository files.
 
 ### The wrapper script
