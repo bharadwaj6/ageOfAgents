@@ -2,23 +2,21 @@
 
 Pytest node ids (they contain ``::``) keep the historical file-level pytest
 gate. Django and sympy ids do not, so the gate runs the test files named in
-the held-out test patch, with the repo's own test command.
+the held-out test patch, with the repo's own test command, then grades the
+log per PASS_TO_PASS id.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 import swebench_to_tasks as s
-
-_PREFIX = (
-    "cp -a /workspace/. /testbed/ && "
-    "source /opt/miniconda3/bin/activate && conda activate testbed && "
-    "cd /testbed && "
-)
 
 DJANGO_CMD = "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1"
 SYMPY_CMD = (
@@ -110,6 +108,29 @@ def _gate_lines(text: str) -> list[str]:
     return [line for line in text.splitlines() if line.startswith("gate = ")]
 
 
+def _bash_n(script: str) -> None:
+    proc = subprocess.run(
+        ["bash", "-n"],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def _git(cwd: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(cwd), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(proc.stderr or proc.stdout)
+    return proc.stdout.strip()
+
+
 def test_django_gate_uses_test_patch_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -143,20 +164,37 @@ def test_django_gate_uses_test_patch_module(
         DJANGO_CMD,
     )
     gates = _gate_lines(text)
-    assert gates == [
-        "gate = "
-        + s.toml_cmd_list(
-            [s.conda_shell(f"{DJANGO_CMD} migrations.test_operations")]
-        )
-    ]
-    script = gates[0]
-    assert script.count("/bin/bash") == 1
-    assert f"{_PREFIX}{DJANGO_CMD} migrations.test_operations" in script
+    commands = s.repo_gate_commands(
+        {
+            "repo": "django/django",
+            "version": "4.2",
+            "PASS_TO_PASS": [
+                "test_abs",
+                "test_foo (migrations.test_operations.Tests)",
+            ],
+            "FAIL_TO_PASS": ["test_held_out (migrations.test_operations.Tests)"],
+            "test_patch": _patch(
+                [
+                    "tests/migrations/test_operations.py",
+                    "docs/x.txt",
+                ],
+                body="see tests/decoy_only_in_body.py",
+            ),
+        },
+        str(tmp_path / "work" / iid),
+        DJANGO_CMD,
+    )
+    assert commands is not None
+    assert gates == ["gate = " + s.toml_cmd_list(commands)]
+    script = commands[0][2]
+    assert commands[0].count("/bin/bash") == 1
+    assert f"{DJANGO_CMD} migrations.test_operations" in script
+    head = script.split("python - /tmp/aoa-gate.log", 1)[0]
     assert "x.txt" not in script
     assert "decoy_only_in_body" not in script
     assert "python -m pytest" not in script
     assert "test_held_out" not in script
-    assert "test_abs" not in script
+    assert "test_abs" not in head
 
 
 def test_sympy_gate_uses_test_patch_path(
@@ -182,8 +220,9 @@ def test_sympy_gate_uses_test_patch_path(
     gates = _gate_lines(text)
     assert len(gates) == 1
     assert gates[0].count("/bin/bash") == 1
-    assert f"{_PREFIX}{SYMPY_CMD} sympy/matrices/tests/test_commonmatrix.py" in gates[0]
+    assert f"{SYMPY_CMD} sympy/matrices/tests/test_commonmatrix.py" in gates[0]
     assert "python -m pytest" not in gates[0]
+    assert "cp -a /workspace/." not in gates[0]
 
 
 def test_missing_file_dropped_and_empty_instance_skipped(
@@ -219,12 +258,8 @@ def test_missing_file_dropped_and_empty_instance_skipped(
     )
     err = capsys.readouterr().err
     gates = _gate_lines(text)
-    assert gates == [
-        "gate = "
-        + s.toml_cmd_list(
-            [s.conda_shell(f"{DJANGO_CMD} migrations.test_operations")]
-        )
-    ]
+    assert len(gates) == 1
+    assert "migrations.test_operations" in gates[0]
     assert "test_created" not in gates[0]
     assert f"name = {s.toml_str(kept)}" in text
     assert empty not in text
@@ -259,11 +294,142 @@ def test_pytest_shaped_instance_keeps_today_gate(
     )
     expected = s.conda_pytest(["tests/test_foo.py"], f2p)
     assert _gate_lines(text) == ["gate = " + s.toml_cmd_list([expected])]
-    assert expected[2] == (
-        f"{_PREFIX}python -m pytest -q tests/test_foo.py "
+    shell = expected[2]
+    assert shell.endswith(
+        "python -m pytest -q tests/test_foo.py "
         "--deselect tests/test_foo.py::test_new"
     )
+    assert "cp -a /workspace/." not in shell
+    assert s.COPY_WORKTREE in shell
+    assert "<<'EOF'" not in shell
+    assert "parse_log_" not in shell
     assert "SHOULD_NOT_RUN" not in text
+    _bash_n(shell)
+
+
+def test_nonpytest_gate_embeds_grader_and_skips_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The django/sympy Gate grades the log and does not copy .git."""
+    iid = "django__django-1"
+    p2p = ["test_abs", "test_foo (migrations.test_operations.Tests)"]
+    text = _write(
+        tmp_path,
+        monkeypatch,
+        [
+            _row(
+                instance_id=iid,
+                repo="django/django",
+                PASS_TO_PASS=p2p,
+                test_patch=_patch(["tests/migrations/test_operations.py"]),
+            )
+        ],
+        {iid: ["tests/migrations/test_operations.py"]},
+        DJANGO_CMD,
+    )
+    script = s.repo_gate_commands(
+        {
+            "repo": "django/django",
+            "version": "4.2",
+            "PASS_TO_PASS": p2p,
+            "test_patch": _patch(["tests/migrations/test_operations.py"]),
+        },
+        str(tmp_path / "work" / iid),
+        DJANGO_CMD,
+    )
+    assert script is not None
+    assert _gate_lines(text) == ["gate = " + s.toml_cmd_list(script)]
+    shell = script[0][2]
+    runner = (
+        "{ set +e; set +o pipefail; { "
+        + DJANGO_CMD
+        + " migrations.test_operations; } 2>&1 | tee /tmp/aoa-gate.log; "
+    )
+    assert runner in shell
+    assert shell.index(runner) < shell.index("python - /tmp/aoa-gate.log ")
+    assert (
+        "python - /tmp/aoa-gate.log "
+        + shlex.quote("django/django")
+        + " "
+        + shlex.quote(json.dumps(p2p))
+        + " <<'EOF'\n"
+    ) in shell
+    assert s.grader_source() in shell
+    assert "parse_log_django" in shell
+    assert shell.rstrip().endswith("}")
+    assert "cp -a /workspace/." not in shell
+    assert '[ "$entry" = .git ]' in shell
+    assert s.COPY_WORKTREE in shell
+    _bash_n(shell)
+
+
+def test_pytest_gate_does_not_copy_git() -> None:
+    """The pytest-path Gate copies the worktree without .git."""
+    shell = s.conda_pytest(
+        ["tests/test_foo.py"], ["tests/test_foo.py::test_new"]
+    )[2]
+    assert "cp -a /workspace/." not in shell
+    assert s.COPY_WORKTREE in shell
+    assert '[ "$entry" = .git ]' in shell
+    assert "parse_log_" not in shell
+    _bash_n(shell)
+
+
+def test_prepare_repo_disables_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hook from the git template does not run on a commit in the task repo."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "Dev")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "dev@example.com")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "Dev")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "dev@example.com")
+
+    cache = tmp_path / "cache"
+    cached = cache / "example__repo"
+    cached.mkdir(parents=True)
+    _git(cached, "init", "-q")
+    (cached / "README").write_text("hi\n")
+    _git(cached, "add", "README")
+    _git(cached, "commit", "-q", "-m", "init")
+    base = _git(cached, "rev-parse", "HEAD")
+
+    def fake_expanduser(path: str) -> str:
+        if path == "~/.cache/aoa/swebench_repos":
+            return str(cache)
+        return os.path.expanduser(path)
+
+    monkeypatch.setattr(s.os.path, "expanduser", fake_expanduser)
+
+    template = tmp_path / "template"
+    hooks = template / "hooks"
+    hooks.mkdir(parents=True)
+    marker = tmp_path / "hook-ran"
+    hook = hooks / "post-commit"
+    hook.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n")
+    hook.chmod(0o755)
+    monkeypatch.setenv("GIT_TEMPLATE_DIR", str(template))
+
+    work = tmp_path / "work"
+    work.mkdir()
+    dest = Path(s.prepare_repo(str(work), "example__repo-1", "example/repo", base))
+    installed = dest / ".git" / "hooks" / "post-commit"
+    assert installed.is_file()
+    assert not marker.exists()
+
+    configured = _git(dest, "config", "--local", "--get", "core.hooksPath")
+    hooks_path = Path(configured)
+    assert hooks_path.is_dir()
+    assert list(hooks_path.iterdir()) == []
+    assert os.path.abspath(configured) == os.path.abspath(dest / ".git" / "aoa-hooks")
+
+    (dest / "README").write_text("changed\n")
+    _git(dest, "add", "README")
+    _git(dest, "commit", "-q", "-m", "change")
+    assert _git(dest, "rev-parse", "HEAD") != base
+    assert not marker.exists()
 
 
 def test_runner_installs_swebench_for_the_adapter() -> None:

@@ -106,15 +106,21 @@ next to any result you publish.
 | `f2p` | the issue's `FAIL_TO_PASS` tests | nothing. The agent iterates against its own grader; kept only to reproduce `eval_swebench.sh` |
 | `repo` | the repo's own tests in the files the issue touches | measuring **aoa** — a Gate that rejects broken patches without naming the answer |
 
-`repo` gates on whole test *files*, derived from the `PASS_TO_PASS` ids, not on the ids themselves. Those
-ids are recorded against the post-test-patch tree, so an id for a parametrised case the held-out test
-patch adds does not exist at `base_commit`: pytest exits "not found" and the Gate fails on every instance
-regardless of the agent's work. The files exist either way, and at `base_commit` they contain exactly the
-repo's pre-existing tests. `FAIL_TO_PASS` ids are passed as `--deselect`, so a reproduce test that already
-exists is never part of the Gate; pytest ignores a `--deselect` matching nothing, which is the usual case.
+`repo` gates pytest repos (every `PASS_TO_PASS` id contains `::`) on whole test *files*, derived from those
+ids, not on the ids themselves. Those ids are recorded against the post-test-patch tree, so an id for a
+parametrised case the held-out test patch adds does not exist at `base_commit`: pytest exits "not found"
+and the Gate fails on every instance regardless of the agent's work. The files exist either way, and at
+`base_commit` they contain exactly the repo's pre-existing tests. `FAIL_TO_PASS` ids are passed as
+`--deselect`, so a reproduce test that already exists is never part of the Gate; pytest ignores a
+`--deselect` matching nothing, which is the usual case.
 
-Ids without `::` (django, sympy) are not pytest node ids: the Gate runs the test files named in the held-out
-`test_patch` headers with that repo's SWE-bench test command, dropping files absent at `base_commit` and skipping an instance left with none.
+Ids without `::` (django, sympy) are graded per test, as SWE-bench grades `PASS_TO_PASS`. The Gate runs the
+test files named in the held-out `test_patch` headers with that repo's SWE-bench test command, then parses
+the log with the swebench 4.1.0 parser. Every id that ran must be `PASSED` or `XFAIL`. An id missing from
+the log is ignored: the held-out patch adds ids that cannot run at `base_commit`, and sympy's
+`DeprecationWarning` exceptions are tests that already error at base, outside `PASS_TO_PASS`. The verdict
+is that per-test result, so a null patch at `base_commit` stays `gate_valid`. Files absent at `base_commit`
+are dropped, and an instance left with none is skipped.
 
 Both arms must use the same instance set. The 5 astropy instances with an existing `--gate=none`
 baseline (see below) are the cheapest starting point; regenerate the subset from the Lite split with:
@@ -154,7 +160,11 @@ instance's published SWE-bench image.
 The Gate command copies the worktree into `/testbed` rather than being mounted there. This is not
 incidental: the image keeps compiled extensions at `/testbed` (astropy ships 17 `.so` files) that the
 agent's source tree does not contain, so mounting over that path hides them and every Gate fails on
-import. `cp -a /workspace/. /testbed/` overlays the agent's sources and leaves the build products intact.
+import. Each top-level entry of `/workspace` except `.git` is copied with `cp -a`, overlaying the agent's
+sources and leaving the build products intact. The copy skips `.git`: the Gate never reads it, and a hook
+from the machine's git template can write a temporary file under `.git` while that directory is being
+copied. `prepare_repo` sets `core.hooksPath` to an empty directory so those hooks never run on a task
+repository.
 `--gate=none` emits no sandbox fields and runs on the host exactly as before.
 
 `none` vs `repo` on the same instances, same backend, is the A/B that isolates what the verifier-gated
