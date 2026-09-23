@@ -113,6 +113,9 @@ regardless of the agent's work. The files exist either way, and at `base_commit`
 repo's pre-existing tests. `FAIL_TO_PASS` ids are passed as `--deselect`, so a reproduce test that already
 exists is never part of the Gate; pytest ignores a `--deselect` matching nothing, which is the usual case.
 
+Ids without `::` (django, sympy) are not pytest node ids: the Gate runs the test files named in the held-out
+`test_patch` headers with that repo's SWE-bench test command, dropping files absent at `base_commit` and skipping an instance left with none.
+
 Both arms must use the same instance set. The 5 astropy instances with an existing `--gate=none`
 baseline (see below) are the cheapest starting point; regenerate the subset from the Lite split with:
 

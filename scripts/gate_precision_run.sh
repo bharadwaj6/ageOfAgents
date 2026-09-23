@@ -285,7 +285,7 @@ PYEOF
     BASE_SHA_FILE="$INST_DIR/base_sha"
     mkdir -p "$REPOS_DIR"
     if [[ ! -f "$TASKS" ]]; then
-        uv run python "$ROOT/scripts/swebench_to_tasks.py" \
+        uv run --with "swebench==4.1.0" python "$ROOT/scripts/swebench_to_tasks.py" \
             "$ONE_INST" "$REPOS_DIR" "$TASKS" \
             --gate repo --max-attempts 1
         # Once, at prepare time. A later resume must not re-read HEAD: main may
