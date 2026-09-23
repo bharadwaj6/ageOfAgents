@@ -18,7 +18,9 @@ always FAIL_TO_PASS scored by swebench.harness.run_evaluation:
            behaviour without naming the answer, so the oracle stays held out.
            Pytest node ids (they contain `::`) select whole test files. Other
            repos (django, sympy) run the test files the held-out test patch
-           touches, with SWE-bench's per-repo test command.
+           touches, with SWE-bench's per-repo test command, then grade the log
+           per PASS_TO_PASS id (PASSED or XFAIL). Ids that did not run are
+           ignored.
 
 `none` vs `repo` on the same instances and backend is the A/B that isolates what
 aoa's verifier-gated merge queue contributes; see docs/design/live_eval.md.
@@ -105,10 +107,18 @@ NON_TEST_EXTS = [
     ".toml",
 ]
 
-# Same prefix conda_pytest has always used. Non-pytest repos append their own
-# test command instead of `python -m pytest`.
-_TESTBED_PREFIX = (
-    f"cp -a {SANDBOX_MOUNT}/. /testbed/ && "
+# Copy each top-level worktree entry except .git. The Gate does not need .git
+# in /testbed, and copying it races a hook that writes temporary files there.
+COPY_WORKTREE = (
+    "mkdir -p /testbed && "
+    f"cd {SANDBOX_MOUNT} && "
+    "for entry in * .[!.]* ..?*; do "
+    '[ "$entry" = .git ] && continue; '
+    '[ -e "$entry" ] || continue; '
+    'cp -a "$entry" /testbed/ || exit 1; '
+    "done && "
+)
+_ACTIVATE = (
     "source /opt/miniconda3/bin/activate && conda activate testbed && "
     "cd /testbed && "
 )
@@ -117,10 +127,51 @@ _TESTBED_PREFIX = (
 def conda_shell(command: str) -> list[str]:
     """Run command inside a SWE-bench image's `testbed` env.
 
-    Copies the worktree over /testbed (so compiled extensions stay), activates
-    the prepared conda env, then runs command.
+    Copies each top-level worktree entry except ``.git`` over /testbed (so
+    compiled extensions stay, and a hook cannot race the copy), activates the
+    prepared conda env, then runs command.
     """
-    return ["/bin/bash", "-lc", _TESTBED_PREFIX + command]
+    return ["/bin/bash", "-lc", COPY_WORKTREE + _ACTIVATE + command]
+
+
+def grader_source() -> str:
+    """Text of ``swebench_gate_grade.py``, embedded into the non-pytest Gate."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "swebench_gate_grade.py")
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    if "\nEOF\n" in "\n" + text + "\n":
+        raise SystemExit(
+            "swebench_gate_grade.py contains a line 'EOF'; the Gate heredoc would end early"
+        )
+    return text.rstrip("\n")
+
+
+def graded_test_command(
+    test_cmd: str, directives: list[str], repo: str, pass_to_pass: list
+) -> str:
+    """Run ``test_cmd`` and grade its log. The grader's status is the shell's.
+
+    The test command's own status is not the verdict: sympy exits non-zero
+    when tests outside PASS_TO_PASS raise. ``tee`` keeps that output visible.
+    The grader source is on stdin (``python -``) and the ids are a JSON argv.
+    """
+    args = " ".join(shlex.quote(d) for d in directives)
+    # set +e / +o pipefail: a login profile must not skip the grader when the
+    # test command itself exits non-zero. The group's status is the grader's.
+    return (
+        "{ set +e; set +o pipefail; { "
+        + test_cmd
+        + " "
+        + args
+        + "; } 2>&1 | tee /tmp/aoa-gate.log; "
+        "python - /tmp/aoa-gate.log "
+        + shlex.quote(repo)
+        + " "
+        + shlex.quote(json.dumps(pass_to_pass))
+        + " <<'EOF'\n"
+        + grader_source()
+        + "\nEOF\n}"
+    )
 
 
 def conda_pytest(test_files, deselect_ids):
@@ -140,9 +191,8 @@ def conda_pytest(test_files, deselect_ids):
     extensions there (astropy ships 17 .so files the agent's source tree does
     not), so the worktree is copied over /testbed rather than mounted onto it:
     a mount would hide those artifacts and every gate would fail on import.
-    `cp -a` overlays the agent's sources while leaving the build products in
-    place. The conda env must be active before python resolves to the prepared
-    interpreter.
+    Top-level entries are copied with `cp -a`, except `.git`. The conda env
+    must be active before python resolves to the prepared interpreter.
     """
     args = " ".join(shlex.quote(f) for f in test_files)
     for t in deselect_ids:
@@ -221,8 +271,9 @@ def repo_gate_commands(
     """Commands for ``--gate=repo``, or None when nothing can run at base.
 
     Pytest node ids keep the historical ``conda_pytest`` gate. Anything else
-    runs the held-out test patch's files with the repo's own test command.
-    ``test_cmd`` is injected by tests so they do not need swebench installed.
+    runs the held-out test patch's files with the repo's own test command,
+    then grades the log per PASS_TO_PASS id. ``test_cmd`` is injected by tests
+    so they do not need swebench installed.
     """
     p2p = as_list(row.get("PASS_TO_PASS", []))
     f2p = as_list(row.get("FAIL_TO_PASS", []))
@@ -235,8 +286,11 @@ def repo_gate_commands(
         return None
     if test_cmd is None:
         test_cmd = lookup_test_cmd(str(row["repo"]), str(row["version"]))
-    args = " ".join(shlex.quote(d) for d in directives)
-    return [conda_shell(f"{test_cmd} {args}")]
+    return [
+        conda_shell(
+            graded_test_command(test_cmd, directives, str(row["repo"]), p2p)
+        )
+    ]
 
 
 def chunked(items, n):
@@ -280,10 +334,24 @@ def prepare_repo(workdir, instance_id, repo, base_commit):
 
     dest = os.path.join(workdir, instance_id)
     if not os.path.isdir(os.path.join(dest, ".git")):
-        git("clone", "--quiet", "--local", cache_path, dest)
+        # --no-checkout so a template hook cannot run before hooksPath is set.
+        git("clone", "--quiet", "--local", "--no-checkout", cache_path, dest)
+    _disable_git_hooks(dest)
     git("-C", dest, "checkout", "--quiet", base_commit)
     git("-C", dest, "checkout", "-B", "main")
     return dest
+
+
+def _disable_git_hooks(dest: str) -> None:
+    """Point ``core.hooksPath`` at an empty directory inside ``.git``.
+
+    Hooks copied from the machine's global git template must not run on a
+    task repository. An absolute path keeps linked worktrees on the same
+    empty directory.
+    """
+    hooks = os.path.abspath(os.path.join(dest, ".git", "aoa-hooks"))
+    os.makedirs(hooks, exist_ok=True)
+    git("-C", dest, "config", "core.hooksPath", hooks)
 
 
 def main():
@@ -305,7 +373,8 @@ def main():
             "tests - a regression Gate that rejects patches breaking existing "
             "behaviour without naming the answer. Pytest node ids select test "
             "files; other repos run the test files the held-out test patch "
-            "touches, with SWE-bench's test command. Default: f2p (historical)."
+            "touches, with SWE-bench's test command, and grade the log per "
+            "PASS_TO_PASS id. Default: f2p (historical)."
         ),
     )
     ap.add_argument(
