@@ -54,6 +54,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A precision-runner arm no longer ignores a failure inside it.** The image pull and each arm ran as a
+  subshell on the left of `||`, which disables `set -e` for every command in that subshell, so a failed
+  reset or a crashed `aoa eval` continued and wrote a status line anyway. Each now runs outside that
+  context, and a non-zero status is recorded as `error`. The reset also prunes worktree registrations
+  whose directory is already gone; `aoa eval` deletes those directories and leaves the registration
+  behind, which made the next reset exit 1.
+  ([#223](https://github.com/bharadwaj6/ageOfAgents/issues/223))
 - **Stopping `aoa run` stops its agents.** Only `--interval` runs listened for signals, so a `SIGTERM`
   to a plain `aoa run` ended it at once. The agent it had launched kept working, unsupervised, until it
   finished on its own. Every run path now cancels on `SIGINT` or `SIGTERM`. On unix the agent runs in

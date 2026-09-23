@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -70,6 +71,28 @@ def test_reset_restores_pristine_base(tmp_path: Path) -> None:
     assert (repo / "README").read_text() == "base\n"
     status = _git(repo, "status", "--porcelain", "--ignored").stdout
     assert status.strip() == ""
+    branches = _git(
+        repo, "for-each-ref", "--format=%(refname:short)", "refs/heads"
+    ).stdout.split()
+    assert branches == ["main"]
+    listed = _git(repo, "worktree", "list", "--porcelain").stdout
+    assert listed.count("worktree ") == 1
+
+
+def test_reset_prunes_deleted_worktree(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    base = _commit_base(repo)
+    wt = tmp_path / "aoa-wt"
+    _git(repo, "worktree", "add", "-b", "aoa/x", str(wt))
+    shutil.rmtree(wt)
+
+    result = _run(repo, base)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == base
     branches = _git(
         repo, "for-each-ref", "--format=%(refname:short)", "refs/heads"
     ).stdout.split()
