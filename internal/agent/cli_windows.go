@@ -1,6 +1,5 @@
 //go:build windows
 
-// Package agent provides the Backend interface and its implementations.
 package agent
 
 import (
