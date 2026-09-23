@@ -319,6 +319,28 @@ and that decision is recorded here.
 Below 10 scored rejections, an arm is reported as a screen, not a rate. A null result, where the Gate
 rarely rejects anything, is published as a finding, not dropped.
 
+**Amendment 1 (2026-09-23, after the first pilot result, before any scored rejection).** The first
+pilot instance showed that the `repo` Gate could not run for 188 of the 294 eligible instances: all of
+django and sympy. Their `PASS_TO_PASS` ids carry no file path, so the Gate handed bare test names to
+pytest, and sympy's image has no pytest at all. The null-patch check did its job. `agy`'s patch for
+`sympy__sympy-13647` was rejected, the oracle marked it resolved, and the rejection was excluded as
+`gate_invalid`. But on two thirds of the sample every proposal would have been rejected and then
+excluded, so the run would have spent its quota measuring nothing.
+
+Instances like these now gate on the test files that the held-out test patch touches. Only the file
+names are used, and they are the same files SWE-bench computes `PASS_TO_PASS` from. They run with
+SWE-bench 4.1.0's own per-repo test command, and are graded per test the way SWE-bench grades
+`PASS_TO_PASS` ([#225](https://github.com/bharadwaj6/ageOfAgents/issues/225),
+[#228](https://github.com/bharadwaj6/ageOfAgents/issues/228)). At least one `PASS_TO_PASS` test must
+run, and every one that runs must pass. A whole-file rule failed at base even after the first fix: old
+sympy code raises warnings that the image's Python turns into errors. Instances with pytest-style ids
+keep the Gate they had. The same pilot minutes also exposed a runner bug that let a failed step inside an arm
+go unrecorded; it is fixed ([#223](https://github.com/bharadwaj6/ageOfAgents/issues/223)).
+
+Nothing else changes: the sample, the arms, what counts and the stopping rule stand as pre-registered.
+The pilot restarts from its first instance in a fresh run directory. The one result under the broken
+Gate is kept as evidence and not scored.
+
 ## Prior runs (as of 2026-08-22)
 
 Every run below was produced with **`--gate=none`** — `eval_swebench_docker.sh` hardcoded
