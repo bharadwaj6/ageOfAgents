@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -582,16 +581,4 @@ func tailLines(s string, max int) string {
 		tail = tail[nl+1:]
 	}
 	return "[...truncated...]\n" + tail
-}
-
-// defaultRunner captures stdout and stderr apart, so the envelope on stdout is
-// parsed without whatever the harness warned about on stderr.
-func defaultRunner(ctx context.Context, dir, name string, args ...string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return stdout.String(), stderr.String(), err
 }

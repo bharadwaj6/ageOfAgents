@@ -632,7 +632,11 @@ func cmdRun(args []string) error {
 	if cfg, cerr := config.Load(ws.configPath); cerr == nil && cfg.Budget.RequireRunBudget && runBudget.USD == 0 && runBudget.Tokens == 0 {
 		return &exitError{code: 2, err: fmt.Errorf("this workspace sets [budget] require_run_budget, so `aoa run` needs --max-usd or --max-tokens (nothing runs here unbudgeted)")}
 	}
-	ctx := context.Background()
+	// Cancel on SIGINT or SIGTERM in every run path: a signal must stop the
+	// running agent, not leave it unsupervised in its worktree (#217).
+	sigCtx, stopSig := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSig()
+	ctx := sigCtx
 
 	// start wires the Scheduler. With --otel-live it also opens spans for any
 	// in-flight work, then has the ledger feed each new event to the emitter as
@@ -665,9 +669,7 @@ func cmdRun(args []string) error {
 	case *interval > 0:
 		// runEvery takes the Scheduler lock pass by pass, not for its lifetime.
 		if err = start(); err == nil {
-			sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			err = runEvery(sigCtx, o, led, ws, *interval)
+			err = runEvery(ctx, o, led, ws, *interval)
 		}
 	default:
 		// Lock first, so a run that finds the workspace busy exits without
