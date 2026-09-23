@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **The Gate-precision measurement is pre-registered.** Before any instance runs, the protocol for
+  [#103](https://github.com/bharadwaj6/ageOfAgents/issues/103) fixes the question, the two pinned arms
+  (`agy` on `gemini-3.8-flash-high`, `grok` on `grok-4.7`, never pooled), the seeded sample, what counts
+  as a scored rejection, the stopping rule and what gets published, including a null result. A resumable
+  per-instance runner (`scripts/gate_precision_run.sh`) and a summary with a Wilson interval
+  (`scripts/precision_summary.py`) carry it out. ([Live evaluation](docs/design/live_eval.md#protocol-for-103-pre-registered-2026-09-23-before-any-run))
 - **Goals report their lifecycle as conditions, and `aoa wait` blocks until one is done.** A front door
   could only poll `status --json` and write its own list of which outcomes are final — and `running`
   meant both "a worker is mid-attempt" and "everything merged, only the push is left". Every goal now

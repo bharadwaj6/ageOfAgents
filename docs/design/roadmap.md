@@ -147,6 +147,12 @@ ends the turn. Telling it to edit first and leave the checks to the Gate fixed t
 hit the same zero-edit pattern four times and went to `claudecode`, which did it on the first try (#201).
 Across the day, `claudecode` spent $4.09 on five goals, each on its first attempt.
 
+**Last status (2026-09-23, evening):** #103 is pre-registered. The
+[protocol](live_eval.md#protocol-for-103-pre-registered-2026-09-23-before-any-run) is written down
+before any instance runs. It has two pinned arms, `agy` and `grok`, reported separately. The resumable
+per-instance runner (#206) and the Wilson-interval summary (#205) are merged. A 10-instance pilot comes
+next, and only once its cost is approved.
+
 | | Increment | Depends on |
 |---|---|---|
 | [x] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |
