@@ -16,6 +16,9 @@ always FAIL_TO_PASS scored by swebench.harness.run_evaluation:
     repo   the issue's PASS_TO_PASS tests - the ones already passing at
            base_commit. A regression Gate that rejects a patch breaking existing
            behaviour without naming the answer, so the oracle stays held out.
+           Pytest node ids (they contain `::`) select whole test files. Other
+           repos (django, sympy) run the test files the held-out test patch
+           touches, with SWE-bench's per-repo test command.
 
 `none` vs `repo` on the same instances and backend is the A/B that isolates what
 aoa's verifier-gated merge queue contributes; see docs/design/live_eval.md.
@@ -32,12 +35,15 @@ Usage:
 Important environment caveat (ADR 009): aoa drives the agent and runs the Gate,
 but this adapter does NOT install each repo's Python dependencies. Run it inside
 a prepared environment for the target repos (e.g. the official SWE-bench Docker
-image, or a venv with the repo installed) so that `python -m pytest` can import
+image, or a venv with the repo installed) so that the Gate command can import
 them. aoa is responsible for orchestration + verification, not env provisioning.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -83,6 +89,40 @@ def swebench_image(instance_id, template):
     return template.format(instance=instance_id.replace("__", "_1776_"))
 
 
+# swebench.harness.constants.NON_TEST_EXTS from swebench 4.1.0.
+# `csv` has no leading dot upstream; mirror that.
+NON_TEST_EXTS = [
+    ".json",
+    ".png",
+    "csv",
+    ".txt",
+    ".md",
+    ".jpg",
+    ".jpeg",
+    ".pkl",
+    ".yml",
+    ".yaml",
+    ".toml",
+]
+
+# Same prefix conda_pytest has always used. Non-pytest repos append their own
+# test command instead of `python -m pytest`.
+_TESTBED_PREFIX = (
+    f"cp -a {SANDBOX_MOUNT}/. /testbed/ && "
+    "source /opt/miniconda3/bin/activate && conda activate testbed && "
+    "cd /testbed && "
+)
+
+
+def conda_shell(command: str) -> list[str]:
+    """Run command inside a SWE-bench image's `testbed` env.
+
+    Copies the worktree over /testbed (so compiled extensions stay), activates
+    the prepared conda env, then runs command.
+    """
+    return ["/bin/bash", "-lc", _TESTBED_PREFIX + command]
+
+
 def conda_pytest(test_files, deselect_ids):
     """A pytest command that runs inside a SWE-bench image's `testbed` env.
 
@@ -107,12 +147,96 @@ def conda_pytest(test_files, deselect_ids):
     args = " ".join(shlex.quote(f) for f in test_files)
     for t in deselect_ids:
         args += f" --deselect {shlex.quote(t)}"
-    script = (
-        f"cp -a {SANDBOX_MOUNT}/. /testbed/ && "
-        "source /opt/miniconda3/bin/activate && conda activate testbed && "
-        f"cd /testbed && python -m pytest -q {args}"
-    )
-    return ["/bin/bash", "-lc", script]
+    return conda_shell(f"python -m pytest -q {args}")
+
+
+def _pytest_node_ids(ids: list[str]) -> bool:
+    """True when every id is a pytest node id (it contains ``::``)."""
+    return bool(ids) and all("::" in t for t in ids)
+
+
+def _django_directive(path: str) -> str:
+    """Module label django's test runner accepts.
+
+    Mirrors the django branch of
+    swebench.harness.test_spec.python.get_test_directives (swebench 4.1.0):
+    strip ``.py``, strip a leading ``tests/``, replace ``/`` with ``.``.
+    """
+    directive = path.removesuffix(".py").removeprefix("tests/")
+    return directive.replace("/", ".")
+
+
+def test_patch_directives(repo: str, test_patch: str) -> list[tuple[str, str]]:
+    """``(source path, directive)`` pairs for a held-out test patch.
+
+    Mirrors swebench.harness.test_spec.python.get_test_directives from
+    swebench 4.1.0. Names come only from ``diff --git a/... b/(...)`` headers;
+    patch bodies are never read. Extensions in ``NON_TEST_EXTS`` are dropped.
+    ``django/django`` paths become module labels; every other repo keeps the
+    path. The source path is kept so a file the patch creates (absent at
+    base_commit) can be dropped without losing the directive's spelling.
+    """
+    diff_pat = r"diff --git a/.* b/(.*)"
+    paths = re.findall(diff_pat, test_patch or "")
+    paths = [d for d in paths if not any(d.endswith(ext) for ext in NON_TEST_EXTS)]
+    if repo == "django/django":
+        return [(path, _django_directive(path)) for path in paths]
+    return [(path, path) for path in paths]
+
+
+def lookup_test_cmd(repo: str, version: str) -> str:
+    """``MAP_REPO_VERSION_TO_SPECS[repo][version]["test_cmd"]`` (swebench 4.1.0).
+
+    Imported only for an instance whose PASS_TO_PASS ids are not pytest node
+    ids. Raises ``SystemExit`` with a clear message when swebench is absent.
+    """
+    try:
+        from swebench.harness.constants import MAP_REPO_VERSION_TO_SPECS
+    except ImportError as exc:
+        raise SystemExit(
+            "swebench==4.1.0 is not installed; --gate=repo needs it when "
+            "PASS_TO_PASS ids are not pytest node ids. Run with: "
+            'uv run --with "swebench==4.1.0" python scripts/swebench_to_tasks.py'
+        ) from exc
+    try:
+        return MAP_REPO_VERSION_TO_SPECS[repo][version]["test_cmd"]
+    except KeyError as exc:
+        raise SystemExit(
+            f"swebench 4.1.0 has no test_cmd for {repo} version {version}"
+        ) from exc
+
+
+def directives_at_base(repo: str, test_patch: str, repo_dir: str) -> list[str]:
+    """Directives whose source file exists in the tree at base_commit."""
+    kept = []
+    for path, directive in test_patch_directives(repo, test_patch):
+        if os.path.isfile(os.path.join(repo_dir, path)):
+            kept.append(directive)
+    return kept
+
+
+def repo_gate_commands(
+    row: dict, repo_dir: str, test_cmd: str | None = None
+) -> list[list[str]] | None:
+    """Commands for ``--gate=repo``, or None when nothing can run at base.
+
+    Pytest node ids keep the historical ``conda_pytest`` gate. Anything else
+    runs the held-out test patch's files with the repo's own test command.
+    ``test_cmd`` is injected by tests so they do not need swebench installed.
+    """
+    p2p = as_list(row.get("PASS_TO_PASS", []))
+    f2p = as_list(row.get("FAIL_TO_PASS", []))
+    if _pytest_node_ids(p2p):
+        files = sorted({t.split("::")[0] for t in p2p})
+        return [conda_pytest(chunk, f2p)
+                for chunk in chunked(files, PYTEST_FILES_PER_COMMAND)]
+    directives = directives_at_base(row["repo"], row.get("test_patch", ""), repo_dir)
+    if not directives:
+        return None
+    if test_cmd is None:
+        test_cmd = lookup_test_cmd(str(row["repo"]), str(row["version"]))
+    args = " ".join(shlex.quote(d) for d in directives)
+    return [conda_shell(f"{test_cmd} {args}")]
 
 
 def chunked(items, n):
@@ -179,7 +303,9 @@ def main():
             "agent iterates against its own grader; kept only to reproduce the "
             "single-phase eval_swebench.sh. 'repo': the issue's PASS_TO_PASS "
             "tests - a regression Gate that rejects patches breaking existing "
-            "behaviour without naming the answer. Default: f2p (historical)."
+            "behaviour without naming the answer. Pytest node ids select test "
+            "files; other repos run the test files the held-out test patch "
+            "touches, with SWE-bench's test command. Default: f2p (historical)."
         ),
     )
     ap.add_argument(
@@ -232,18 +358,24 @@ def main():
                 # the backend harness, not aoa - nothing is gated.
                 gate = [["true"]]
             elif a.gate == "repo":
-                # Regression Gate: the tests that already pass at base_commit. It
-                # rejects a patch that breaks existing behaviour without ever
-                # naming FAIL_TO_PASS, so the oracle stays held out. Chunked
-                # because PASS_TO_PASS runs to hundreds of ids on some instances.
+                # Regression Gate: tests that already pass at base_commit. It
+                # rejects a patch that breaks existing behaviour without naming
+                # FAIL_TO_PASS, so the oracle stays held out. Pytest node ids
+                # keep the file-level pytest gate (chunked; some instances list
+                # hundreds of files). Other repos run the test patch's files.
                 p2p = as_list(r.get("PASS_TO_PASS", []))
                 if not p2p:
                     print(f"skipping {iid}: --gate=repo needs PASS_TO_PASS tests",
                           file=sys.stderr)
                     continue
-                files = sorted({t.split("::")[0] for t in p2p})
-                gate = [conda_pytest(chunk, f2p)
-                        for chunk in chunked(files, PYTEST_FILES_PER_COMMAND)]
+                gate = repo_gate_commands(r, dest)
+                if not gate:
+                    print(
+                        f"skipping {iid}: --gate=repo needs test files present "
+                        "at base_commit",
+                        file=sys.stderr,
+                    )
+                    continue
             else:
                 # Gate AND success oracle are the issue's reproduce tests: the
                 # agent can iterate against the exact tests that grade it.
