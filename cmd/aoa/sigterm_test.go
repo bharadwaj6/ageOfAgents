@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,11 +97,11 @@ func TestSIGTERMStopsAgentAndItsChildren(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if _, err := os.Stat(agentPidFile); err != nil {
-		_ = aoaCmd.Process.Kill()
+		killForCleanup(t, aoaCmd.Process.Pid)
 		t.Fatal("timed out waiting for agent pid file")
 	}
 	if _, err := os.Stat(childPidFile); err != nil {
-		_ = aoaCmd.Process.Kill()
+		killForCleanup(t, aoaCmd.Process.Pid)
 		t.Fatal("timed out waiting for child pid file")
 	}
 
@@ -118,7 +119,7 @@ func TestSIGTERMStopsAgentAndItsChildren(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		_ = aoaCmd.Process.Kill()
+		killForCleanup(t, aoaCmd.Process.Pid)
 		t.Fatal("aoa did not exit after SIGTERM")
 	}
 
@@ -131,11 +132,11 @@ func TestSIGTERMStopsAgentAndItsChildren(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if processExists(agentPID) {
-		syscall.Kill(agentPID, syscall.SIGKILL) //nolint:errcheck
+		killForCleanup(t, agentPID)
 		t.Errorf("agent process %d is still running after aoa received SIGTERM", agentPID)
 	}
 	if processExists(childPID) {
-		syscall.Kill(childPID, syscall.SIGKILL) //nolint:errcheck
+		killForCleanup(t, childPID)
 		t.Errorf("agent child process %d is still running after aoa received SIGTERM", childPID)
 	}
 }
@@ -160,4 +161,13 @@ func readPid(t *testing.T, file string) int {
 func processExists(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil
+}
+
+// killForCleanup stops a process a failed assertion left running, so it does
+// not outlive the test; a process that is already gone is not an error.
+func killForCleanup(t *testing.T, pid int) {
+	t.Helper()
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		t.Logf("cleanup: kill %d: %v", pid, err)
+	}
 }

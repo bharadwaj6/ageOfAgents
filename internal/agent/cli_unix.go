@@ -1,11 +1,11 @@
 //go:build !windows
 
-// Package agent provides the Backend interface and its implementations.
 package agent
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,15 +37,17 @@ func defaultRunner(ctx context.Context, dir, name string, args ...string) (strin
 
 	// Cancel sends SIGTERM to the entire process group, not just the direct
 	// child. exec.CommandContext's default cancel is os.Process.Kill (SIGKILL).
+	// A nil return makes Run report ctx.Err(), so a cancelled agent reads as
+	// cancelled rather than as an agent that died of a signal.
 	cmd.Cancel = func() error {
 		pgid := cmd.Process.Pid // Setpgid makes pgid == pid of the child
 		if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
-			// ESRCH: process group already gone — that is fine.
-			if err != syscall.ESRCH {
-				return fmt.Errorf("kill process group -%d: %w", pgid, err)
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone // the group had already exited
 			}
+			return fmt.Errorf("kill process group -%d: %w", pgid, err)
 		}
-		return os.ErrProcessDone
+		return nil
 	}
 
 	var stdout, stderr bytes.Buffer
