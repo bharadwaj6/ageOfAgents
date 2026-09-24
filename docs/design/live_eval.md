@@ -233,6 +233,10 @@ once it reaches `STOP_AFTER_REJECTIONS`; the other continues until its own limit
 with `scripts/precision_summary.py RUN_DIR/results.jsonl --backend agy`; omitting `--backend` when the
 file contains more than one backend is an error, preventing inadvertent pooling of the two arms.
 
+**Gate misses.** When an arm merges, the runner writes `instances/<id>/merged_sha.<backend>` — `main`, before the reset.
+`scripts/gate_miss_score.sh RUN_DIR [BACKENDS]` scores each merged patch with the official harness (`git diff`, or `git reflog show main` in backend order for older runs) into `merged_scores.jsonl`.
+`scripts/gate_miss_summary.py` reports that Gate-miss rate per backend with a Wilson 95% interval, warns below 10 scored lines, and will not pool arms.
+
 **Exclude sandbox faults first.** A gate that could not run is not a verdict on the patch. The first
 precision sweep (2026-08-23, 4 instances) produced 2 rejections and **both were spurious**: replaying each
 rejected patch through the same gate at `base_commit` passed (13 and 179 tests), so neither said anything

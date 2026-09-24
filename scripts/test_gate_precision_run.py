@@ -424,6 +424,36 @@ def test_runner_records_error_when_pull_fails(tmp_path: Path) -> None:
     assert [row["outcome"] for row in rows] == ["error", "error"]
 
 
+def test_runner_records_merged_sha_before_reset(tmp_path: Path) -> None:
+    """A merged arm's main commit is saved before the next arm resets it."""
+    root = _stage(tmp_path)
+    run_dir = tmp_path / "run"
+    repo = run_dir / "instances" / IID / "repos" / IID
+    base = _init_repo(repo)
+    inst = run_dir / "instances" / IID
+    (inst / "tasks.toml").write_text(f'name = "{IID}"\n')
+    (inst / "base_sha").write_text(base + "\n")
+    _plan(run_dir)
+    bindir = _install_stubs(tmp_path, AOA_RECORDS_AND_MERGES, UV_NOOP)
+    env = _env(tmp_path, run_dir, repo, bindir, "one two")
+
+    proc = _run(root, _instances(tmp_path), env)
+
+    detail = proc.stdout[-2000:] + proc.stderr[-2000:]
+    assert proc.returncode == 0, detail
+    one = (inst / "merged_sha.one").read_text().strip()
+    two = (inst / "merged_sha.two").read_text().strip()
+    assert one != base
+    assert two != base
+    assert one != two
+    assert _git(repo, "log", "-1", "--format=%s", one).strip() == "eval one"
+    assert _git(repo, "log", "-1", "--format=%s", two).strip() == "eval two"
+    assert not (inst / "merged_sha.mock").exists()
+    rows = {str(row["backend"]): row for row in _results(run_dir)}
+    assert rows["one"]["outcome"] == "merged"
+    assert rows["two"]["outcome"] == "merged"
+
+
 def test_runner_errors_when_resumed_without_base_sha(tmp_path: Path) -> None:
     root = _stage(tmp_path)
     run_dir = tmp_path / "run"
