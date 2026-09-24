@@ -281,9 +281,10 @@ while IFS=$'\t' read -r IID REPO BACKENDS_CSV UNORDERED_CSV; do
         git -C "$REPO_DIR" diff "$BASE_SHA" "$_sha" > "$_patch"
         _rc=$?
         set -e
-        # git diff exits 1 when the trees differ. That is a usable patch.
-        # A failure here is recorded; the caller keeps going with the other arms.
-        if [[ "$_rc" -gt 1 ]]; then
+        # Without --exit-code, git diff exits 0 whatever the trees hold; a real
+        # failure (a missing commit) exits 128. It is recorded, and the caller
+        # keeps going with the other arms.
+        if [[ "$_rc" -ne 0 ]]; then
             append_error "$IID" "$REPO" "$_backend" "git diff failed"
             return 0
         fi
