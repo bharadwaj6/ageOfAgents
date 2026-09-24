@@ -32,6 +32,8 @@
 #   RUN_DIR/plan.json       — sampled instance ids (written once)
 #   RUN_DIR/results.jsonl   — one JSON line per (instance, backend)
 #   RUN_DIR/instances/      — per-instance workdirs (tasks, reports, patches)
+#   RUN_DIR/instances/<id>/merged_sha.<backend>
+#                           — main's commit when that arm merged, before reset
 #
 # Resume: re-run the same command; any (instance, backend) pair already in
 # results.jsonl is skipped automatically.
@@ -40,10 +42,12 @@
 # run — is reset to the commit recorded in instances/<id>/base_sha when the
 # instance was prepared (scripts/gate_precision_reset.sh). aoa merges a passing
 # change into that repository's main, so without the reset the next eval would
-# start from the previous merge. A resumed instance that has tasks.toml but no
-# base_sha is recorded as error; the base is not guessed. A non-zero image pull
-# records error for every active backend. A non-zero reset, aoa eval, or
-# harness command records error for that arm and does not continue it.
+# start from the previous merge. When the outcome is merged, that main commit is
+# written to merged_sha.<backend> before the reset. A resumed instance that has
+# tasks.toml but no base_sha is recorded as error; the base is not guessed.
+# A non-zero image pull records error for every active backend. A non-zero
+# reset, aoa eval, or harness command records error for that arm and does not
+# continue it.
 #
 # Summarise (single backend or with --backend flag):
 #   uv run python scripts/precision_summary.py RUN_DIR/results.jsonl [--backend NAME]
@@ -357,6 +361,12 @@ PYEOF
             TOK="$(report tokens  "$AOA_REPORT" "$IID")"
             GV="null"
             ORA="null"
+
+            # The next arm, and the mock run below, reset main back to base.
+            # Record the merge first or the patch the Gate accepted is gone.
+            if [[ "$CLS" == "merged" ]]; then
+                git -C "$REPO_DIR" rev-parse main > "$INST_DIR/merged_sha.$BACKEND"
+            fi
 
             if [[ "$CLS" == "rejected" ]]; then
                 # Gate validity: run mock at most once per instance.
