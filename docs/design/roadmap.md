@@ -153,6 +153,13 @@ before any instance runs. It has two pinned arms, `agy` and `grok`, reported sep
 per-instance runner (#206) and the Wilson-interval summary (#205) are merged. A 10-instance pilot comes
 next, and only once its cost is approved.
 
+**Last status (2026-09-24):** the pilot ran, and it is a null result. Building it found the Gate could
+not run on two thirds of the pool (django and sympy). That was fixed and verified before any scored
+result ([Amendment 1](live_eval.md#protocol-for-103-pre-registered-2026-09-23-before-any-run)). With a
+working Gate, both arms had all ten of their proposals merged: the `repo` Gate rejected 0 of 20. So its
+precision cannot be estimated for these backends. The pre-registered follow-up asks the converse, what
+the Gate let through, starting with the pilot's 20 merged proposals.
+
 | | Increment | Depends on |
 |---|---|---|
 | [x] | Doc fixes: `events` flag examples ([#127](https://github.com/bharadwaj6/ageOfAgents/pull/127)) | — |
