@@ -341,6 +341,42 @@ Nothing else changes: the sample, the arms, what counts and the stopping rule st
 The pilot restarts from its first instance in a fresh run directory. The one result under the broken
 Gate is kept as evidence and not scored.
 
+**Amendment 2: pilot result and re-sizing (2026-09-24).** The pilot ran both arms on the first ten
+instances of the pre-registered sample: five django, three sympy, one scikit-learn and one pytest. The
+`repo` Gate rejected **none of the 20 proposals**. Every arm merged, with no infra failures and no
+errors.
+
+| Arm | Merged | Rejected | Rejection rate (Wilson 95%) | Median tokens | Median time |
+|---|---|---|---|---|---|
+| A: `agy`, `gemini-3.8-flash-high` | 10 | 0 | 0 [0, 0.28] | 827k | 9 min |
+| B: `grok`, `grok-4.7` | 10 | 0 | 0 [0, 0.28] | 525k | 3 min |
+
+The pre-registered rule applies, since each arm had fewer than 2 rejections. At any rejection rate the
+pilot leaves plausible, 30 scored rejections per arm would need more instances than the 294 eligible. So
+precision cannot be estimated as a rate for these arms, and **no main precision run follows**. Per the
+protocol, this is published as a null result: on this sample, the `repo` Gate almost never rejects these
+backends' proposals. How often it is wrong when it does reject is therefore rarely the question that
+matters for them. The pilot cost 2 hours 22 minutes of wall-clock and about 8.6M tokens per arm.
+
+### Question 2: what the Gate lets through (pre-registered 2026-09-24, before any merged patch is scored)
+
+The pilot moves the question. A Gate that almost never rejects is only worth its cost if it catches
+the regressions it exists to catch. So: of the proposals the `repo` Gate **merged**, what fraction does
+the held-out oracle show breaking existing behaviour, with at least one `PASS_TO_PASS` test failing? That
+is a **Gate miss**. The oracle's resolve rate on the same patches (`FAIL_TO_PASS`) is reported beside it,
+but a patch that fails to fix the issue is not a Gate miss: the Gate is held out from the fix by design.
+
+- **Sample.** The pilot's 20 merged proposals (10 instances × 2 arms), recovered from the task
+  repositories, where every merge is still recorded. They are scored by the official harness
+  (`swebench==4.1.0`) exactly as rejections are.
+- **Counting.** A line is a miss if the harness reports any `PASS_TO_PASS` failure. Some `PASS_TO_PASS`
+  tests are added by the held-out test patch, so the Gate never ran them. A failure in one of those
+  still counts, which errs against the Gate. The failing ids are published for every miss, so each one
+  can be checked. A harness error is counted and named, not scored.
+- **Reporting.** Per arm, never pooled: the miss count and rate with a Wilson 95% interval, the resolve
+  rate, the errors, and the failing ids. At 10 per arm this is a screen, not a rate. Extending it to
+  further instances spends agent quota, so it is a new decision, recorded here before it runs.
+
 ## Prior runs (as of 2026-08-22)
 
 Every run below was produced with **`--gate=none`** — `eval_swebench_docker.sh` hardcoded
