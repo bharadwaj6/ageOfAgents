@@ -233,8 +233,11 @@ Directions, not commitments. Detail and rationale in [proposals](improvements.md
 - **Firecracker microVM sandboxing** — Docker isolates the Gate; the agent itself is not confined. If
   confinement is ever needed, the cheaper route is delegating to a runtime that already has it (see the
   deferral table) rather than building a microVM story here.
-- **Persistent server mode.** A durable server with a dashboard over the Event Log, now framed as the
+- **Persistent server mode.** A durable, multi-user server over the Event Log, now framed as the
   team transport for the backend contract ([#76](https://github.com/bharadwaj6/ageOfAgents/issues/76)).
+  The local, single-user half has shipped as `aoa ui`
+  ([ADR 021](adr/021-a-local-web-view-is-the-cli-in-a-browser.md)); auth, multiple users and remote
+  access remain #76's.
 - **A cross-run `$` circuit breaker** — `max_usd_per_goal` bounds one goal; nothing bounds a week.
 - **Cross-repo dependency management** — designed in [cross-repo](cross_repo.md), unimplemented.
 
