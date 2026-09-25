@@ -54,14 +54,14 @@ other target. The suite is hermetic: the `mock` backend never networks, and test
 | `internal/state` | Replay → state, Task Graph readiness | Pure functions, no I/O |
 | `internal/orchestrator` | The Scheduler (single control loop) | Keep dispatch decoupled from the Merge Queue |
 | `internal/agent` | `Backend` interface, CLI presets, native `openai`/`anthropic`, `mock` | Keep `mock` deterministic |
-| `internal/worktree` | Git repo + isolated worktrees | Git calls use the config-independent identity helper |
+| `internal/worktree` | Git repo + isolated worktrees; read-only observation of any worktree (`observe.go`) | Git calls use the config-independent identity helper; parsed reads use `gitStdout` |
 | `internal/verify` | The Gate | Pure command runner, no orchestration logic |
 | `internal/mergequeue` | Verify → merge → rollback, disjoint-file batching | Must leave `main` green and linearizable |
 | `internal/metrics`, `internal/diagnose` | Run metrics + MAST failure-mode histogram | Replay projections; no instrumentation |
 | `internal/otel` | Replay projection to OTLP traces + metrics | Off by default, never in the hot path, never networks in tests |
 | `internal/bench`, `internal/liveeval` | Hermetic benchmark + live eval harness | `liveeval` networks only with a networked Backend |
 | `internal/config` | `aoa.toml` loading | New field → default in `Default()` |
-| `cmd/aoa` | Tiny stdlib CLI; one-Scheduler lock (`lock.go`), status projection (`status.go`), local web view (`ui.go`, embedded `ui/`; ADR 021) | No CLI framework; document new commands in `docs/cli.md` |
+| `cmd/aoa` | Tiny stdlib CLI; one-Scheduler lock (`lock.go`), status projection (`status.go`), local web view (`ui.go`, embedded `ui/`; ADR 021), sessions ledger (`sessions.go`; ADR 022) | No CLI framework; document new commands in `docs/cli.md` |
 | `scripts/` | Eval + benchmark harnesses, installer | Not covered by `make check`; keep runnable from a clean clone |
 | `examples/github-issues` | Reference GitHub Issues front door (bash+gh+jq) | Uses only the CLI JSON contract; conformance test in `cmd/aoa/frontdoor_test.go` |
 

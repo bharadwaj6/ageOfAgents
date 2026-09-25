@@ -119,6 +119,10 @@ Log that won't replay) and prints the fix for each.
   each task's Gate output, and the event timeline, updated live. Submit, amend, cancel, approve and
   reject from the page. It ships inside the binary, listens on loopback only, and never runs the
   Scheduler. ([ADR 021](https://bharadwaj6.github.io/ageOfAgents/design/adr/021-a-local-web-view-is-the-cli-in-a-browser/))
+- **`aoa sessions`: a ledger of the agent sessions you run yourself.** Each linked git worktree is a
+  session, whether `aoa` started it or not. The table shows the files it changed, which of them are
+  tests, and whether the Gate passed on it (`aoa sessions check`). No workspace or `aoa.toml` needed.
+  ([ADR 022](https://bharadwaj6.github.io/ageOfAgents/design/adr/022-record-sessions-aoa-did-not-start/))
 - **`aoa wait` and goal conditions.** Every goal carries `Accepted`, `Verified`, `Delivered` and
   `Complete` conditions, replayed from the log, and `aoa wait <goal-id>` blocks until it is complete.
   ([ADR 020](https://bharadwaj6.github.io/ageOfAgents/design/adr/020-task-lifecycle-is-a-projection/))
