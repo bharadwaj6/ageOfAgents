@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -170,6 +171,51 @@ func TestCommonDirIsSharedAcrossWorktrees(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fromMain, fromWorktree)
 	require.True(t, filepath.IsAbs(fromMain))
+}
+
+// Tracked ignores untracked files, which Fingerprint counts; Born is fixed
+// for a worktree's life and differs once it is re-created at the same path.
+func TestObserveTrackedAndBorn(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	repo, err := InitRepo(ctx, filepath.Join(base, "repo"))
+	require.NoError(t, err)
+	dir := filepath.Join(base, "wt")
+	w, err := repo.AddWorktree(ctx, dir, "agent/x")
+	require.NoError(t, err)
+	wt := Listed{Path: dir, Branch: "agent/x"}
+
+	before, err := Observe(ctx, wt, "main")
+	require.NoError(t, err)
+	write(t, filepath.Join(dir, "cover.out"), "mode: set\n")
+	withOutput, err := Observe(ctx, wt, "main")
+	require.NoError(t, err)
+	require.NotEqual(t, before.Fingerprint, withOutput.Fingerprint)
+	require.Equal(t, before.Tracked, withOutput.Tracked, "an untracked file is not a tracked change")
+	require.Equal(t, []string{"cover.out"}, withOutput.Untracked)
+
+	write(t, filepath.Join(dir, "README.md"), "edited\n")
+	edited, err := Observe(ctx, wt, "main")
+	require.NoError(t, err)
+	require.NotEqual(t, withOutput.Tracked, edited.Tracked)
+
+	born, err := Born(dir)
+	require.NoError(t, err)
+	again, err := Born(dir)
+	require.NoError(t, err)
+	require.Equal(t, born, again)
+
+	require.NoError(t, repo.Remove(ctx, w))
+	time.Sleep(10 * time.Millisecond)
+	_, err = repo.AddWorktree(ctx, dir, "agent/y")
+	require.NoError(t, err)
+	reborn, err := Born(dir)
+	require.NoError(t, err)
+	require.NotEqual(t, born, reborn)
+
+	_, err = Born(filepath.Join(base, "nowhere"))
+	require.Error(t, err)
 }
 
 func write(t *testing.T, path, content string) {

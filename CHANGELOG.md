@@ -25,8 +25,10 @@ All notable changes to this project are documented here. The format follows
   `<git-common-dir>/aoa/events.jsonl`. No workspace, no `aoa.toml`, nothing written into a working
   tree, and an observation is appended only when it says something new. `aoa sessions check <session>`
   runs the Gate on one session's tree and records the verdict against a fingerprint of that tree, so a
-  later edit shows the verdict as stale. Test files touched by a session are named in the output: an
-  agent that rewrites the tests it is judged by is the thing worth seeing first.
+  later edit shows the verdict as stale; untracked files the Gate writes itself do not. Test files
+  touched by a session are named in the output: an agent that rewrites the tests it is judged by is the
+  thing worth seeing first. `aoa`'s own `aoa/*` worktrees are left to the workspace's log, removed
+  sessions are listed only with `--all`, and a worktree re-created at the same path is a new session.
 
 - **The Gate-precision measurement is pre-registered.** Before any instance runs, the protocol for
   [#103](https://github.com/bharadwaj6/ageOfAgents/issues/103) fixes the question, the two pinned arms

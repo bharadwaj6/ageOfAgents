@@ -109,7 +109,7 @@ func TestNewEventRoundTrip(t *testing.T) {
 		{
 			name:    "SessionChecked",
 			typ:     SessionChecked,
-			payload: SessionCheckedPayload{SessionID: "s-1a2b3c4d", Fingerprint: "f00d", Passed: false, Command: "go test ./...", Output: "FAIL"},
+			payload: SessionCheckedPayload{SessionID: "s-1a2b3c4d", Fingerprint: "f00d", AfterFingerprint: "beef", Passed: false, Command: "go test ./...", Output: "FAIL"},
 			decode:  func() any { return &SessionCheckedPayload{} },
 		},
 	}

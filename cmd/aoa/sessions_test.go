@@ -91,7 +91,7 @@ func TestSessionsListsWorktreesAndFlagsTestEdits(t *testing.T) {
 	require.Equal(t, []string{"auth_test.go"}, byBranch["agent/tests"].TestFiles)
 	require.True(t, byBranch["agent/tests"].Dirty)
 	require.Empty(t, byBranch["agent/idle"].Files)
-	require.Equal(t, sessionID(wt["idle"]), byBranch["agent/idle"].ID)
+	require.Equal(t, idOf(t, wt["idle"]), byBranch["agent/idle"].ID)
 }
 
 // Observing twice records nothing the second time; observing after the tree
@@ -135,13 +135,13 @@ func TestSessionsRecordsRemovedWorktrees(t *testing.T) {
 	var err error
 	captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
 	require.NoError(t, err)
-	gone := sessionID(wt["login"])
+	gone := idOf(t, wt["login"])
 
 	ctx := context.Background()
 	r := worktree.OpenRepo(repo)
 	require.NoError(t, r.Remove(ctx, &worktree.Worktree{Path: wt["login"], Branch: "agent/login"}))
 
-	out := captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
+	out := captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo, "--all"}) })
 	require.NoError(t, err)
 	require.Contains(t, out, "worktree gone")
 
@@ -165,7 +165,7 @@ func TestSessionsCheckRecordsVerdictAndGoesStale(t *testing.T) {
 	require.Contains(t, out, "Gate passed")
 
 	st := sessionsState(t, repo)
-	x := st.Sessions[sessionID(wt["login"])]
+	x := st.Sessions[idOf(t, wt["login"])]
 	require.NotNil(t, x.Check)
 	require.True(t, x.Check.Passed)
 	require.Equal(t, "go vet ./...", x.Check.Command)
@@ -176,7 +176,7 @@ func TestSessionsCheckRecordsVerdictAndGoesStale(t *testing.T) {
 	require.NoError(t, err)
 
 	st = sessionsState(t, repo)
-	x = st.Sessions[sessionID(wt["login"])]
+	x = st.Sessions[idOf(t, wt["login"])]
 	require.True(t, x.CheckStale(), "the tree changed after the check")
 	require.Contains(t, captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) }), "pass (stale)")
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestSessionsCheckFailingGate(t *testing.T) {
 	require.Contains(t, out, "broken.go")
 
 	st := sessionsState(t, repo)
-	x := st.Sessions[sessionID(wt["tests"])]
+	x := st.Sessions[idOf(t, wt["tests"])]
 	require.NotNil(t, x.Check)
 	require.False(t, x.Check.Passed)
 	require.Contains(t, x.Check.Output, "broken.go")
@@ -209,7 +209,7 @@ func TestFindSessionResolvesEveryHandle(t *testing.T) {
 	repo, wt := sessionsRepo(t)
 	sc, err := scanSessions(context.Background(), repo, "")
 	require.NoError(t, err)
-	id := sessionID(wt["tests"])
+	id := idOf(t, wt["tests"])
 
 	for _, target := range []string{id, id[:6], "agent/tests", wt["tests"]} {
 		i, err := findSession(sc, target)
@@ -228,6 +228,113 @@ func TestSessionsCheckDetectsGate(t *testing.T) {
 	out := captureStdout(t, func() { err = cmdSessionsCheck([]string{"--repo", repo, "agent/idle"}) })
 	require.NoError(t, err, out)
 	require.Contains(t, out, "go build ./... && go test ./...")
+}
+
+// idOf is the session ID `aoa sessions` gives the worktree at path now.
+func idOf(t *testing.T, path string) string {
+	t.Helper()
+	born, err := worktree.Born(path)
+	require.NoError(t, err)
+	return sessionID(path, born)
+}
+
+// The worktrees aoa makes for its own attempts and Goal branches are on the
+// workspace's log already: they are neither listed nor recorded here.
+func TestSessionsSkipsAoaWorktrees(t *testing.T) {
+	repo, _ := sessionsRepo(t)
+	ctx := context.Background()
+	_, err := worktree.OpenRepo(repo).AddWorktree(ctx, filepath.Join(t.TempDir(), "attempt"), "aoa/t1-abc123")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
+	require.NoError(t, err)
+	require.NotContains(t, out, "aoa/t1-abc123")
+	require.Contains(t, out, "1 worktrees on aoa/* branches are aoa's own")
+
+	st := sessionsState(t, repo)
+	require.Len(t, st.Sessions, 3, "only the three agent sessions are recorded")
+	for _, x := range st.Sessions {
+		require.NotEqual(t, "aoa/t1-abc123", x.Branch)
+	}
+}
+
+// A removed session stays on the log but leaves the default table; --all
+// brings it back, and the table says how many it left out.
+func TestSessionsHidesRemovedUnlessAll(t *testing.T) {
+	repo, wt := sessionsRepo(t)
+	var err error
+	captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
+	require.NoError(t, err)
+	gone := idOf(t, wt["login"])
+	require.NoError(t, worktree.OpenRepo(repo).Remove(context.Background(), &worktree.Worktree{Path: wt["login"], Branch: "agent/login"}))
+
+	out := captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
+	require.NoError(t, err)
+	require.NotContains(t, out, gone)
+	require.NotContains(t, out, "worktree gone")
+	require.Contains(t, out, "1 removed sessions hidden (--all shows them)")
+
+	out = captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo, "--all"}) })
+	require.NoError(t, err)
+	require.Contains(t, out, gone)
+	require.Contains(t, out, "worktree gone")
+	require.NotContains(t, out, "hidden")
+}
+
+// A Gate that writes an untracked file of its own (here a coverage profile)
+// does not make its own verdict stale, and says what it left behind.
+func TestSessionsCheckIgnoresGateOutput(t *testing.T) {
+	repo, wt := sessionsRepo(t)
+	var err error
+	out := captureStdout(t, func() {
+		err = cmdSessionsCheck([]string{"--repo", repo, "--gate", "go test -coverprofile=cover.out ./...", "agent/login"})
+	})
+	require.NoError(t, err, out)
+	require.FileExists(t, filepath.Join(wt["login"], "cover.out"))
+	require.Contains(t, out, "the Gate left untracked files: cover.out")
+
+	out = captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
+	require.NoError(t, err)
+	require.NotContains(t, out, "stale")
+	x := sessionsState(t, repo).Sessions[idOf(t, wt["login"])]
+	require.NotNil(t, x.Check)
+	require.False(t, x.CheckStale(), "the Gate's own output is not a change to the tree")
+
+	// A real edit after the check still makes it stale.
+	writeFile(t, filepath.Join(wt["login"], "auth.go"), "package demo\n\nfunc Login() bool { return false }\n")
+	out = captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
+	require.NoError(t, err)
+	require.Contains(t, out, "pass (stale)")
+}
+
+// A worktree removed and re-created at the same path is a new session; the
+// old one keeps what it showed.
+func TestSessionsRecreatedWorktreeIsANewSession(t *testing.T) {
+	repo, wt := sessionsRepo(t)
+	var err error
+	captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
+	require.NoError(t, err)
+	old := idOf(t, wt["login"])
+
+	ctx := context.Background()
+	r := worktree.OpenRepo(repo)
+	require.NoError(t, r.Remove(ctx, &worktree.Worktree{Path: wt["login"], Branch: "agent/login"}))
+	time.Sleep(10 * time.Millisecond) // a distinct birth even on a coarse clock
+	_, err = r.AddWorktree(ctx, wt["login"], "agent/login-2")
+	require.NoError(t, err)
+	fresh := idOf(t, wt["login"])
+	require.NotEqual(t, old, fresh)
+
+	out := captureStdout(t, func() { err = cmdSessions([]string{"--repo", repo}) })
+	require.NoError(t, err)
+	require.Contains(t, out, fresh)
+
+	st := sessionsState(t, repo)
+	require.True(t, st.Sessions[old].Removed)
+	require.Equal(t, []string{"auth.go"}, st.Sessions[old].Files, "the old session keeps what it did")
+	require.False(t, st.Sessions[fresh].Removed)
+	require.Equal(t, "agent/login-2", st.Sessions[fresh].Branch)
+	require.Empty(t, st.Sessions[fresh].Files)
 }
 
 func TestAgoRendersCoarsely(t *testing.T) {

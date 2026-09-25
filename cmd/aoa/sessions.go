@@ -20,12 +20,17 @@ import (
 	"github.com/bharadwaj6/ageOfAgents/pkg/api"
 )
 
-// sessionID derives a stable ID from a worktree's path, so every observation
-// of one worktree folds into one session (ADR 022).
-func sessionID(path string) string {
-	sum := sha256.Sum256([]byte(filepath.Clean(path)))
+// sessionID derives a stable ID from a worktree's path and the time it was
+// created, so every observation of one worktree folds into one session, and a
+// worktree removed and re-created at the same path is a new one (ADR 022).
+func sessionID(path string, born time.Time) string {
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s\x00%d", filepath.Clean(path), born.UnixNano()))
 	return "s-" + hex.EncodeToString(sum[:4])
 }
+
+// aoaBranchPrefix marks the worktrees aoa creates itself, for an attempt or a
+// Goal branch. Their work is on the workspace's own Event Log already.
+const aoaBranchPrefix = "aoa/"
 
 // sessionLedgerPath is where a repository's sessions are recorded: inside the
 // git directory its worktrees share, so one log covers them all and nothing
@@ -43,7 +48,10 @@ type sessionScan struct {
 	repo, base string
 	ids        []string               // parallel to obs, in `git worktree list` order
 	obs        []worktree.Observation // every linked worktree that could be read
-	present    map[string]bool        // every linked worktree seen, readable or not
+	listed     []worktree.Listed      // parallel to obs: the entry each was read from
+	present    map[string]bool        // every session whose worktree exists, readable or not
+	skipped    map[string]bool        // paths whose worktree exists but has no identity
+	ownCount   int                    // worktrees on aoa/* branches, left to aoa's own log
 	warnings   []string               // worktrees that could not be read, and why
 }
 
@@ -51,7 +59,7 @@ type sessionScan struct {
 // is the integration checkout, not a session, so it is skipped; it supplies
 // the default base instead.
 func scanSessions(ctx context.Context, repo, base string) (sessionScan, error) {
-	sc := sessionScan{repo: repo, base: base, present: map[string]bool{}}
+	sc := sessionScan{repo: repo, base: base, present: map[string]bool{}, skipped: map[string]bool{}}
 	list, err := worktree.ListWorktrees(ctx, repo)
 	if err != nil {
 		return sc, fmt.Errorf("%s is not a git repository: %w", repo, err)
@@ -70,10 +78,21 @@ func scanSessions(ctx context.Context, repo, base string) (sessionScan, error) {
 		if wt.Bare {
 			continue
 		}
-		id := sessionID(wt.Path)
 		if wt.Prunable {
 			continue // its directory is gone: it counts as removed, not present
 		}
+		if strings.HasPrefix(wt.Branch, aoaBranchPrefix) {
+			sc.ownCount++
+			continue
+		}
+		born, err := worktree.Born(wt.Path)
+		if err != nil {
+			// Unreadable is not gone: keep whatever session is at this path.
+			sc.skipped[filepath.Clean(wt.Path)] = true
+			sc.warnings = append(sc.warnings, fmt.Sprintf("%s: %v", wt.Path, err))
+			continue
+		}
+		id := sessionID(wt.Path, born)
 		sc.present[id] = true
 		o, err := worktree.Observe(ctx, wt, sc.base)
 		if err != nil {
@@ -82,6 +101,7 @@ func scanSessions(ctx context.Context, repo, base string) (sessionScan, error) {
 		}
 		sc.ids = append(sc.ids, id)
 		sc.obs = append(sc.obs, o)
+		sc.listed = append(sc.listed, wt)
 	}
 	return sc, nil
 }
@@ -113,7 +133,7 @@ func recordSessions(led *ledger.Ledger, sc sessionScan) ([]api.Event, error) {
 			pending = append(pending, ev)
 		}
 		for _, x := range st.OrderedSessions() {
-			if x.Removed || sc.present[x.ID] {
+			if x.Removed || sc.present[x.ID] || sc.skipped[filepath.Clean(x.Path)] {
 				continue
 			}
 			ev, err := api.NewEvent(api.SessionObserved, "sessions", api.SessionObservedPayload{
@@ -165,6 +185,7 @@ func cmdSessions(args []string) error {
 		"aoa sessions --repo ~/Projects/myrepo")
 	repo := fs.String("repo", ".", "repository to read (any of its worktrees)")
 	base := fs.String("base", "", "ref changes are measured against (default: the main worktree's branch)")
+	all := fs.Bool("all", false, "also list sessions whose worktree has been removed")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -175,7 +196,7 @@ func cmdSessions(args []string) error {
 	if err != nil {
 		return err
 	}
-	return renderSessions(os.Stdout, sc, st, time.Now())
+	return renderSessions(os.Stdout, sc, st, time.Now(), *all)
 }
 
 func cmdSessionsCheck(args []string) error {
@@ -224,6 +245,10 @@ func cmdSessionsCheck(args []string) error {
 	}
 	fmt.Printf("%s  %s\n  gate: %s\n\n", id, o.Branch, gateString(commands))
 	res := verify.Verifier{Commands: verify.ToCommands(commands)}.Run(ctx, o.Path)
+	after, note, err := afterGate(ctx, sc.listed[i], sc.base, o)
+	if err != nil {
+		return err
+	}
 
 	path, err := sessionLedgerPath(ctx, sc.repo)
 	if err != nil {
@@ -234,7 +259,7 @@ func cmdSessionsCheck(args []string) error {
 		return err
 	}
 	ev, err := api.NewEvent(api.SessionChecked, "sessions", api.SessionCheckedPayload{
-		SessionID: id, Fingerprint: o.Fingerprint, Passed: res.Passed,
+		SessionID: id, Fingerprint: o.Fingerprint, AfterFingerprint: after, Passed: res.Passed,
 		Command: gateString(commands), Output: lastLines(res.Output, 40),
 	})
 	if err != nil {
@@ -244,6 +269,9 @@ func cmdSessionsCheck(args []string) error {
 		return err
 	}
 
+	if note != "" {
+		fmt.Println(note)
+	}
 	if res.Passed {
 		fmt.Println("Gate passed.")
 		return nil
@@ -253,6 +281,41 @@ func cmdSessionsCheck(args []string) error {
 		fmt.Println()
 	}
 	return fmt.Errorf("Gate failed on %s (%s)", id, res.Failed)
+}
+
+// afterGate re-reads a session's tree once its Gate has run. When only
+// untracked files appeared, the Gate wrote them — coverage, build output — and
+// the tree it judged is unchanged, so the verdict also holds for the tree as it
+// is now: after is that tree's fingerprint. When HEAD or a tracked file moved,
+// something edited the tree while the Gate ran, and the verdict covers only
+// what it saw: after is empty, so the next observation shows it stale. note
+// says which happened, or is empty when nothing did.
+func afterGate(ctx context.Context, wt worktree.Listed, base string, before worktree.Observation) (after, note string, err error) {
+	now, err := worktree.Observe(ctx, wt, base)
+	if err != nil {
+		return "", "", fmt.Errorf("re-read %s after the Gate: %w", wt.Path, err)
+	}
+	switch {
+	case now.Fingerprint == before.Fingerprint:
+		return "", "", nil
+	case now.Tracked != before.Tracked:
+		return "", "note: the tree changed while the Gate ran; the verdict covers what it saw, and shows stale", nil
+	}
+	had := map[string]bool{}
+	for _, f := range before.Untracked {
+		had[f] = true
+	}
+	var added []string
+	for _, f := range now.Untracked {
+		if !had[f] {
+			added = append(added, f)
+		}
+	}
+	note = "note: the Gate rewrote untracked files; the verdict still holds"
+	if len(added) > 0 {
+		note = fmt.Sprintf("note: the Gate left untracked files: %s \u2014 consider .gitignore", strings.Join(added, ", "))
+	}
+	return now.Fingerprint, note, nil
 }
 
 // findSession resolves what the user typed — an ID, a unique prefix of one, a
@@ -306,22 +369,36 @@ func (g *gateFlag) Set(v string) error {
 	return nil
 }
 
-func renderSessions(w io.Writer, sc sessionScan, st *state.State, now time.Time) error {
+func renderSessions(w io.Writer, sc sessionScan, st *state.State, now time.Time, all bool) error {
 	for _, warn := range sc.warnings {
 		fmt.Fprintf(w, "note: skipped %s\n", warn)
 	}
+	if sc.ownCount > 0 {
+		fmt.Fprintf(w, "note: %d worktrees on %s* branches are aoa's own (see aoa status)\n", sc.ownCount, aoaBranchPrefix)
+	}
 	fmt.Fprintf(w, "Sessions in %s — changes measured against %s\n\n", sc.repo, sc.base)
-	if len(sc.obs) == 0 {
+	// A removed session stays on the log; it is listed only on request, so
+	// a day of worktrees made and cleaned up does not bury the live ones.
+	var gone []*state.Session
+	for _, x := range st.OrderedSessions() {
+		if x.Removed {
+			gone = append(gone, x)
+		}
+	}
+	hidden := 0
+	if !all {
+		hidden, gone = len(gone), nil
+	}
+	if len(sc.obs) == 0 && len(gone) == 0 {
 		fmt.Fprintf(w, "No sessions: this repository has no linked git worktrees.\nRun each agent in its own worktree (`git worktree add`) and they show up here.\n")
+		sessionsFooter(w, hidden)
 		return nil
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "SESSION\tBRANCH\tFILES\tTESTS\tGATE\tLAST CHANGE")
-	live := map[string]bool{}
 	for i, o := range sc.obs {
 		id := sc.ids[i]
-		live[id] = true
 		files := fmt.Sprintf("%d", len(o.Files))
 		if o.Dirty {
 			files += "*"
@@ -333,12 +410,6 @@ func renderSessions(w io.Writer, sc sessionScan, st *state.State, now time.Time)
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			id, dash(o.Branch), files, tests, gateCell(st.Sessions[id]), ago(now, o.LastChange))
 	}
-	var gone []*state.Session
-	for _, x := range st.OrderedSessions() {
-		if !live[x.ID] {
-			gone = append(gone, x)
-		}
-	}
 	for _, x := range gone {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n",
 			x.ID, dash(x.Branch), len(x.Files), "—", "worktree gone", ago(now, x.LastSeen))
@@ -349,6 +420,7 @@ func renderSessions(w io.Writer, sc sessionScan, st *state.State, now time.Time)
 	if len(sc.obs) > 0 {
 		fmt.Fprintf(w, "\n* uncommitted changes\n")
 	}
+	sessionsFooter(w, hidden)
 
 	var touched bool
 	for i, o := range sc.obs {
@@ -362,6 +434,13 @@ func renderSessions(w io.Writer, sc sessionScan, st *state.State, now time.Time)
 		fmt.Fprintf(w, "  %s  %s\n", sc.ids[i], strings.Join(o.TestFiles, ", "))
 	}
 	return nil
+}
+
+// sessionsFooter says how many removed sessions the table left out.
+func sessionsFooter(w io.Writer, hidden int) {
+	if hidden > 0 {
+		fmt.Fprintf(w, "%d removed sessions hidden (--all shows them)\n", hidden)
+	}
 }
 
 func gateCell(x *state.Session) string {

@@ -123,6 +123,35 @@ func TestSessionsSurviveSnapshot(t *testing.T) {
 	}
 }
 
+// A verdict holds for the tree the Gate saw and for the tree it left behind
+// with its own output added; any other tree makes it stale.
+func TestCheckStaleWithAfterFingerprint(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		after   string
+		want    bool
+	}{
+		{"the tree the Gate saw", "f1", "", false},
+		{"changed, no after", "f2", "", true},
+		{"the tree the Gate left", "f2", "f2", false},
+		{"changed past what the Gate left", "f3", "f2", true},
+		{"back to the tree the Gate saw", "f1", "f2", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newBuild(t).
+				add(api.SessionObserved, api.SessionObservedPayload{SessionID: "s-1", Path: "/wt/a", Fingerprint: "f1"}).
+				add(api.SessionChecked, api.SessionCheckedPayload{SessionID: "s-1", Fingerprint: "f1", AfterFingerprint: tt.after, Passed: true}).
+				add(api.SessionObserved, api.SessionObservedPayload{SessionID: "s-1", Path: "/wt/a", Fingerprint: tt.current}).
+				fold()
+			if got := s.Sessions["s-1"].CheckStale(); got != tt.want {
+				t.Errorf("CheckStale = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // A check for a session never observed records nothing.
 func TestSessionCheckedWithoutObservationIsIgnored(t *testing.T) {
 	s := newBuild(t).add(api.SessionChecked, api.SessionCheckedPayload{SessionID: "s-9", Fingerprint: "f", Passed: true}).fold()

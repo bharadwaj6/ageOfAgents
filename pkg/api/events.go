@@ -458,12 +458,15 @@ type SessionObservedPayload struct {
 }
 
 // SessionCheckedPayload accompanies [SessionChecked]. Fingerprint is the
-// session's fingerprint when the Gate started; Command is the Gate as run, and
-// Output the tail of what it printed.
+// session's fingerprint when the Gate started; AfterFingerprint is its
+// fingerprint when the Gate finished, set only when the Gate's own untracked
+// output was all that changed, so that output does not make the verdict stale.
+// Command is the Gate as run, and Output the tail of what it printed.
 type SessionCheckedPayload struct {
-	SessionID   string `json:"session_id"`
-	Fingerprint string `json:"fingerprint"`
-	Passed      bool   `json:"passed"`
-	Command     string `json:"command"`
-	Output      string `json:"output,omitempty"`
+	SessionID        string `json:"session_id"`
+	Fingerprint      string `json:"fingerprint"`
+	AfterFingerprint string `json:"after_fingerprint,omitempty"`
+	Passed           bool   `json:"passed"`
+	Command          string `json:"command"`
+	Output           string `json:"output,omitempty"`
 }

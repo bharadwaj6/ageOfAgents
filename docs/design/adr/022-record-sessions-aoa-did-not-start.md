@@ -30,8 +30,12 @@ Two things in the existing design look like they forbid this, and do not:
 it or not, and `aoa sessions check` records whether the Gate passes on one of them.**
 
 1. **A session is a linked git worktree.** The main working tree is the integration checkout, not a
-   session; it supplies the default base instead. A session's identity is derived from its path, so
-   every observation of one worktree folds into one session.
+   session; it supplies the default base instead. A session's identity is derived from its path and
+   the time the worktree was created (the modification time of its `.git` file, which
+   `git worktree add` writes once), so every observation of one worktree folds into one session, and
+   a worktree removed and re-created at the same path is a new one. Worktrees on `aoa/*` branches are
+   `aoa`'s own attempts and Goal branches, already on the workspace's Event Log, and are not recorded
+   again.
 2. **Observation reads only.** `git worktree list`, `diff`, `ls-files`, `log`, and the modification
    times of the files git reports as changed. It never writes to a working tree, never prunes, never
    commits.
@@ -47,7 +51,10 @@ it or not, and `aoa sessions check` records whether the Gate passes on one of th
    branch, which only the merge queue may change (ADR 002).
 6. **A verdict is pinned to content.** Each observation carries a fingerprint of HEAD, the uncommitted
    patch and the untracked files. A check recorded against an older fingerprint is shown as stale
-   rather than as a verdict on what is there now.
+   rather than as a verdict on what is there now. The tree is read again once the Gate finishes: when
+   only untracked files appeared, that is the Gate's own output (coverage, build artifacts), and the
+   check records the resulting fingerprint too, so the Gate does not make its own verdict stale. When
+   HEAD or a tracked file moved while it ran, the verdict stays pinned to what the Gate saw.
 7. **Touched test files are recorded as a field of the observation.** An agent that edits the tests it
    is judged by is the thing worth seeing at a glance; it is a property of the diff, not a separate
    event.
@@ -63,6 +70,11 @@ it or not, and `aoa sessions check` records whether the Gate passes on one of th
 - **Two logs now exist in a workspace-plus-repo setup.** The workspace's log is `aoa`'s own work; the
   repository's is what its worktrees did. They are not merged, and nothing in the Scheduler reads the
   second.
+- **Removed sessions leave the default view.** They stay on the log with what they last showed;
+  `aoa sessions --all` lists them, so a day of worktrees made and cleaned up does not bury the live ones.
+- **The Gate-output rule has a blind spot.** A file the agent itself creates, untracked, while the Gate
+  runs is indistinguishable from the Gate's output and is absorbed into the verdict. The window is the
+  Gate's run time; an edit to any tracked file is still caught.
 - **Tradeoff.** `aoa` now records work it cannot vouch for. A session's own commits never went through
   the Gate on the post-merge state, and this ADR does not pretend otherwise — the ledger's value is
   that it says so.

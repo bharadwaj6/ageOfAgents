@@ -306,12 +306,18 @@ Test files touched — the Gate cannot vouch for a tree that rewrote its own tes
 |---|---|---|
 | `--repo DIR` | `.` | the repository to read; any of its worktrees will do |
 | `--base REF` | the main worktree's branch | what changes are measured against |
+| `--all` | `false` | also list sessions whose worktree has been removed |
 
 `FILES` counts what differs from the base, committed and not; `*` marks a tree with uncommitted or
 untracked changes. `TESTS` counts the files among them that look like tests, fixtures or test-runner
 config — a session that rewrote the tests it is judged by. `GATE` is the last `aoa sessions check`
 verdict, and `(stale)` means the tree has changed since that verdict was recorded. A session whose
-worktree has been removed stays on the log as `worktree gone`, with what it last showed.
+worktree has been removed stays on the log with what it last showed; `--all` lists it as
+`worktree gone`, and otherwise a footer counts the hidden ones. A worktree removed and re-created at
+the same path is a new session.
+
+Worktrees on `aoa/*` branches are `aoa`'s own attempts and Goal branches. They are already on the
+workspace's Event Log (see `aoa status`), so they are not listed or recorded here; a note counts them.
 
 Observations are appended to an Event Log at `<git-common-dir>/aoa/events.jsonl` — inside `.git`, so
 nothing is written into a working tree, and every worktree of the repo shares one log. Running the
@@ -343,7 +349,10 @@ Gate fails, so a script can use it.
 This is a report, not a merge. It says whether that tree is green now; it says nothing about the
 integration branch, which only the merge queue may change. The verdict is recorded against a
 fingerprint of the tree, so the next `aoa sessions` marks it stale once the session edits anything
-else.
+else. Files the Gate itself leaves behind, untracked — a coverage profile, build output — do not count
+as an edit: the command names them (`note: the Gate left untracked files: cover.out`) and the verdict
+stays current. If a tracked file changes while the Gate runs, the verdict covers only what it saw and
+shows as stale.
 
 ### `aoa events`
 

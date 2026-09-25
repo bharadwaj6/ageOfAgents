@@ -100,6 +100,12 @@ type Observation struct {
 	Dirty bool
 	// Fingerprint changes whenever the tree's content does.
 	Fingerprint string
+	// Tracked changes whenever HEAD or the uncommitted patch to tracked files
+	// does, and ignores untracked files: it tells an edit apart from output a
+	// command dropped next to the sources.
+	Tracked string
+	// Untracked lists the untracked, non-ignored files, sorted.
+	Untracked []string
 	// LastChange is the newest of HEAD's commit time and the modification
 	// time of every uncommitted or untracked file.
 	LastChange time.Time
@@ -159,6 +165,10 @@ func Observe(ctx context.Context, wt Listed, baseRef string) (Observation, error
 		return o, fmt.Errorf("observe %s: %w", dir, err)
 	}
 	fmt.Fprintf(h, "patch %d\n%s", len(patch), patch)
+	tracked := sha256.New()
+	fmt.Fprintf(tracked, "head %s\npatch %d\n%s", o.Head, len(patch), patch)
+	o.Tracked = hex.EncodeToString(tracked.Sum(nil))[:16]
+	o.Untracked = union(untracked, nil)
 
 	if out, err := gitStdout(ctx, dir, "log", "-1", "--format=%ct", "HEAD"); err == nil {
 		if sec, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); perr == nil {
@@ -183,6 +193,17 @@ func Observe(ctx context.Context, wt Listed, baseRef string) (Observation, error
 	}
 	o.Fingerprint = hex.EncodeToString(h.Sum(nil))[:16]
 	return o, nil
+}
+
+// Born returns when the linked worktree at dir was created: the modification
+// time of its .git file, which `git worktree add` writes once. Two worktrees
+// made at the same path at different times therefore have different births.
+func Born(dir string) (time.Time, error) {
+	fi, err := os.Lstat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("worktree %s: %w", dir, err)
+	}
+	return fi.ModTime().UTC(), nil
 }
 
 func nulList(ctx context.Context, dir string, args ...string) ([]string, error) {

@@ -32,17 +32,26 @@ type Session struct {
 // SessionCheck is the latest Gate run on a session's working tree.
 type SessionCheck struct {
 	Fingerprint string
-	Passed      bool
-	Command     string
-	Output      string
-	At          time.Time
+	// AfterFingerprint is the tree's fingerprint once the Gate finished, set
+	// only when the Gate's own output was all that changed; the verdict then
+	// holds for that tree too. Empty otherwise.
+	AfterFingerprint string
+	Passed           bool
+	Command          string
+	Output           string
+	At               time.Time
 }
 
 // CheckStale reports whether the session's tree has changed since its latest
-// check, so the check's verdict no longer describes it. A session never
-// checked is not stale — it has no verdict to be stale.
+// check, so the check's verdict no longer describes it. The tree the Gate saw
+// and the tree it left behind (its own untracked output added) both count as
+// unchanged. A session never checked is not stale — it has no verdict to be
+// stale.
 func (x *Session) CheckStale() bool {
-	return x.Check != nil && x.Check.Fingerprint != x.Fingerprint
+	if x.Check == nil || x.Fingerprint == x.Check.Fingerprint {
+		return false
+	}
+	return x.Check.AfterFingerprint == "" || x.Fingerprint != x.Check.AfterFingerprint
 }
 
 // Same reports whether an observation would record nothing new about this
@@ -108,7 +117,7 @@ func (s *State) applySessionChecked(e api.Event) error {
 		return nil
 	}
 	x.Check = &SessionCheck{
-		Fingerprint: p.Fingerprint, Passed: p.Passed,
+		Fingerprint: p.Fingerprint, AfterFingerprint: p.AfterFingerprint, Passed: p.Passed,
 		Command: p.Command, Output: p.Output, At: e.Timestamp,
 	}
 	return nil
