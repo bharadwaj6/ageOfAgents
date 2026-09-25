@@ -15,7 +15,8 @@ aoa goal "fix the parser" --path ./ws     # rejected, with an explanation
 
 **`--path DIR` selects the workspace** and defaults to `.` — except `aoa quickstart`, which defaults to
 `./workspace` because it creates one. Four commands take no `--path` at all, because they don't read a
-workspace: `bench`, `eval`, `version` and `completion`.
+workspace: `bench`, `eval`, `version` and `completion`. `sessions` takes `--repo DIR` instead: it
+reads a git repository, not a workspace.
 
 ## Getting started
 
@@ -278,6 +279,71 @@ on. No goal, or an id the Event Log does not hold, is a usage error (`2`) report
 It waits for the goals it names and nothing else, so an old failure elsewhere in the workspace does not
 change its answer. It only reads the log: something must be running `aoa run` for a goal to move, and a
 goal parked for `aoa approve` waits until someone decides.
+
+### `aoa sessions`
+
+What every agent session in a repository has done — including sessions `aoa` did not start
+([ADR 022](design/adr/022-record-sessions-aoa-did-not-start.md)). Each linked git worktree is one
+session, so the four Claude Code or Codex terminals you already have open are four sessions. It needs
+no workspace and no `aoa.toml`, and it reads git only.
+
+```
+$ aoa sessions --repo ~/Projects/myrepo
+Sessions in /Users/me/Projects/myrepo — changes measured against main
+
+SESSION     BRANCH          FILES  TESTS  GATE          LAST CHANGE
+s-4cddb586  agent/flaky     1*     1 !    not run       3m ago
+s-df26979e  agent/login     1      —      pass          12m ago
+s-3b057c93  agent/refactor  6      —      FAIL (stale)  2h ago
+
+* uncommitted changes
+
+Test files touched — the Gate cannot vouch for a tree that rewrote its own tests:
+  s-4cddb586  auth_test.go
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--repo DIR` | `.` | the repository to read; any of its worktrees will do |
+| `--base REF` | the main worktree's branch | what changes are measured against |
+
+`FILES` counts what differs from the base, committed and not; `*` marks a tree with uncommitted or
+untracked changes. `TESTS` counts the files among them that look like tests, fixtures or test-runner
+config — a session that rewrote the tests it is judged by. `GATE` is the last `aoa sessions check`
+verdict, and `(stale)` means the tree has changed since that verdict was recorded. A session whose
+worktree has been removed stays on the log as `worktree gone`, with what it last showed.
+
+Observations are appended to an Event Log at `<git-common-dir>/aoa/events.jsonl` — inside `.git`, so
+nothing is written into a working tree, and every worktree of the repo shares one log. Running the
+command twice over an unchanged repository appends nothing.
+
+### `aoa sessions check`
+
+Run the Gate on one session's working tree and record the verdict. Name the session by ID, by a unique
+prefix of it, by branch, or by path.
+
+```
+$ aoa sessions check --gate "go test ./..." agent/login
+s-df26979e  agent/login
+  gate: go test ./...
+
+Gate passed.
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--repo DIR` | `.` | the repository to read |
+| `--base REF` | the main worktree's branch | what changes are measured against |
+| `--gate CMD` | detected from the project | a Gate command, split on spaces (no shell); repeat for several |
+
+Without `--gate` the command is sniffed from the project the same way `aoa init --adopt` sniffs it
+(`go build ./... && go test ./...` for a Go module, and so on). The exit status is non-zero when the
+Gate fails, so a script can use it.
+
+This is a report, not a merge. It says whether that tree is green now; it says nothing about the
+integration branch, which only the merge queue may change. The verdict is recorded against a
+fingerprint of the tree, so the next `aoa sessions` marks it stale once the session edits anything
+else.
 
 ### `aoa events`
 

@@ -5,6 +5,7 @@
 package worktree
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -31,6 +32,28 @@ type Worktree struct {
 // git runs a git command with a deterministic, config-independent identity so
 // commits/merges work even when the machine has no global git config.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := gitCmd(ctx, dir, args...).CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("git %s: %w\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out), nil
+}
+
+// gitStdout is git for reads whose output is parsed: it returns stdout only,
+// so a warning git prints on stderr can never be mistaken for a path.
+func gitStdout(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := gitCmd(ctx, dir, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w\n%s", strings.Join(args, " "), err, stderr.String())
+	}
+	return string(out), nil
+}
+
+// gitCmd builds a git command with the config-independent identity.
+func gitCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	pre := []string{
 		"-c", "user.email=aoa@local",
 		"-c", "user.name=Age of Agents",
@@ -47,11 +70,7 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	}
 	// Never wait on a credential prompt nobody will answer (fetch and push).
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("git %s: %w\n%s", strings.Join(args, " "), err, out)
-	}
-	return string(out), nil
+	return cmd
 }
 
 // InitRepo creates a fresh integration repo at dir on branch main with one

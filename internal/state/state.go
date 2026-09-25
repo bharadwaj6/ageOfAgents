@@ -142,6 +142,9 @@ type State struct {
 	// BudgetsExhausted maps each budget window a BudgetExhausted closed (see
 	// BudgetWindow: "run", or "day:2026-09-20") to the seq of the latest one.
 	BudgetsExhausted map[string]int `json:"budgets_exhausted,omitempty"`
+	// Sessions are agent sessions aoa observed but did not start (ADR 022),
+	// keyed by session ID.
+	Sessions map[string]*Session `json:"sessions,omitempty"`
 }
 
 // New returns an empty State.
@@ -151,6 +154,7 @@ func New() *State {
 		Tickets:     map[string]*Ticket{},
 		KeyToTicket: map[string]string{},
 		KeyToGoal:   map[string]string{},
+		Sessions:    map[string]*Session{},
 	}
 }
 
@@ -548,6 +552,15 @@ func (s *State) Apply(e api.Event) error {
 			s.BudgetsExhausted = map[string]int{}
 		}
 		s.BudgetsExhausted[BudgetWindow(p.Scope, p.Day)] = e.Seq
+
+	case api.SessionObserved:
+		if err := s.applySessionObserved(e); err != nil {
+			return err
+		}
+	case api.SessionChecked:
+		if err := s.applySessionChecked(e); err != nil {
+			return err
+		}
 
 	default:
 		return fmt.Errorf("state: unknown event type %q (seq %d)", e.Type, e.Seq)

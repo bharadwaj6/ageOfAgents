@@ -29,3 +29,4 @@ ordinary engineering practice rather than research, and say so.
 | [019](019-reporting-back-belongs-to-the-front-door.md) | Reporting back to the origin belongs to the front door, over the contract; `aoa` emits no outbound notifications (extends 015, bounds 012; resolves #129) |
 | [020](020-task-lifecycle-is-a-projection.md) | A Goal's lifecycle is published as replayed conditions in the shape other runtimes parse; `aoa` interoperates with agent runtimes and depends on none (extends 015, 012; bounds 019) |
 | [021](021-a-local-web-view-is-the-cli-in-a-browser.md) | `aoa ui` is a local web view of the workspace: the CLI's read and write verbs over HTTP, on loopback, never running the Scheduler (amends 015's "no board UI"; leaves #76 deferred) |
+| [022](022-record-sessions-aoa-did-not-start.md) | `aoa` records agent sessions it did not start: a read-only ledger of the repo's worktrees, in the repo (extends 001, 015) |

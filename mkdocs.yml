@@ -107,6 +107,7 @@ nav:
           - 019 Reporting back is the front door's: design/adr/019-reporting-back-belongs-to-the-front-door.md
           - 020 Task lifecycle is a projection: design/adr/020-task-lifecycle-is-a-projection.md
           - 021 A local web view: design/adr/021-a-local-web-view-is-the-cli-in-a-browser.md
+          - 022 Record sessions aoa did not start: design/adr/022-record-sessions-aoa-did-not-start.md
       - Metrics: design/metrics.md
       - Live evaluation: design/live_eval.md
       - Formal model (TLA+): design/formal/README.md

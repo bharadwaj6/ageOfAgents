@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestNewEventRoundTrip(t *testing.T) {
@@ -87,6 +88,29 @@ func TestNewEventRoundTrip(t *testing.T) {
 			typ:     DeliveryFailed,
 			payload: DeliveryFailedPayload{GoalID: "g1", Branch: "aoa/g1", Reason: "push: rejected (fetch first)"},
 			decode:  func() any { return &DeliveryFailedPayload{} },
+		},
+		{
+			name: "SessionObserved",
+			typ:  SessionObserved,
+			payload: SessionObservedPayload{
+				SessionID: "s-1a2b3c4d", Path: "/repo/.wt/login", Branch: "feat/login",
+				Head: "abc123", Base: "def456", Files: []string{"auth.go", "auth_test.go"},
+				TestFiles: []string{"auth_test.go"}, Dirty: true, Fingerprint: "f00d",
+				LastChange: time.Date(2026, 9, 20, 10, 30, 0, 0, time.UTC),
+			},
+			decode: func() any { return &SessionObservedPayload{} },
+		},
+		{
+			name:    "SessionObserved removed",
+			typ:     SessionObserved,
+			payload: SessionObservedPayload{SessionID: "s-1a2b3c4d", Path: "/repo/.wt/login", Removed: true},
+			decode:  func() any { return &SessionObservedPayload{} },
+		},
+		{
+			name:    "SessionChecked",
+			typ:     SessionChecked,
+			payload: SessionCheckedPayload{SessionID: "s-1a2b3c4d", Fingerprint: "f00d", Passed: false, Command: "go test ./...", Output: "FAIL"},
+			decode:  func() any { return &SessionCheckedPayload{} },
 		},
 	}
 

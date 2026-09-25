@@ -65,6 +65,8 @@ func main() {
 		err = cmdRun(args)
 	case "status":
 		err = cmdStatus(args)
+	case "sessions":
+		err = cmdSessions(args)
 	case "feed":
 		err = cmdFeed(args)
 	case "events":
@@ -138,6 +140,8 @@ Usage:
                                           Run the reconciler (to settled by default)
   aoa status [--path DIR] [--watch] [--interval D]
                                           Show goals and tickets (--watch to live-refresh)
+  aoa sessions [--repo DIR] [--base REF] [check [--gate CMD] <session>]
+                                          Show every agent session in a repo's worktrees — aoa's or not
   aoa events [--path DIR] [tail [--count N] | replay] [--type T] [--json] [--since N] [--follow]
                                           Print the Event Log, or stream it (--json --since N --follow)
   aoa feed   [--path DIR] [--type T]      Deprecated alias for 'events tail'
