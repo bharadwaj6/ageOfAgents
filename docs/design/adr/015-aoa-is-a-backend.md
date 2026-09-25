@@ -5,6 +5,10 @@ Accepted. Extends [ADR 003](003-flat-orchestrator-worker.md) (what counts as a c
 [ADR 008](008-human-in-the-loop-approval-gate.md) (who may approve) and
 [ADR 010](010-semantic-idempotency.md) (idempotency keys supplied from outside).
 
+Amended by [ADR 021](021-a-local-web-view-is-the-cli-in-a-browser.md): the "no board UI" consequence
+now means no UI that decides what gets worked on. A local view that has only the CLI's verbs, and never
+runs the Scheduler, is allowed.
+
 ## Context
 Agentic engineering has moved on from one agent in one terminal. Tools now take work from a task board
 or a chat message and carry it through to a merged change with little human attention:
@@ -89,7 +93,8 @@ systems work internally:
   authority, the Event Log as truth and "no daemon" all stand. The front-door tools are built on
   precisely the things those ADRs refuse. That makes them natural callers of `aoa` rather than
   competitors to absorb.
-- **The scope stays small.** `aoa` does not grow chat integrations, a board UI or a triage model. What
+- **The scope stays small.** `aoa` does not grow chat integrations, a board UI or a triage model
+  (a local view of work already submitted is allowed; see ADR 021). What
   it gains is a contract: JSON verbs, a resumable event cursor, cancellation, and safety for concurrent
   writers.
 - **The contract becomes a compatibility surface.** Its result types carry a `schema` version, and a
