@@ -365,6 +365,12 @@ func (s *uiServer) stream(w http.ResponseWriter, r *http.Request) {
 	if _, err := fmt.Fprint(w, "retry: 2000\n\n"); err != nil {
 		return
 	}
+	// Flush now: the browser reports the stream open only once headers
+	// arrive, and on a quiet log nothing else would send them for
+	// uiKeepAlive.
+	if err := rc.Flush(); err != nil {
+		return
+	}
 	quiet := time.Now()
 	err := tailLog(r.Context(), s.led, since, s.poll, func(lines []ledger.RawLine) error {
 		for _, l := range lines {
