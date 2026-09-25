@@ -3,7 +3,8 @@
 Guidance for AI agents and human contributors. (Claude Code reads `CLAUDE.md`, which points here.)
 
 Age of Agents (`aoa`) is a minimal, Gate-verified orchestrator for fleets of AI coding agents: every agent
-works in a throwaway git worktree, and a merge queue merges only what passes the project's build and tests.
+works in a throwaway git worktree, a deterministic Scheduler coordinates them through one shared Event Log,
+and only what passes the project's build and tests (the Gate) reaches `main`.
 
 ## Vocabulary: docs vs. code
 

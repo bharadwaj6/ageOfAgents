@@ -1,10 +1,13 @@
 # Age of Agents
 
-**Point an AI coding agent at your repo and it might write something broken. `aoa` runs the agent in a
-throwaway git worktree, runs *your* build and tests on the result, and merges it only if they pass.**
+**Conduct a fleet of AI coding agents on one repo, unattended, and come back to a `main` that still
+builds.**
 
-It is a merge queue whose author happens to be a language model — Bors for AI agents. One static binary,
-one config file, git only: no database, no broker, no service to run.
+`aoa` conducts an orchestra of coding agents. Each plays its part in its own throwaway git worktree, and
+they all read and write one shared score, an append-only Event Log, instead of talking to each other.
+The conductor is deterministic Go, never another LLM. Nothing reaches `main` until *your* build and
+tests have heard the parts played together. One static binary, one config file, git only: no database,
+no broker, no service to run.
 
 ```
 $ aoa goal "add table-driven tests for parseUsage"

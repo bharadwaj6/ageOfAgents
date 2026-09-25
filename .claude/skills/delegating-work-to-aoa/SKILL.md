@@ -5,8 +5,8 @@ description: Use when the user wants a code change made under a verification gat
 
 # Running work through aoa
 
-`aoa` is a merge queue for AI-authored changes. It runs a coding agent in a throwaway git worktree,
-runs the project's build and tests on the result, and merges only if they pass. You drive it with
+`aoa` orchestrates AI coding agents under a verification gate. It runs a coding agent in a throwaway
+git worktree, runs the project's build and tests on the result, and merges only if they pass. You drive it with
 ordinary shell commands.
 
 **Use it when the user wants a change gated rather than applied** — you keep working while it runs, and
