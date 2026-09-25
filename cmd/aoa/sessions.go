@@ -280,7 +280,7 @@ func cmdSessionsCheck(args []string) error {
 	if !strings.HasSuffix(res.Output, "\n") {
 		fmt.Println()
 	}
-	return fmt.Errorf("Gate failed on %s (%s)", id, res.Failed)
+	return fmt.Errorf("gate failed on %s (%s)", id, res.Failed)
 }
 
 // afterGate re-reads a session's tree once its Gate has run. When only

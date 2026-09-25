@@ -193,7 +193,7 @@ func TestSessionsCheckFailingGate(t *testing.T) {
 		err = cmdSessionsCheck([]string{"--repo", repo, "--gate", "go build ./...", "agent/tests"})
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Gate failed")
+	require.Contains(t, err.Error(), "gate failed")
 	require.Contains(t, out, "broken.go")
 
 	st := sessionsState(t, repo)
