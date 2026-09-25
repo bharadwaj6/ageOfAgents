@@ -226,6 +226,27 @@ already parse, and take no dependency on a pre-stable API that would cost a Kube
 | [x] | `GoalView.Conditions` — `Accepted`/`Verified`/`Delivered`/`Complete`, replayed, additive to the contract | ADR 020 |
 | [x] | `aoa wait` — block until `Complete`, exit with the outcome | conditions |
 
+**Part 4: the sessions you run yourself** ([ADR 022](adr/022-record-sessions-aoa-did-not-start.md)).
+
+The maintainer runs four or more interactive agent sessions a day and still does not reach for `aoa`.
+The problem is not steering or trust. It is losing track of what each parallel session did. So the next
+increment meets those sessions where they are, in their git worktrees, before asking anyone to hand
+work to the Scheduler.
+
+| | Increment | Depends on |
+|---|---|---|
+| [x] | `aoa sessions` and `aoa sessions check`: a read-only ledger of every linked worktree in `<git-common-dir>/aoa/events.jsonl`, test edits flagged, Gate verdict pinned to content | ADR 022 |
+| [x] | Dogfood frictions fixed ahead of time: `aoa/*` worktrees skipped, removed sessions behind `--all`, Gate output does not stale its own verdict, one ID per worktree lifetime | sessions |
+| [ ] | **Two weeks of daily use on real parallel sessions**, with notes on what the table caught and missed | sessions |
+| [ ] | *Only if the dogfood shows landing is the next pain:* `aoa land <session>` through the Merge Queue, with `protect_tests` restoring test paths from the base before the Gate runs | dogfood |
+
+**Kill signal:** if after two weeks `aoa sessions` is not opened when sessions finish, tracking was not
+the pain. Record that here and stop, rather than building `land` on a guess.
+
+**Last status (2026-09-25):** `aoa sessions` is on `main`. The dogfood clock starts now. The #103 pilot
+(the Gate rejected 0/20) suggests the `GATE` column will mostly read `pass`, so watch whether the
+`TESTS` column ever catches a real test edit. That is the signal `protect_tests` would act on.
+
 ## Not yet scheduled
 
 Directions, not commitments. Detail and rationale in [proposals](improvements.md#not-yet-scheduled):

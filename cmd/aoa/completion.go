@@ -14,7 +14,7 @@ import (
 // commands must stay in sync with the dispatch switch in main().
 var commands = []string{
 	"quickstart", "doctor", "init", "goal", "amend", "run", "status", "events",
-	"bench", "serve", "eval", "diagnose", "otel", "approve", "reject",
+	"sessions", "bench", "serve", "eval", "diagnose", "otel", "approve", "reject",
 	"cancel", "wait", "ui", "version", "completion", "help",
 }
 

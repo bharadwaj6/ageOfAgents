@@ -93,6 +93,15 @@ const (
 	// Goal; past a Goal limit it starts no new Goal. Attempts already running
 	// finish. Recorded once per scope per window: once per run, once per UTC day.
 	BudgetExhausted EventType = "BudgetExhausted"
+	// SessionObserved: `aoa sessions` looked at a git worktree it did not
+	// create — an agent session started outside aoa — and recorded what git
+	// shows of it (ADR 022). Observational: nothing is dispatched, verified or
+	// merged because of it. Removed marks a worktree that has since gone.
+	SessionObserved EventType = "SessionObserved"
+	// SessionChecked: the Gate ran on an observed session's working tree. It
+	// records whether that tree was green at that fingerprint; it merges
+	// nothing and says nothing about the integration branch.
+	SessionChecked EventType = "SessionChecked"
 )
 
 // Event is the append-only log envelope. Seq is assigned by the ledger on
@@ -424,4 +433,40 @@ type TicketAmendedPayload struct {
 	Worker   string `json:"worker,omitempty"`
 	Title    string `json:"title,omitempty"` // New title if amended
 	Guidance string `json:"guidance,omitempty"`
+}
+
+// SessionObservedPayload accompanies [SessionObserved]. SessionID is derived
+// from the worktree's path, so every observation of one worktree folds into
+// one session. Files are repo-relative paths that differ from Base (committed,
+// uncommitted and untracked); TestFiles is the subset that looks like a test
+// or test fixture. Fingerprint changes whenever the tree's content does, so a
+// check recorded against an older fingerprint is stale. LastChange is the
+// newest commit or file modification git and the filesystem showed. When
+// Removed is set the worktree is gone and only SessionID and Path are set.
+type SessionObservedPayload struct {
+	SessionID   string    `json:"session_id"`
+	Path        string    `json:"path"`
+	Branch      string    `json:"branch,omitempty"`
+	Head        string    `json:"head,omitempty"`
+	Base        string    `json:"base,omitempty"`
+	Files       []string  `json:"files,omitempty"`
+	TestFiles   []string  `json:"test_files,omitempty"`
+	Dirty       bool      `json:"dirty,omitempty"`
+	Fingerprint string    `json:"fingerprint,omitempty"`
+	LastChange  time.Time `json:"last_change,omitzero"`
+	Removed     bool      `json:"removed,omitempty"`
+}
+
+// SessionCheckedPayload accompanies [SessionChecked]. Fingerprint is the
+// session's fingerprint when the Gate started; AfterFingerprint is its
+// fingerprint when the Gate finished, set only when the Gate's own untracked
+// output was all that changed, so that output does not make the verdict stale.
+// Command is the Gate as run, and Output the tail of what it printed.
+type SessionCheckedPayload struct {
+	SessionID        string `json:"session_id"`
+	Fingerprint      string `json:"fingerprint"`
+	AfterFingerprint string `json:"after_fingerprint,omitempty"`
+	Passed           bool   `json:"passed"`
+	Command          string `json:"command"`
+	Output           string `json:"output,omitempty"`
 }

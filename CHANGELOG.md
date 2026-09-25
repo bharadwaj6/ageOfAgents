@@ -18,6 +18,18 @@ All notable changes to this project are documented here. The format follows
   refuses cross-origin and DNS-rebinding requests.
   ([ADR 021](docs/design/adr/021-a-local-web-view-is-the-cli-in-a-browser.md))
 
+- **`aoa sessions`: a ledger of every agent session in a repository, including the ones `aoa` did not
+  start** ([ADR 022](docs/design/adr/022-record-sessions-aoa-did-not-start.md)). Each linked git
+  worktree is a session. The command reads git only — files changed against the base branch, which of
+  them are tests, whether the tree is dirty, when it last changed — and folds it into an Event Log at
+  `<git-common-dir>/aoa/events.jsonl`. No workspace, no `aoa.toml`, nothing written into a working
+  tree, and an observation is appended only when it says something new. `aoa sessions check <session>`
+  runs the Gate on one session's tree and records the verdict against a fingerprint of that tree, so a
+  later edit shows the verdict as stale; untracked files the Gate writes itself do not. Test files
+  touched by a session are named in the output: an agent that rewrites the tests it is judged by is the
+  thing worth seeing first. `aoa`'s own `aoa/*` worktrees are left to the workspace's log, removed
+  sessions are listed only with `--all`, and a worktree re-created at the same path is a new session.
+
 - **The Gate-precision measurement is pre-registered.** Before any instance runs, the protocol for
   [#103](https://github.com/bharadwaj6/ageOfAgents/issues/103) fixes the question, the two pinned arms
   (`agy` on `gemini-3.8-flash-high`, `grok` on `grok-4.7`, never pooled), the seeded sample, what counts
