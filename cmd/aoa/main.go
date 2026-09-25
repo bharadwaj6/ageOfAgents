@@ -87,6 +87,8 @@ func main() {
 		err = cmdCancel(args)
 	case "wait":
 		err = cmdWait(args)
+	case "ui":
+		err = cmdUI(args)
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -154,6 +156,8 @@ Usage:
                                           Withdraw a goal so none of its work lands
   aoa wait    [--path DIR] [--json] [--timeout D] <goal-id>...
                                           Block until each goal is complete; exit with its outcome
+  aoa ui      [--path DIR] [--addr HOST:PORT] [--by B] [--read-only]
+                                          Serve a live web view of goals, with the write verbs
   aoa version                             Print the build version
   aoa completion bash|zsh|fish            Print a shell completion script
 
@@ -1015,18 +1019,39 @@ func cmdEvents(args []string) error {
 	return followEvents(ctx, led, cursor, *typ, format, os.Stdout, *poll)
 }
 
-// followEvents prints every event after seq since, then checks the log every
-// poll and prints what was appended, in order, until ctx is done; it then
-// returns nil. Only complete lines are printed: a line a writer is still in
-// the middle of waits for a later poll. typ filters what is printed, not the
-// cursor.
-//
-// If the log is truncated or replaced, it is read again from the start and
-// events numbered at or below the last seq already seen are skipped, so a
-// restored copy of the same log resumes without repeats. A different log that
-// numbers from 1 again prints nothing until it passes that seq.
+// followEvents prints every event after seq since, then keeps printing what is
+// appended, in order, until ctx is done (see tailLog for how a partial line or
+// a replaced log is handled). typ filters what is printed, not the cursor.
 func followEvents(ctx context.Context, led *ledger.Ledger, since int, typ string, format eventFormat, w io.Writer, poll time.Duration) error {
 	out := bufio.NewWriter(w)
+	return tailLog(ctx, led, since, poll, func(lines []ledger.RawLine) error {
+		for _, l := range lines {
+			if typ != "" && string(l.Event.Type) != typ {
+				continue
+			}
+			if err := writeEvent(out, l, format); err != nil {
+				return err
+			}
+		}
+		if err := out.Flush(); err != nil {
+			return fmt.Errorf("write events: %w", err)
+		}
+		return nil
+	})
+}
+
+// tailLog hands emit every event after seq since, then checks the log every
+// poll and hands it what was appended, in seq order, until ctx is done; it then
+// returns nil. emit is called once per poll, with nothing when nothing new
+// arrived, so a caller can flush or send a keep-alive on the same beat. Only
+// complete lines are handed over: a line a writer is still in the middle of
+// waits for a later poll.
+//
+// If the log is truncated or replaced, it is read again from the start and
+// events numbered at or below the last seq already handed over are skipped, so
+// a restored copy of the same log resumes without repeats. A different log that
+// numbers from 1 again yields nothing until it passes that seq.
+func tailLog(ctx context.Context, led *ledger.Ledger, since int, poll time.Duration, emit func([]ledger.RawLine) error) error {
 	tick := time.NewTicker(poll)
 	defer tick.Stop()
 	last := since
@@ -1041,20 +1066,16 @@ func followEvents(ctx context.Context, led *ledger.Ledger, since int, typ string
 			return err
 		}
 		offset = next
+		fresh := lines[:0:0]
 		for _, l := range lines {
 			if l.Event.Seq <= last {
 				continue
 			}
 			last = l.Event.Seq
-			if typ != "" && string(l.Event.Type) != typ {
-				continue
-			}
-			if err := writeEvent(out, l, format); err != nil {
-				return err
-			}
+			fresh = append(fresh, l)
 		}
-		if err := out.Flush(); err != nil {
-			return fmt.Errorf("write events: %w", err)
+		if err := emit(fresh); err != nil {
+			return err
 		}
 		select {
 		case <-ctx.Done():

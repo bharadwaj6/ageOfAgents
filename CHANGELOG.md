@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`aoa ui`: watch a goal execute in the browser, and act on it.** `aoa status --watch` redraws a
+  summary, and `aoa events --follow` prints raw lines. Neither shows one goal's whole run in one place.
+  `aoa ui` serves a live local web page with every goal's outcome and conditions. Each goal gets its own
+  page with its tasks (indented by decomposition depth), the Gate output behind each failure, and its
+  event timeline. From the page you can submit, amend and cancel goals and approve or reject parked
+  proposals, using the same verbs as the CLI. It never runs the Scheduler. It ships inside the binary
+  with no build step and no dependency. It listens on loopback only unless `--read-only` is set, and it
+  refuses cross-origin and DNS-rebinding requests.
+  ([ADR 021](docs/design/adr/021-a-local-web-view-is-the-cli-in-a-browser.md))
+
 - **The Gate-precision measurement is pre-registered.** Before any instance runs, the protocol for
   [#103](https://github.com/bharadwaj6/ageOfAgents/issues/103) fixes the question, the two pinned arms
   (`agy` on `gemini-3.8-flash-high`, `grok` on `grok-4.7`, never pooled), the seeded sample, what counts
