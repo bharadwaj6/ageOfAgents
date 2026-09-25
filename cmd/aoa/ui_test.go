@@ -424,6 +424,29 @@ func TestUIStreamIsTheLogFromACursor(t *testing.T) {
 	})
 }
 
+// A stream opened on a quiet log still reaches the browser at once. The page
+// shows "live" when EventSource opens, and that waits for the response
+// headers; held in the server's buffer, they would arrive with the first
+// keep-alive, uiKeepAlive later.
+func TestUIStreamOpensOnAQuietLog(t *testing.T) {
+	root, led := eventsWorkspace(t, 5)
+	ws, err := openWorkspace(root)
+	require.NoError(t, err)
+	f := serveUI(t, ws, led, uiServer{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.srv.URL+"/api/events?since=5", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err, "headers must not wait for an event or a keep-alive")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	line, err := bufio.NewReader(resp.Body).ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "retry: 2000\n", line)
+}
+
 // The page ships inside the binary and works offline (golden rule 6): nothing
 // is fetched from another host. And log text reaches the page only as text —
 // goal text and Gate output are untrusted agent input (ADR 015 §8).
