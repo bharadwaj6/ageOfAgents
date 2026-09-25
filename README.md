@@ -1,12 +1,12 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/logo-dark.svg" />
-    <img src="docs/assets/readme/logo-light.svg" alt="Age of Agents (aoa): only what passes the Gate lands" width="520" />
+    <img src="docs/assets/readme/logo-light.svg" alt="Age of Agents (aoa): an orchestra of coding agents" width="520" />
   </picture>
 </p>
 
 <p align="center">
-  <b>Run a fleet of coding agents against one repo, unattended, and come back to a <code>main</code> that still builds.</b>
+  <b>Conduct a fleet of AI coding agents on one repo, unattended, and come back to a <code>main</code> that still builds.</b>
 </p>
 
 <div align="center">
@@ -24,9 +24,12 @@
 
 </div>
 
-Every agent gets a throwaway git worktree. Their output is serialised through a merge queue that runs
-*your* build and tests on the **merged** result, and rolls back anything that breaks. The agent
-proposes. It never decides.
+`aoa` conducts an orchestra of coding agents. Each agent plays its part in its own throwaway git
+worktree. They never talk to each other; they all read and write one shared score, an append-only
+Event Log. The conductor is deterministic Go, never another LLM. It hands out the parts, keeps count of
+time and money, and after a crash picks up from the last bar written. Nothing is performed for the
+audience, your `main`, until *your* build and tests have heard the parts played **together**. The
+agents propose. They never decide.
 
 ```console
 $ aoa goal "add rate limiting to the API"
@@ -144,13 +147,27 @@ things a prompt can't give you.
 | | The problem | What `aoa` does |
 |---|---|---|
 | 1 | **The agent grades its own homework.** "Only commit if the tests pass" is a *request*. The agent decides whether it ran them, which ones, and what passing meant. | Runs your Gate itself, in its own process, against the tree on disk. What the agent claims isn't an input to the decision. |
-| 2 | **Two agents that each pass alone can still break together.** A is green, B is green, A+B is red. Neither could see the other. | Merges first, runs the Gate on the **merged** state, and reverts if it's red. This is why merge queues exist. |
+| 2 | **Two agents that each pass alone can still break together.** A is green, B is green, A+B is red. Neither could see the other. | Hears the parts together: merges first, runs the Gate on the **merged** state, and reverts if it's red. |
 | 3 | **Nobody is watching.** A context window survives no crash, no budget and no retry loop. | State is a replay of an append-only log, so a killed run resumes. It stops before a budget you set, and gives up on a task that fails the same way three times. |
 
 The bet underneath: **verification, not intelligence, is the scaling constraint.** Better models
-sharpen the worker; the control plane doesn't change.
+make better players; the conductor doesn't change.
 
 ## How it works
+
+| In the orchestra | In `aoa` | In the code |
+|---|---|---|
+| The players | Coding agents: Claude Code, Codex, Grok, any CLI | `agent.Backend` |
+| Each player's desk | A throwaway git worktree per task | `internal/worktree` |
+| The score | The Event Log: append-only JSONL, the only source of truth | `internal/ledger` |
+| Adding a part | An agent extends the task graph by writing a new task into the log, never by messaging another agent | `TicketCreated` |
+| The conductor | The Scheduler: one deterministic control loop, no LLM | `internal/orchestrator` |
+| Hearing the parts together | The Gate: your build and tests, run on the combined result | `internal/verify` |
+| The audience | `main` | |
+
+**Where the analogy stops.** A real conductor has taste. This one has none, on purpose: it doesn't judge
+the music, it enforces what you wrote down as tests. Correctness comes from your Gate, never from an
+agent's opinion, and that includes an agent acting as coordinator.
 
 ```mermaid
 flowchart LR
@@ -159,12 +176,13 @@ flowchart LR
     Sched -->|append| Log
     Sched ==>|dispatch| W[["Worker<br/>(agent in an isolated worktree)"]]
     W -->|candidate diff| Log
-    Sched ==>|drive| MQ[/"Merge Queue<br/>verify → merge → roll back"\]
-    MQ -->|your build + tests| Main(["main, always green"])
+    Sched ==>|drive| G[/"Gate<br/>merge → your build + tests → keep or roll back"\]
+    G -->|only if green| Main(["main, always green"])
 ```
 
 A Goal becomes a Task, dispatched to a Worker in its own worktree. The Worker emits a *candidate diff*.
-The Merge Queue merges it, runs your Gate on the post-merge state, and keeps it only if the Gate passes.
+Mechanically, the Gate sits inside a serial merge queue: it merges the diff, runs your build and tests
+on the result, and keeps it only if they pass.
 Everything is an event and all state is a replay of the log, so crash recovery, audit trails and every
 metric come for free.
 
@@ -172,7 +190,7 @@ Each guarantee has a mechanism behind it, and each is checked by the test suite:
 
 | Guarantee | Mechanism | Checked by |
 |---|---|---|
-| **`main` is never red** | Serial merge queue; the Gate runs on the merged tree; roll back on failure | Invariant I1, TLA+ `MergeImpliesVerified` |
+| **`main` is never red** | One merge at a time; the Gate runs on the merged tree; roll back on failure | Invariant I1, TLA+ `MergeImpliesVerified` |
 | **One writer, one merge per task** | Exactly one Scheduler per workspace and repository (lock; exit `75` otherwise) | Invariant I2, TLA+ `MergedAtMostOnce` |
 | **A crash loses nothing** | All state is `state.Fold` over the Event Log; restart replays it | Invariant I3 + crash-recovery tests |
 | **No step runs twice** | Idempotency keys on goals and tasks | Invariant I4, TLA+ `NoDuplicateMergedKey` |
@@ -268,8 +286,8 @@ and the reasoning is in [ADR 015](https://bharadwaj6.github.io/ageOfAgents/desig
 
 ## How it compares
 
-`aoa` keeps the load-bearing primitives of agent orchestration (an event-sourced log, a serial merge
-queue, isolation, idempotency) and deletes everything that puts an LLM in the coordination path.
+`aoa` keeps the load-bearing primitives of agent orchestration (one shared log, isolated players,
+Gate-verified merges, idempotency) and removes everything that puts an LLM on the conductor's podium.
 
 | | **aoa** | Gastown | Spec Kit + plan mode | opencode ultraworker |
 |---|---|---|---|---|
@@ -388,10 +406,10 @@ Step-by-step recipes for common changes (a new backend, a new event, a structura
 
 ## Prior art
 
-The rule isn't new. Graydon Hoare called it the
+The Gate's rule isn't new. Graydon Hoare called it the
 [not-rocket-science rule](https://graydon2.dreamwidth.org/1597.html), *automatically maintain a
 repository of code that always passes all the tests*, and wrote `bors` to enforce it for Rust. `aoa`
-applies it to a fleet of authors that are faster, cheaper, more numerous, and considerably more
+applies it to an orchestra of players that are faster, cheaper, more numerous, and considerably more
 confident than they have earned.
 
 MIT licensed.
