@@ -1,5 +1,5 @@
 site_name: Age of Agents
-site_description: A merge queue whose author is a language model. Runs AI coding agents in isolated git worktrees and merges only what passes your build and tests.
+site_description: Conduct a fleet of AI coding agents on one repo. Each agent works in its own git worktree, a deterministic Scheduler coordinates them through one shared Event Log, and only what passes your build and tests reaches main.
 site_url: https://bharadwaj6.github.io/ageOfAgents/
 repo_url: https://github.com/bharadwaj6/ageOfAgents
 repo_name: bharadwaj6/ageOfAgents
