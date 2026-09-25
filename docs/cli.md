@@ -409,6 +409,46 @@ happened is the front door's job — see [reporting back](backend.md#reporting-b
 
 No public endpoint? The reference front door in [`examples/github-issues`](https://github.com/bharadwaj6/ageOfAgents/tree/main/examples/github-issues) polls issues labelled `aoa` instead of receiving webhooks, and reports each outcome back to its issue.
 
+### `aoa ui`
+
+A web view of the workspace, updated live as the Event Log grows. The overview lists every Goal with its
+outcome and its four conditions, plus the workspace totals, the day budget and the merge queue. A Goal's
+page shows how it is executing:
+
+- where the Goal came from, and its conditions, each with its reason and the time it last changed;
+- its tasks, indented by decomposition depth, with attempts, tokens, the merged commit, and why a failed
+  task failed, including the Gate's output and the preserved worktree;
+- its event timeline, one row per event, each with its raw payload.
+
+The page can also act, through the same verbs as the CLI and with the same checks. It can submit a goal,
+amend or cancel one, and approve or reject a proposal parked by `require_approval`.
+
+```bash
+aoa ui  --path ./ws --by alice            # http://127.0.0.1:7070/
+aoa run --path ./ws --interval 5s         # in another terminal: the view never runs the Scheduler
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--path DIR` | `.` | workspace root |
+| `--addr HOST:PORT` | `127.0.0.1:7070` | address to listen on |
+| `--by B` | — | who is acting, recorded on every goal, cancel and decision the page makes, as given |
+| `--read-only` | `false` | serve the view only; every write is refused |
+
+Goals submitted from the page record `ui` as their source. **`aoa ui` never runs the Scheduler.** A
+goal submitted here waits, queued, until an `aoa run` picks it up, and the page says so.
+
+!!! warning "It has the CLI's authority, so it stays on this machine"
+    There is no login: whoever can reach the page can do what `aoa goal`, `cancel` and `approve` can.
+    It listens on loopback and answers only requests addressed to a loopback hostname. Writes must be
+    same-origin JSON requests, so a page on another site cannot drive it. A non-loopback `--addr` is
+    refused unless `--read-only` is set. To use it from another machine, tunnel the port instead:
+    `ssh -L 7070:127.0.0.1:7070 host`. See [ADR 021](design/adr/021-a-local-web-view-is-the-cli-in-a-browser.md).
+
+Its JSON endpoints are the CLI's contract under other names. `/api/status` is `aoa status --json`, and
+`/api/events?since=N` is `aoa events --json --since N --follow` delivered as Server-Sent Events. A
+front door should drive the CLI, which is the supported contract; these endpoints serve the page.
+
 ## Shell integration
 
 ### `aoa version`

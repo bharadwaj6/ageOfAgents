@@ -60,7 +60,7 @@ other target. The suite is hermetic: the `mock` backend never networks, and test
 | `internal/otel` | Replay projection to OTLP traces + metrics | Off by default, never in the hot path, never networks in tests |
 | `internal/bench`, `internal/liveeval` | Hermetic benchmark + live eval harness | `liveeval` networks only with a networked Backend |
 | `internal/config` | `aoa.toml` loading | New field → default in `Default()` |
-| `cmd/aoa` | Tiny stdlib CLI; one-Scheduler lock (`lock.go`), status projection (`status.go`) | No CLI framework; document new commands in `docs/cli.md` |
+| `cmd/aoa` | Tiny stdlib CLI; one-Scheduler lock (`lock.go`), status projection (`status.go`), local web view (`ui.go`, embedded `ui/`; ADR 021) | No CLI framework; document new commands in `docs/cli.md` |
 | `scripts/` | Eval + benchmark harnesses, installer | Not covered by `make check`; keep runnable from a clean clone |
 | `examples/github-issues` | Reference GitHub Issues front door (bash+gh+jq) | Uses only the CLI JSON contract; conformance test in `cmd/aoa/frontdoor_test.go` |
 

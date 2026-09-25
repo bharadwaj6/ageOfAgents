@@ -71,6 +71,16 @@ agents on your machine** — anyone can become a contributor by getting one pull
 allowlist is only as trustworthy as the payload: without `--secret`, `author_association` is whatever the
 sender wrote.
 
+### `aoa ui` has the CLI's authority, so it stays on this machine
+
+The web view can submit, amend and cancel goals and approve or reject parked proposals, which is
+everything `aoa goal`, `amend`, `cancel`, `approve` and `reject` can do. It has no login. By default it
+listens on `127.0.0.1` and answers only requests addressed to a loopback hostname, which defeats DNS
+rebinding. It also refuses writes that are not a same-origin JSON request, so a web page on another site
+cannot drive it. A non-loopback `--addr` is refused unless `--read-only` is set, and even a read-only
+view shows every goal and its Gate output to anyone who can reach the port. To use it from another
+machine, tunnel the port over SSH. See [ADR 021](docs/design/adr/021-a-local-web-view-is-the-cli-in-a-browser.md).
+
 ### Cost is a security property here
 
 A runaway loop spends real money. `max_tokens_per_goal` and `max_usd_per_goal` are per-goal circuit
