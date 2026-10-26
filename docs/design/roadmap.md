@@ -237,8 +237,7 @@ work to the Scheduler.
 |---|---|---|
 | [x] | `aoa sessions` and `aoa sessions check`: a read-only ledger of every linked worktree in `<git-common-dir>/aoa/events.jsonl`, test edits flagged, Gate verdict pinned to content | ADR 022 |
 | [x] | Dogfood frictions fixed ahead of time: `aoa/*` worktrees skipped, removed sessions behind `--all`, Gate output does not stale its own verdict, one ID per worktree lifetime | sessions |
-| [ ] | **Two weeks of daily use on real parallel sessions**, with notes on what the table caught and missed | sessions |
-| [ ] | *Only if the dogfood shows landing is the next pain:* `aoa land <session>` through the Merge Queue, with `protect_tests` restoring test paths from the base before the Gate runs | dogfood |
+| [x] | Two weeks of daily use on real parallel sessions. **Outcome: not used.** The kill signal fired | sessions |
 
 **Kill signal:** if after two weeks `aoa sessions` is not opened when sessions finish, tracking was not
 the pain. Record that here and stop, rather than building `land` on a guess.
@@ -246,6 +245,13 @@ the pain. Record that here and stop, rather than building `land` on a guess.
 **Last status (2026-09-25):** `aoa sessions` is on `main`. The dogfood clock starts now. The #103 pilot
 (the Gate rejected 0/20) suggests the `GATE` column will mostly read `pass`, so watch whether the
 `TESTS` column ever catches a real test edit. That is the signal `protect_tests` would act on.
+
+**Last status (2026-10-26):** the kill signal fired. The trial window closed on Oct 9, and the maintainer
+did not reach for `aoa sessions` when sessions finished. So tracking parallel sessions was not the pain
+keeping `aoa` out of the daily workflow, and Part 4 stops here. `aoa sessions` stays shipped: it is
+small, tested, needs no workspace, and touches nothing in the Scheduler. Nothing more is built on it.
+`aoa land` and `protect_tests` move to the deferral table below, with a reopen condition, instead of
+being built on a guess.
 
 ## Not yet scheduled
 
@@ -269,6 +275,7 @@ decision is falsifiable rather than permanent:
 
 | Deferred | Reopen when |
 |---|---|
+| `aoa land <session>` through the Merge Queue, with `protect_tests` restoring test paths from the base before the Gate runs (roadmap Part 4) | Someone, the maintainer or an outside user, runs `aoa sessions` routinely and names getting sessions onto `main` as the next pain. The 2026-10 trial found the opposite: it was not used |
 | Speculative / batched merge with an adaptive window | `merge_queue_wait_mean` climbs while queue depth stays high — i.e. serialization is demonstrably the bottleneck |
 | Best-of-N generation with the test suite as selector | Per-task cost data shows the extra attempts are cheaper than the retries they replace |
 | SPRT early-stopping for live evals | Eval runs get large enough that fixed-N sampling is the dominant cost |
