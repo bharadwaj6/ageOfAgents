@@ -359,3 +359,21 @@ func writeFile(t *testing.T, path, content string) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }
+
+// A worktree named by a path that goes through a symbolic link is the same
+// session, with the same ID, as the one git lists under its resolved path.
+func TestSessionsFindsAWorktreeThroughASymlink(t *testing.T) {
+	repo, wt := sessionsRepo(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Dir(wt["idle"]), link); err != nil {
+		t.Skipf("cannot create a symbolic link here: %v", err)
+	}
+	viaLink := filepath.Join(link, "idle")
+
+	sc, err := scanSessions(context.Background(), repo, "")
+	require.NoError(t, err)
+	i, err := findSession(sc, viaLink)
+	require.NoError(t, err)
+	require.Equal(t, "agent/idle", sc.obs[i].Branch)
+	require.Equal(t, sc.ids[i], idOf(t, viaLink))
+}

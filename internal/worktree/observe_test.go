@@ -223,3 +223,27 @@ func write(t *testing.T, path, content string) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }
+
+// A repository reached through a symbolic link is still one repository: its
+// main working tree and a linked one must agree on the shared git directory,
+// or each would keep its own sessions log.
+func TestCommonDirIsTheSameThroughASymlink(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real")
+	repo, err := InitRepo(ctx, filepath.Join(realDir, "repo"))
+	require.NoError(t, err)
+	w, err := repo.AddWorktree(ctx, filepath.Join(realDir, "wt"), "agent/x")
+	require.NoError(t, err)
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Skipf("cannot create a symbolic link here: %v", err)
+	}
+
+	viaLink, err := CommonDir(ctx, filepath.Join(link, "repo"))
+	require.NoError(t, err)
+	fromWorktree, err := CommonDir(ctx, w.Path)
+	require.NoError(t, err)
+	require.Equal(t, fromWorktree, viaLink)
+}

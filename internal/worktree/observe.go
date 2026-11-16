@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -80,7 +82,29 @@ func CommonDir(ctx context.Context, dir string) (string, error) {
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(dir, p)
 	}
-	return filepath.Abs(p)
+	return Canonical(p)
+}
+
+// Canonical returns p as an absolute path with symbolic links resolved, so one
+// directory has one spelling however the caller reached it. git reports a
+// resolved path for a linked worktree and a relative one for the main working
+// tree, so without this a repository under a symlinked directory (macOS /tmp
+// and /var) has two common directories. A path that no longer exists keeps
+// its absolute, cleaned form.
+func Canonical(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("absolute path of %s: %w", p, err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	switch {
+	case err == nil:
+		return resolved, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return abs, nil
+	default:
+		return "", fmt.Errorf("resolve %s: %w", abs, err)
+	}
 }
 
 // Observation is what git and the filesystem show of one working tree
