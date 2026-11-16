@@ -115,6 +115,7 @@ nav:
       - Loop engineering: design/loop_engineering.md
       - Cross-repo (design only): design/cross_repo.md
       - Roadmap: design/roadmap.md
+      - Direction review (2026-11): design/direction-2026-11.md
       - Proposals: design/improvements.md
       - Reading list: design/reading-list.md
 
