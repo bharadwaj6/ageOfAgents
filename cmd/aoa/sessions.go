@@ -24,6 +24,11 @@ import (
 // created, so every observation of one worktree folds into one session, and a
 // worktree removed and re-created at the same path is a new one (ADR 022).
 func sessionID(path string, born time.Time) string {
+	// One worktree, one ID, whichever spelling of its path the caller holds.
+	// git already reports the resolved one, so recorded IDs do not change.
+	if c, err := worktree.Canonical(path); err == nil {
+		path = c
+	}
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s\x00%d", filepath.Clean(path), born.UnixNano()))
 	return "s-" + hex.EncodeToString(sum[:4])
 }
@@ -318,16 +323,23 @@ func afterGate(ctx context.Context, wt worktree.Listed, base string, before work
 	return now.Fingerprint, note, nil
 }
 
+// samePath reports whether a path git listed and an already canonical path
+// name the same directory.
+func samePath(listed, canonical string) bool {
+	c, err := worktree.Canonical(listed)
+	return err == nil && c == canonical
+}
+
 // findSession resolves what the user typed — an ID, a unique prefix of one, a
 // branch, or a path — to an index into the scan.
 func findSession(sc sessionScan, target string) (int, error) {
-	abs, absErr := filepath.Abs(target)
+	abs, absErr := worktree.Canonical(target)
 	var matches []int
 	for i, o := range sc.obs {
 		switch {
 		case sc.ids[i] == target, o.Branch != "" && o.Branch == target:
 			return i, nil
-		case absErr == nil && filepath.Clean(o.Path) == filepath.Clean(abs):
+		case absErr == nil && samePath(o.Path, abs):
 			return i, nil
 		case len(target) >= 3 && strings.HasPrefix(sc.ids[i], target):
 			matches = append(matches, i)
